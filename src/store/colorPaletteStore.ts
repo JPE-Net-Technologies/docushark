@@ -6,6 +6,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { parseColorInput } from '../utils/color';
 
 /**
  * Maximum number of recent colors to track.
@@ -45,17 +46,17 @@ const initialState: ColorPaletteState = {
 };
 
 /**
- * Normalize a color to lowercase hex format.
+ * Normalize a color to the canonical `#rrggbb` storage form.
+ *
+ * Delegates to the shared grammar in `utils/color.ts` rather than keeping a
+ * local regex — recents must compare equal to the values the pickers emit, and
+ * a second definition of "valid color" is how they drift apart.
+ *
+ * @param color - Any accepted color input
+ * @returns Canonical `#rrggbb`, or null when the input is not a color
  */
-function normalizeColor(color: string): string {
-  return color.toLowerCase().trim();
-}
-
-/**
- * Check if a color is a valid hex color.
- */
-function isValidHexColor(color: string): boolean {
-  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(color);
+function normalizeColor(color: string): string | null {
+  return parseColorInput(color);
 }
 
 /**
@@ -88,8 +89,8 @@ export const useColorPaletteStore = create<ColorPaletteState & ColorPaletteActio
 
         const normalized = normalizeColor(color);
 
-        // Skip if not a valid hex color
-        if (!isValidHexColor(normalized)) return;
+        // Skip anything the shared grammar does not recognize as a color
+        if (!normalized) return;
 
         const { recentColors } = get();
 

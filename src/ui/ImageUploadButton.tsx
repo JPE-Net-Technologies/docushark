@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { Icon } from './icons';
 import { useTiptapEditor } from './TiptapEditorContext';
-import { formatFileSize } from '../utils/imageUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { uploadProseImage, IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 

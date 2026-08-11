@@ -96,6 +96,86 @@ export function resolveViewerPanelBounds(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Anchored menu / popover placement (JP-253)
+// ---------------------------------------------------------------------------
+
+/** The parts of a trigger's rect that placement actually depends on. */
+export interface TriggerRect {
+  top: number;
+  bottom: number;
+  right: number;
+}
+
+export interface MenuPlacementInput {
+  trigger: TriggerRect;
+  viewport: Viewport;
+  /** Width the menu wants when there is room for it. */
+  preferredWidth: number;
+  /** Narrow viewport band — shrink to fit rather than keeping the full width. */
+  narrow: boolean;
+  /** The menu's natural (unconstrained) height. */
+  contentHeight: number;
+  /** Space between trigger and menu. */
+  gap?: number;
+  /** Below this much room underneath, opening downward is not worth it. */
+  minDropHeight?: number;
+  margin?: number;
+}
+
+export interface MenuPlacement {
+  left: number;
+  top: number;
+  width: number;
+  /** Cap for the menu's height — the menu scrolls past it, never truncates. */
+  maxHeight: number;
+  /** Opened above the trigger instead of below. */
+  flipped: boolean;
+}
+
+/**
+ * Place a menu anchored under (or over) a trigger, right-aligned to it, fully
+ * inside the viewport.
+ *
+ * Pure, so the behaviour that matters — a narrow viewport shrinks the menu, a
+ * short one caps and scrolls it, and neither can push it off-screen — is
+ * unit-tested without a DOM. This is the logic behind the layout menu's
+ * overflow fix; a hand-rolled `position: absolute; right: 0` had none of it.
+ */
+export function resolveMenuPlacement({
+  trigger,
+  viewport,
+  preferredWidth,
+  narrow,
+  contentHeight,
+  gap = 6,
+  minDropHeight = 260,
+  margin = VIEWPORT_MARGIN,
+}: MenuPlacementInput): MenuPlacement {
+  const width = narrow
+    ? Math.min(preferredWidth, Math.max(0, viewport.w - margin * 2))
+    : preferredWidth;
+
+  const below = viewport.h - trigger.bottom - gap - margin;
+  const above = trigger.top - gap - margin;
+  // Flip only when downward is genuinely cramped AND upward is roomier —
+  // otherwise a menu near the bottom would flip for no gain.
+  const flipped = below < minDropHeight && above > below;
+
+  const maxHeight = Math.max(160, flipped ? above : below);
+  const height = Math.min(contentHeight, maxHeight);
+  const top = flipped ? trigger.top - gap - height : trigger.bottom + gap;
+
+  const clamped = clampToViewport(
+    { x: trigger.right - width, y: top },
+    { w: width, h: height },
+    viewport,
+    margin
+  );
+
+  return { left: clamped.x, top: clamped.y, width, maxHeight, flipped };
+}
+
 /**
  * Resolve the effective top-left for the indicator. A `null` stored position
  * falls back to the top-right anchor; a stored position is clamped into the

@@ -79,8 +79,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
   flex-shrink: 0;
   padding: 0;
   border: none;
@@ -237,7 +237,7 @@
 
 .compact-number-input {
   width: 64px;
-  height: 28px;
+  height: var(--control-height-md);
   padding: 0 var(--space-2);
   padding-right: var(--space-1);
   font-size: var(--font-size-sm);
@@ -379,7 +379,7 @@
 /* Text Input */
 .property-text-input {
   width: 100%;
-  height: 30px;
+  height: var(--control-height-md);
   padding: 0 10px;
   font-size: var(--font-size-sm);
   border: 1px solid var(--border-color-input);
@@ -452,7 +452,7 @@
 
 .align-button {
   width: 28px;
-  height: 28px;
+  height: var(--control-height-md);
   padding: 0;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
@@ -506,7 +506,7 @@
 
 .compact-select {
   flex: 1;
-  height: 28px;
+  height: var(--control-height-md);
   padding: 0 var(--space-2);
   font-size: var(--font-size-sm);
   border: 1px solid var(--border-color-input);
@@ -637,8 +637,8 @@
 }
 
 .compact-checkbox-row input[type="checkbox"]:not(.compact-checkbox) {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   margin: 0;
   flex-shrink: 0;
   accent-color: var(--color-primary);
@@ -659,7 +659,7 @@
 .rotation-input {
   flex: 1;
   min-width: 0;
-  height: 28px;
+  height: var(--control-height-md);
   padding: 0 var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
@@ -691,7 +691,7 @@
 }
 
 .rotation-unit-toggle button {
-  height: 28px;
+  height: var(--control-height-md);
   min-width: 30px;
   padding: 0 var(--space-2);
   border: none;
@@ -1601,7 +1601,7 @@
 .uml-member-name,
 .uml-member-type,
 .swimlane-lane-name {
-  height: 28px;
+  height: var(--control-height-md);
   padding: 0 var(--space-2);
   min-width: 64px;
 }
@@ -1612,7 +1612,7 @@
 }
 
 .uml-member-visibility {
-  height: 28px;
+  height: var(--control-height-md);
 }
 
 .erd-members-list,
@@ -1759,4 +1759,145 @@
   font-size: 11px;
   opacity: 0.7;
   font-style: italic;
+}
+
+/* --- Quick bar -----------------------------------------------------------
+ * The always-visible strip of shared properties under the panel header. Reads
+ * as a toolbar, not a form: no labels, no group card, controls sized to their
+ * content. That is what keeps it from looking like a second copy of the
+ * Appearance section rather than a shortcut to it. */
+.property-quick-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* The swatch-only colour inputs collapse to just their button. */
+.property-quick-bar .compact-color-input--swatch-only,
+.property-quick-bar .compact-color-input--swatch-only .compact-color-controls {
+  flex: 0 0 auto;
+  gap: 0;
+}
+
+.property-quick-bar-slot {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* Punch the centre out of the stroke swatch so the colour reads as a ring —
+ * the same way a stroke reads on the canvas — which is what tells the two
+ * otherwise-identical swatches apart without labelling them. */
+.property-quick-bar-slot--stroke .compact-color-swatch::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 2px;
+  background: var(--bg-secondary);
+}
+
+/* Keep the "A" (auto) and "/" (none) badges above that cut-out. */
+.property-quick-bar-slot--stroke .compact-color-swatch > span {
+  position: relative;
+  z-index: 1;
+}
+
+.property-quick-bar-opacity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted, var(--text-secondary));
+}
+
+.property-quick-bar-opacity .compact-slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.property-quick-bar-value {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- One form grid per section -------------------------------------------
+ * Each row type used to size its own label column — 40px (colour), 55px
+ * (number / slider / info), 65px (a long colour label), 70px (rotation) — so
+ * controls began at four different x positions and ended at three different
+ * right edges. Nothing was misaligned by intent; the columns simply never
+ * agreed. Pin one label column and let every fluid control run to a single
+ * right edge, and the section reads as one form instead of a stack of
+ * independently-built rows.
+ *
+ * Scoped under `.property-section-body` (0,2,0) so these outrank each
+ * component's own bare-class rule (0,1,0) regardless of CSS import order —
+ * the label widths live in three separate files. */
+.property-section-body .number-input-label,
+.property-section-body .compact-number-label,
+.property-section-body .compact-slider-label,
+.property-section-body .compact-color-label,
+.property-section-body .compact-select-label,
+.property-section-body .compact-string-label,
+.property-section-body .info-label {
+  flex: 0 0 72px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Editable controls fill the column. This is also the "larger targets" win:
+ * a full-width stepper turns a 22px increment button into a comfortable one
+ * without changing its height. Read-only `.info-value` stays a natural-width
+ * chip — stretching a value you cannot edit only adds noise. */
+.property-section-body .number-input-container,
+.property-section-body .compact-number-input {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* The stepper's own field is fixed at 44px; without this it stays 44px inside
+ * a stretched container and the whole control bunches against the left border. */
+.property-section-body .number-input-field {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+/* A suffix ("px") is the flex sibling that gets squeezed once the control
+ * grows — pin it so a long value can never eat its label. */
+.property-section-body .number-input-suffix {
+  flex-shrink: 0;
+}
+
+/* `.compact-number-row` pushed its input to the far edge with space-between,
+ * which was the one row type that right-aligned. Now that the input flexes,
+ * the gap after the label is all the separation it needs. */
+.property-section-body .compact-number-row {
+  justify-content: flex-start;
+}
+
+/* Narrow panel: give the controls the room instead. The query targets the
+ * labels, not `.property-section-body` — the body IS the container, and a
+ * container query can only style a container's descendants, never itself.
+ * Must also sit BELOW the rules it overrides: a container query carries no
+ * specificity bonus, so source order is what decides. */
+@container (max-width: 280px) {
+  .property-section-body .number-input-label,
+  .property-section-body .compact-number-label,
+  .property-section-body .compact-slider-label,
+  .property-section-body .compact-color-label,
+  .property-section-body .compact-select-label,
+  .property-section-body .compact-string-label,
+  .property-section-body .info-label {
+    flex-basis: 56px;
+  }
 }

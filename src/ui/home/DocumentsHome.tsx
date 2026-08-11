@@ -41,7 +41,8 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
-import { useDocumentBrowserModel, SORT_LABELS } from '../settings/useDocumentBrowserModel';
+import { useDocumentBrowserModel } from '../settings/useDocumentBrowserModel';
+import { BrowserViewMenu } from './BrowserViewMenu';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
 import { CollectionActionsMenu } from '../settings/CollectionActionsMenu';
 import { isWorkspaceCollection } from '../../store/collectionStore';
@@ -59,10 +60,14 @@ import { RailWorkspaceSwitcher } from './RailWorkspaceSwitcher';
 import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
-import { formatFileSize } from '../../utils/imageUtils';
+import {
+  formatStorageSize,
+  formatStoragePair,
+  storagePercent,
+} from '../../utils/byteSize';
+import { CapacityRing, type CapacitySegment } from './CapacityRing';
 import { openCloudSignIn } from '../cloud/cloudSignInStore';
 import type {
-  DocumentBrowserGroupBy,
   DocumentBrowserSort,
   DocumentBrowserView,
 } from '../../store/uiPreferencesStore';
@@ -331,8 +336,16 @@ export function DocumentsHome({
   // query. Skipped for tiny libraries (≤4 docs) where it would just duplicate
   // the table below (JP-444).
   const recents = useMemo(() => documentList.slice(0, 6), [documentList]);
+  // Grid view is excluded (JP-477): once the grid cards carry the same
+  // thumbnails, the strip is the first six of the list rendered twice, one row
+  // above itself. It still earns its place over the list view, where it's the
+  // only visual representation on screen.
   const showRecents =
-    nav === 'all' && collectionFilter === null && !searchQuery && documentList.length > 4;
+    view === 'list' &&
+    nav === 'all' &&
+    collectionFilter === null &&
+    !searchQuery &&
+    documentList.length > 4;
 
   const activeLabel = collectionFilter
     ? (collections.find((c) => c.id === collectionFilter)?.name ?? 'Collection')
@@ -485,24 +498,35 @@ export function DocumentsHome({
             onClick={() => goMainView('storage')}
             title="Manage storage"
           >
-            <div className="dh-storage-top">
-              <Database size={14} aria-hidden="true" />
-              <span>Storage</span>
-              <span className="dh-storage-manage">Manage</span>
-            </div>
-            <StorageMeter
-              label="Local · this device"
-              used={storage ? storage.used : null}
-              quota={storage && storage.available > 0 ? storage.available : null}
-              pending={storage === null}
-            />
-            {signedIn && (
-              <StorageMeter
-                label="Cloud workspace"
-                used={relayUsage ? relayUsage.storageBytes : null}
-                quota={relayUsage ? relayUsage.storageQuota : null}
-                pending={relayUsage === null}
-                over={atCloudCap}
+            {/* The ring reports whichever store is the one that can actually
+                run out: the cloud workspace when signed in, otherwise the
+                device. The other becomes a one-line footnote — two full meters
+                is one more than the rail has room for. The scope doubles as the
+                card's eyebrow, so there's no separate "Storage" header row for
+                it to contradict. */}
+            {signedIn ? (
+              <>
+                <StorageHeadline
+                  scope="Cloud workspace"
+                  used={relayUsage ? relayUsage.storageBytes : null}
+                  quota={relayUsage ? relayUsage.storageQuota : null}
+                  pending={relayUsage === null}
+                  over={atCloudCap}
+                  shares={resolveShares(relayUsage)}
+                />
+                <StorageFootnote
+                  label="This device"
+                  used={storage ? storage.used : null}
+                  quota={storage && storage.available > 0 ? storage.available : null}
+                  pending={storage === null}
+                />
+              </>
+            ) : (
+              <StorageHeadline
+                scope="This device"
+                used={storage ? storage.used : null}
+                quota={storage && storage.available > 0 ? storage.available : null}
+                pending={storage === null}
               />
             )}
           </button>
@@ -606,8 +630,13 @@ export function DocumentsHome({
               <span>Editor</span>
             </button>
           )}
+          {/* Title carries the count, so the list below doesn't repeat it in a
+              heading of its own. */}
           <div className="dh-crumb">
             <strong>{activeLabel}</strong>
+            <span className="dh-crumb-count">
+              {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
+            </span>
           </div>
           <div className="dh-search">
             <Search size={16} aria-hidden="true" />
@@ -621,75 +650,63 @@ export function DocumentsHome({
             />
             <kbd className="dh-search-kbd" aria-hidden="true">/</kbd>
           </div>
+          {/* Two clusters, not one undifferentiated row: how the library is
+              displayed (view · sort/group · refresh), then what you do to it
+              (import · new). The rule between them is the hierarchy. */}
           <div className="dh-top-actions">
-            {/* In list view the sortable column headers own sorting (JP-444);
-                the dropdown remains for grid view, which has no headers. */}
-            {view === 'grid' && (
-              <label className="dh-sort">
-                <span className="dh-sort-label">Sort</span>
-                <select value={sort} onChange={(e) => setSort(e.target.value as DocumentBrowserSort)}>
-                  {Object.entries(SORT_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label className="dh-sort">
-              <span className="dh-sort-label">Group</span>
-              <select
-                value={groupBy}
-                onChange={(e) => setGroupBy(e.target.value as DocumentBrowserGroupBy)}
-                title="Group documents by collection"
-              >
-                <option value="none">None</option>
-                <option value="collection">Collection</option>
-              </select>
-            </label>
-            <div className="dh-view-toggle" role="group" aria-label="View mode">
+            <div className="dh-top-utils">
+              <div className="dh-view-toggle" role="group" aria-label="View mode">
+                <button
+                  className={view === 'list' ? 'on' : ''}
+                  onClick={() => setView('list' as DocumentBrowserView)}
+                  title="List view"
+                  aria-label="List view"
+                  aria-pressed={view === 'list'}
+                >
+                  <List size={16} aria-hidden="true" />
+                </button>
+                <button
+                  className={view === 'grid' ? 'on' : ''}
+                  onClick={() => setView('grid' as DocumentBrowserView)}
+                  title="Grid view"
+                  aria-label="Grid view"
+                  aria-pressed={view === 'grid'}
+                >
+                  <LayoutGrid size={16} aria-hidden="true" />
+                </button>
+              </div>
+              <BrowserViewMenu
+                view={view}
+                sort={sort}
+                setSort={setSort}
+                groupBy={groupBy}
+                setGroupBy={setGroupBy}
+              />
               <button
-                className={view === 'list' ? 'on' : ''}
-                onClick={() => setView('list' as DocumentBrowserView)}
-                title="List view"
-                aria-label="List view"
-                aria-pressed={view === 'list'}
+                className="dh-refresh"
+                onClick={() => {
+                  setRefreshSpin(true);
+                  handleRefresh();
+                  window.setTimeout(() => setRefreshSpin(false), 600);
+                }}
+                title="Refresh document list"
+                aria-label="Refresh document list"
               >
-                <List size={16} aria-hidden="true" />
-              </button>
-              <button
-                className={view === 'grid' ? 'on' : ''}
-                onClick={() => setView('grid' as DocumentBrowserView)}
-                title="Grid view"
-                aria-label="Grid view"
-                aria-pressed={view === 'grid'}
-              >
-                <LayoutGrid size={16} aria-hidden="true" />
+                <RefreshCw
+                  size={16}
+                  aria-hidden="true"
+                  className={isFetchingRemote || refreshSpin ? 'dh-refresh-spin' : undefined}
+                />
               </button>
             </div>
-            <button
-              className="dh-refresh"
-              onClick={() => {
-                setRefreshSpin(true);
-                handleRefresh();
-                window.setTimeout(() => setRefreshSpin(false), 600);
-              }}
-              title="Refresh document list"
-              aria-label="Refresh document list"
-            >
-              <RefreshCw
-                size={16}
-                aria-hidden="true"
-                className={isFetchingRemote || refreshSpin ? 'dh-refresh-spin' : undefined}
-              />
-            </button>
+            <span className="dh-top-rule" aria-hidden="true" />
             <button
               className="dh-import"
               onClick={handleImport}
               title="Import a .docushark document (with its assets)"
             >
               <Upload size={16} aria-hidden="true" />
-              <span>Import</span>
+              <span className="dh-import-label">Import</span>
             </button>
             <button className="dh-new" onClick={onNew} title="New document">
               <FilePlus2 size={16} aria-hidden="true" />
@@ -735,12 +752,10 @@ export function DocumentsHome({
             </section>
           ) : (
             <section className="dh-section dh-section--list">
-              <h2 className="dh-section-title">
-                {searchQuery ? 'Results' : activeLabel}
-                <span className="dh-section-count">
-                  {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
-                </span>
-              </h2>
+              {/* No heading here — the header's title + count already name this
+                  list. A search gets one, because "Results" is the only case
+                  where the list is no longer what the header says it is. */}
+              {searchQuery && <h2 className="dh-section-title">Results</h2>}
               {view === 'list' && documentList.length > 0 && (
                 <ColumnHeader sort={sort} setSort={setSort} />
               )}
@@ -831,43 +846,133 @@ function ColumnHeader({
  * misleading full/empty track (e.g. WebKitGTK reports 0 local quota, and an
  * unlimited cloud quota reports null).
  */
-function StorageMeter({
-  label,
+/** The three metered shares of a cloud workspace, when the relay reports them. */
+export interface StorageShares {
+  docBytes: number;
+  blobBytes: number;
+  configBytes: number;
+}
+
+/**
+ * The share breakdown for the meter, or `null` when it can't be shown honestly.
+ *
+ * Requires every share to be present AND to actually sum to the headline
+ * number. A relay that predates one of them reports a subset, and rendering a
+ * partial split would draw segments that visibly fall short of the total the
+ * label states — worse than no breakdown at all. The single-fill bar is the
+ * correct fallback, not a bug.
+ */
+export function resolveShares(usage: RelayUsage | null): StorageShares | null {
+  if (!usage) return null;
+  const { docBytes, blobBytes, configBytes } = usage;
+  if (typeof docBytes !== 'number' || typeof blobBytes !== 'number') return null;
+  const config = typeof configBytes === 'number' ? configBytes : 0;
+  if (docBytes + blobBytes + config !== usage.storageBytes) return null;
+  return { docBytes, blobBytes, configBytes: config };
+}
+
+/**
+ * The rail's primary storage readout: a `CapacityRing` beside the scope and the
+ * used/allowance pair.
+ *
+ * The JP-301 share breakdown is still here — it's drawn as the ring's arcs, and
+ * the named byte counts moved to this element's tooltip (and the full Storage
+ * view, one click away). That was the trade for a card that no longer wraps its
+ * legend onto a second line.
+ */
+function StorageHeadline({
+  scope,
   used,
   quota,
   pending,
   over = false,
+  shares = null,
+}: {
+  scope: string;
+  used: number | null;
+  quota: number | null;
+  pending: boolean;
+  /** At/over quota (JP-443) — renders the ring in the danger color. */
+  over?: boolean;
+  /** Per-category breakdown (JP-301), when the relay reports one that sums. */
+  shares?: StorageShares | null;
+}) {
+  const segments: CapacitySegment[] | null = shares
+    ? [
+        { key: 'docs', label: 'Documents', bytes: shares.docBytes },
+        { key: 'files', label: 'Files', bytes: shares.blobBytes },
+        { key: 'config', label: 'Configuration', bytes: shares.configBytes },
+      ]
+    : null;
+
+  const value = pending ? 'Calculating…' : used === null ? '—' : formatStoragePair(used, quota);
+
+  // Named shares live here rather than in a permanent legend. Configuration
+  // gets its plain-language gloss appended — it's the one share whose name
+  // doesn't explain itself.
+  const tooltip = segments
+    ? segments
+        .map((s) => `${s.label}: ${formatStorageSize(s.bytes)}`)
+        .concat('Configuration is your synced style profiles.')
+        .join('\n')
+    : undefined;
+
+  return (
+    <span className="dh-storage-main" title={tooltip}>
+      <CapacityRing
+        used={used}
+        quota={quota}
+        segments={segments}
+        over={over}
+        pending={pending}
+        size={46}
+      />
+      <span className="dh-storage-readout">
+        <span className="dh-storage-scope-row">
+          <span className="dh-storage-scope">{scope}</span>
+          <span className="dh-storage-manage">Manage</span>
+        </span>
+        <span className={`dh-storage-value${over ? ' dh-storage-value--over' : ''}`}>{value}</span>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The secondary store, as one quiet line.
+ *
+ * It carries a bar only once it's half full — below that the bar is a sliver of
+ * noise reporting a non-problem, and `navigator.storage.estimate()` reports no
+ * quota at all on WebKitGTK, where a drawn track would be a fabrication.
+ */
+function StorageFootnote({
+  label,
+  used,
+  quota,
+  pending,
 }: {
   label: string;
   used: number | null;
   quota: number | null;
   pending: boolean;
-  /** At/over quota (JP-443) — renders the fill in the danger color. */
-  over?: boolean;
 }) {
-  const pct = used !== null && quota !== null && quota > 0 ? Math.min(100, (used / quota) * 100) : null;
-  const value = pending
-    ? 'Calculating…'
-    : used === null
-      ? '—'
-      : quota !== null && quota > 0
-        ? `${formatFileSize(used)} / ${formatFileSize(quota)}`
-        : `${formatFileSize(used)} used`;
+  const pct = storagePercent(used ?? 0, quota);
+  const value = pending ? 'Calculating…' : used === null ? '—' : formatStorageSize(used);
+  const showBar = !pending && pct !== null && pct >= 50;
+
   return (
-    <div className="dh-storage-row">
-      <div className="dh-storage-rowtop">
-        <span className="dh-storage-rowlabel">{label}</span>
-        <span className="dh-storage-rowval">{value}</span>
-      </div>
-      {pct !== null && (
-        <div className="dh-storage-bar">
-          <div
-            className={`dh-storage-fill${over ? ' dh-storage-fill--over' : ''}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+    <span className="dh-storage-foot">
+      <span className="dh-storage-foot-row">
+        <HardDrive size={12} aria-hidden="true" />
+        <span className="dh-storage-foot-label">{label}</span>
+        <span className="dh-storage-foot-val">{value}</span>
+      </span>
+      {showBar && (
+        <span className="dh-storage-foot-bar">
+          <span className="dh-storage-foot-fill" style={{ width: `${pct}%` }} />
+        </span>
       )}
-    </div>
+    </span>
   );
 }
 

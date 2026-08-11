@@ -36,9 +36,21 @@ Change layout any time — there are three ways:
 - The keyboard: <kbd>Cmd/Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>1</kbd>–<kbd>4</kbd>
 - The command palette (<kbd>Cmd/Ctrl</kbd> + <kbd>K</kbd>) → "Switch to … layout"
 
+The layout chip opens the **View menu**: the four layouts as preview tiles, with
+the active one marked, and below them a tile per panel to show or hide it. That
+panel row is the quickest way to bring back a panel you've hidden — the
+Navigator in particular starts hidden in every layout. The menu narrows and
+scrolls to fit small windows, so it stays usable at any size.
+
 Your layout is an **app-level** setting — a single active mode for the whole
 editor, not a per-document one. Customizations you make to one layout (say, moving
 the properties panel) stay scoped to that layout and don't disturb the others.
+
+Beyond the panels each layout shows by default, the opt-in **Navigator** panel
+(every page in the document, with subpage structure and reordering — see
+[Multi-Page Documents](./multi-page-documents#the-navigator-panel)) can be
+enabled per layout under **Settings → Appearance → Layout**, or with **Toggle
+Navigator panel** in the command palette.
 
 ## Focus in Relaxed
 
@@ -52,6 +64,21 @@ control so you can shift emphasis without leaving the layout:
 
 Switch focus from the control in the toolbar or with
 <kbd>Cmd/Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>\\</kbd>.
+
+## Reading Width
+
+Wherever the document is the main region — Write and Split both — the writing
+column stops at a comfortable measure rather than stretching the full width of
+the window, and sits centered with a margin either side.
+
+Choose how far it grows from **Settings → Layout → Reading width**:
+
+- **Normal** — a comfortable measure for reading. Best on laptop screens.
+- **Wide** — longer lines with less empty space. Best on large or ultrawide
+  displays.
+
+The margins shrink automatically as the space narrows, so a document sharing the
+window with the canvas still gets breathing room without wasting it.
 
 ## Custom Window Chrome
 

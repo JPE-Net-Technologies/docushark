@@ -20,7 +20,8 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { formatFileSize, resolveViewerCategory } from '../utils/fileUtils';
+import { resolveViewerCategory } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { downloadBlob } from '../utils/downloadUtils';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { Icon } from './icons';

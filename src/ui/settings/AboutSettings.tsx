@@ -9,7 +9,9 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Clock, GitCommitHorizontal, Monitor, Package, Radio, Tag } from 'lucide-react';
 import { useConnectionStore } from '../../store/connectionStore';
+import { StatusTile, TileGroup } from '../tiles/Tile';
 import './AboutSettings.css';
 
 const PLATFORM = __IS_TAURI__ ? 'Desktop (Tauri)' : 'Web (PWA)';
@@ -66,40 +68,46 @@ export function AboutSettings() {
     <div className="about-settings">
       <h3 className="settings-section-title">About</h3>
 
-      <div className="settings-group">
-        <h4 className="settings-group-title">DocuShark</h4>
-        <dl className="about-list">
-          <AboutRow label="Version" value={__APP_VERSION__} mono />
-          <AboutRow label="Commit" value={__GIT_SHA__} mono />
-          <AboutRow label="Built" value={formatBuildTime(__BUILD_TIME__)} />
-          <AboutRow label="Platform" value={PLATFORM} />
-        </dl>
-      </div>
+      <TileGroup title="DocuShark" icon={Package}>
+        <StatusTile icon={Tag} label="Version" value={__APP_VERSION__} className="about-mono" />
+        <StatusTile
+          icon={GitCommitHorizontal}
+          label="Commit"
+          value={__GIT_SHA__}
+          className="about-mono"
+        />
+        <StatusTile icon={Clock} label="Built" value={formatBuildTime(__BUILD_TIME__)} />
+        <StatusTile icon={Monitor} label="Platform" value={PLATFORM} />
+      </TileGroup>
 
-      <div className="settings-group">
-        <h4 className="settings-group-title">Relay</h4>
+      <TileGroup title="Relay" icon={Radio}>
         {relay ? (
-          <dl className="about-list">
-            <AboutRow label="Version" value={relay.version} mono />
-            {relay.commit ? <AboutRow label="Commit" value={relay.commit} mono /> : null}
-            <AboutRow label="Status" value="Connected" />
-          </dl>
+          <>
+            <StatusTile icon={Tag} label="Version" value={relay.version} className="about-mono" />
+            {relay.commit ? (
+              <StatusTile
+                icon={GitCommitHorizontal}
+                label="Commit"
+                value={relay.commit}
+                className="about-mono"
+              />
+            ) : null}
+            <StatusTile icon={Radio} label="Status" value="Connected" />
+          </>
         ) : (
-          <p className="settings-hint">
-            {connected ? 'Relay version unavailable.' : 'Not connected to a relay.'}
-          </p>
+          <StatusTile
+            icon={Radio}
+            label="Status"
+            value={connected ? 'Unavailable' : 'Not connected'}
+            hint={
+              connected
+                ? 'Connected, but this relay did not report a version.'
+                : 'Connect to a workspace to see its relay build.'
+            }
+          />
         )}
-      </div>
+      </TileGroup>
     </div>
-  );
-}
-
-function AboutRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <>
-      <dt className="about-label">{label}</dt>
-      <dd className={`about-value${mono ? ' about-value-mono' : ''}`}>{value}</dd>
-    </>
   );
 }
 

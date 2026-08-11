@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square } from 'lucide-react';
+import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square, Blend } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
@@ -53,7 +53,7 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 // GroupStyles types are used via the PatternPicker, ShadowEditor, LabelPositionPicker components
 import type { ShapeMetadata, PropertyDefinition, PropertySection as PropertySectionType } from '../shapes/ShapeMetadata';
 import { replaceFileContents } from '../services/FileReplaceService';
-import { formatFileSize } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { centeredIconRenderSize, iconOnlyLabelOffsetY } from '../utils/iconRenderer';
 import { Icon } from './icons';
@@ -183,6 +183,92 @@ function InfoRow({ label, value }: { label: string; value: string | number }) {
     <div className="info-row">
       <span className="info-label">{label}</span>
       <span className="info-value">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Quick bar — the handful of properties worth reaching without hunting for the
+ * right group, pinned above the scrolling section list so they stay reachable
+ * however far you have scrolled and whichever sections are collapsed.
+ *
+ * Driven off `BaseShape` (fill / stroke / opacity) rather than a per-type list
+ * of "primary" properties, because the panel has two rendering paths: core
+ * shapes (rectangle, ellipse, text, connector…) render from hand-written JSX
+ * below, while library shapes render from `ShapeMetadata.properties`. A
+ * `primary` flag on the metadata would therefore only ever surface on library
+ * shapes — half the panel. These three fields are the intersection that always
+ * exists, so the bar cannot drift out of step with either path or rot when a
+ * shape type is added.
+ *
+ * The fill/stroke visibility conditions are copied from the Appearance section
+ * below rather than tightened: the bar is a shortcut to those controls, so it
+ * must show exactly what the section shows. (A line keeps a non-null `fill`
+ * it never paints, and both surfaces offer it — consistently.)
+ */
+function PropertyQuickBar({
+  shape,
+  selectedShapes,
+  onBulkUpdate,
+}: {
+  shape: Shape;
+  selectedShapes: Shape[];
+  onBulkUpdate: (updates: Partial<Shape>) => void;
+}) {
+  // Text uses `fill` as its glyph colour, so it shows even when null.
+  const isTextShape = isText(shape);
+  const showFill = shape.fill !== null || isTextShape;
+  const showStroke = shape.stroke !== null;
+
+  const mixed = (getter: (s: Shape) => unknown) =>
+    getSharedValue(selectedShapes, getter) === MIXED;
+
+  const fillLabel = `${isTextShape ? 'Color' : 'Fill'}${mixed((s) => s.fill) ? ' (Mixed)' : ''}`;
+  const strokeLabel = `Stroke${mixed((s) => s.stroke) ? ' (Mixed)' : ''}`;
+  const opacityLabel = `Opacity${mixed((s) => s.opacity) ? ' (Mixed)' : ''}`;
+
+  return (
+    <div className="property-quick-bar" role="group" aria-label="Quick properties">
+      {/* Slot classes carry the fill-vs-stroke distinction: unlabelled, two
+          identical swatches are indistinguishable, so the stroke one is drawn
+          as a ring the way a stroke reads on the canvas. */}
+      {showFill && (
+        <span className="property-quick-bar-slot property-quick-bar-slot--fill">
+          <CompactColorInput
+            label={fillLabel}
+            value={shape.fill || ''}
+            onChange={(color) => onBulkUpdate({ fill: color })}
+            showNoFill={!isTextShape}
+            showAuto
+            swatchOnly
+          />
+        </span>
+      )}
+      {showStroke && (
+        <span className="property-quick-bar-slot property-quick-bar-slot--stroke">
+          <CompactColorInput
+            label={strokeLabel}
+            value={shape.stroke || ''}
+            onChange={(color) => onBulkUpdate({ stroke: color })}
+            showAuto
+            swatchOnly
+          />
+        </span>
+      )}
+      <span className="property-quick-bar-opacity" title={opacityLabel}>
+        <Blend size={14} strokeWidth={2} aria-hidden="true" />
+        <input
+          type="range"
+          className="compact-slider"
+          value={shape.opacity}
+          onChange={(e) => onBulkUpdate({ opacity: parseFloat(e.target.value) })}
+          min={0}
+          max={1}
+          step={0.05}
+          aria-label={opacityLabel}
+        />
+        <span className="property-quick-bar-value">{Math.round(shape.opacity * 100)}%</span>
+      </span>
     </div>
   );
 }
@@ -1684,6 +1770,18 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
 
       {/* Alignment Panel for multi-selection */}
       <AlignmentPanel />
+
+      {/* Sits OUTSIDE `.property-panel-content` on purpose: pinning it inside
+          the scroll container would need `position: sticky`, which then
+          competes with the section headers' own sticky offset. Out here it is
+          simply always visible, and the headers keep their behaviour. */}
+      {!isGroupSelected && (
+        <PropertyQuickBar
+          shape={shape}
+          selectedShapes={selectedShapes}
+          onBulkUpdate={handleBulkUpdate}
+        />
+      )}
 
       <div className="property-panel-content" ref={contentRef}>
         {/* Shape Type Badge */}

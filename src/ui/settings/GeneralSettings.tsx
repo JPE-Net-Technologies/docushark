@@ -1,19 +1,26 @@
 /**
- * General Settings component for the Settings modal.
+ * General Settings component for the Settings sheet.
  *
  * Contains:
  * - Default style profile
  * - Show/hide static properties
  * - Hide default style profiles
+ * - Minimap + layer-click focus
  *
  * (The connector routing default moved to last-used memory, set from the
  * canvas toolbar's connector dropdown — there's no knob for it here anymore.)
+ *
+ * On the shared tile system (JP-253), same as Appearance. The four checkboxes
+ * become toggle tiles: a checkbox plus a separate label plus a hint below was
+ * three elements to say one thing.
  */
 
 import { useMemo } from 'react';
+import { Crosshair, Eye, EyeOff, Map, Palette, RotateCcw, Shapes, Monitor } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useStyleProfileStore } from '../../store/styleProfileStore';
 import { RichSelect, type RichSelectItem } from '../components/RichSelect';
+import { ActionTile, CustomTile, TileGroup, ToggleTile } from '../tiles/Tile';
 import './GeneralSettings.css';
 
 export function GeneralSettings() {
@@ -45,18 +52,21 @@ export function GeneralSettings() {
     [profiles, hideDefaultStyleProfiles]
   );
 
+  const activeProfileName =
+    styleProfileItems.find((i) => i.value === (defaultStyleProfileId ?? ''))?.label ?? 'None';
+
   return (
     <div className="general-settings">
-      <h3 className="settings-section-title">General Settings</h3>
+      <h3 className="settings-section-title">General</h3>
 
-      {/* Style Settings */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Shapes</h4>
-
-        <div className="settings-row">
-          <label className="settings-label">
-            Default Style Profile
-          </label>
+      <TileGroup title="Shapes" icon={Shapes}>
+        <CustomTile
+          wide
+          icon={Palette}
+          label="Default style profile"
+          value={activeProfileName}
+          hint="New shapes are created with this style applied."
+        >
           <RichSelect
             value={defaultStyleProfileId ?? ''}
             onChange={handleStyleProfileChange}
@@ -65,91 +75,57 @@ export function GeneralSettings() {
             className="settings-select"
             align="end"
           />
-          <span className="settings-hint">
-            New shapes will be created with this style applied
-          </span>
-        </div>
-      </div>
+        </CustomTile>
+      </TileGroup>
 
-      {/* Display Settings */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Display</h4>
+      <TileGroup title="Display" icon={Monitor}>
+        <ToggleTile
+          icon={Eye}
+          label="Static properties"
+          checked={showStaticProperties}
+          onCheckedChange={setShowStaticProperties}
+          hint="Show read-only properties (like ID) in the Property Panel."
+        />
 
-        <div className="settings-row settings-row-checkbox">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={showStaticProperties}
-              onChange={(e) => setShowStaticProperties(e.target.checked)}
-            />
-            <span className="settings-checkbox-text">Show Static Properties</span>
-          </label>
-          <span className="settings-hint">
-            Display read-only properties (like ID) in the Property Panel
-          </span>
-        </div>
+        <ToggleTile
+          icon={EyeOff}
+          label="Hide default style profiles"
+          checked={hideDefaultStyleProfiles}
+          onCheckedChange={setHideDefaultStyleProfiles}
+          hint="Show only your custom profiles in the Property Panel."
+        />
 
-        <div className="settings-row settings-row-checkbox">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={hideDefaultStyleProfiles}
-              onChange={(e) => setHideDefaultStyleProfiles(e.target.checked)}
-            />
-            <span className="settings-checkbox-text">Hide Default Style Profiles</span>
-          </label>
-          <span className="settings-hint">
-            Only show custom style profiles in the Property Panel
-          </span>
-        </div>
+        <ToggleTile
+          icon={Map}
+          label="Minimap"
+          checked={showMinimap}
+          onCheckedChange={setShowMinimap}
+          hint="Experimental. Helps navigate large canvases."
+        />
 
-        <div className="settings-row settings-row-checkbox">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={showMinimap}
-              onChange={(e) => setShowMinimap(e.target.checked)}
-            />
-            <span className="settings-checkbox-text">Show Minimap (Experimental)</span>
-          </label>
-          <span className="settings-hint">
-            Display a minimap for navigating large canvases
-          </span>
-        </div>
+        <ToggleTile
+          icon={Crosshair}
+          label="Auto-focus on layer click"
+          checked={layerClickFocusShape}
+          onCheckedChange={setLayerClickFocusShape}
+          hint="Pan the camera to a shape when you click it in the Layers panel."
+        />
+      </TileGroup>
 
-        <div className="settings-row settings-row-checkbox">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={layerClickFocusShape}
-              onChange={(e) => setLayerClickFocusShape(e.target.checked)}
-            />
-            <span className="settings-checkbox-text">Auto-focus on layer click</span>
-          </label>
-          <span className="settings-hint">
-            Automatically pan camera to shape when clicking in the layer panel
-          </span>
-        </div>
-      </div>
-
-      {/* Reset Settings */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Reset</h4>
-        <button
-          className="settings-reset-btn"
+      <TileGroup title="Reset" icon={RotateCcw}>
+        <ActionTile
+          danger
+          icon={RotateCcw}
+          label="Reset settings"
+          value="Back to defaults"
           onClick={() => {
             if (confirm('Reset all settings to defaults?')) {
               resetSettings();
             }
           }}
-        >
-          Reset to Defaults
-        </button>
-      </div>
+          hint="Everything on this tab, restored to its shipped value."
+        />
+      </TileGroup>
     </div>
   );
 }

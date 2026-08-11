@@ -20,7 +20,7 @@
  * the asymmetry.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Bold, Italic, Underline, Strikethrough, Code, Subscript, Superscript,
@@ -40,6 +40,7 @@ import { ImageUploadButton } from './ImageUploadButton';
 import { GalleryUploadButton } from './GalleryUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
+import { ColorPicker, type ColorSpecial } from './color/ColorPicker';
 import { RichSelect, type RichSelectItem } from './components/RichSelect';
 import { InsertLinkDialog } from './InsertLinkDialog';
 import { CitationPickerDialog } from './CitationPickerDialog';
@@ -50,19 +51,6 @@ import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
-
-/** Color palette for text and highlight colors */
-const COLOR_PALETTE = [
-  '#000000', '#434343', '#666666', '#999999', '#b7b7b7', '#cccccc', '#d9d9d9', '#efefef', '#f3f3f3', '#ffffff',
-  '#980000', '#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#4a86e8', '#0000ff', '#9900ff', '#ff00ff',
-  '#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3', '#d9d2e9', '#ead1dc',
-  '#dd7e6b', '#ea9999', '#f9cb9c', '#ffe599', '#b6d7a8', '#a2c4c9', '#a4c2f4', '#9fc5e8', '#b4a7d6', '#d5a6bd',
-];
-
-const HIGHLIGHT_PALETTE = [
-  '#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#ff0000', '#0000ff',
-  '#fff2cc', '#d9ead3', '#d0e0e3', '#cfe2f3', '#d9d2e9', '#ead1dc',
-];
 
 type RibbonTab = 'home' | 'insert' | 'table';
 
@@ -180,21 +168,91 @@ export function DocumentEditorToolbar() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Color handlers that also close the picker
+  // Colour handlers. These deliberately do NOT close the dropdown: the shared
+  // picker's saturation area emits continuously while dragged, so closing on
+  // change would dismiss it on the first pixel of a drag. Clearing a colour
+  // (the "specials" below) is a terminal choice, so those do close.
   const handleSetTextColor = useCallback((color: string) => {
     if (editor) cmd.setTextColor(editor, color);
-    setShowColorPicker(null);
   }, [editor]);
 
   const handleSetHighlight = useCallback((color: string) => {
     if (editor) cmd.setHighlight(editor, color);
-    setShowColorPicker(null);
   }, [editor]);
 
-  const handleSetCellBg = useCallback((color: string | null) => {
+  const handleSetCellBg = useCallback((color: string) => {
     if (editor) cmd.setCellBackground(editor, color);
-    setShowCellBgColor(false);
   }, [editor]);
+
+  /**
+   * Read a colour attribute off the current selection, so each picker's hex
+   * field opens showing the colour actually in effect.
+   */
+  const attrColor = useCallback(
+    (nodeOrMark: string, key: string): string => {
+      if (!editor) return '';
+      const raw: unknown = editor.getAttributes(nodeOrMark)[key];
+      return typeof raw === 'string' ? raw : '';
+    },
+    [editor]
+  );
+
+  const textColor = attrColor('textStyle', 'color');
+  const highlightColor = attrColor('highlight', 'color');
+  const cellBgColor =
+    attrColor('tableCell', 'backgroundColor') || attrColor('tableHeader', 'backgroundColor');
+
+  // "Clear this colour" as the first entry of every picker, so the affordance
+  // sits in the same place on every surface. Each passes its own command —
+  // prose clears a *mark*, which has no sentinel value to write.
+  const textColorSpecials = useMemo<ColorSpecial[]>(
+    () => [
+      {
+        id: 'default',
+        label: 'Default',
+        swatch: 'auto',
+        isActive: !textColor,
+        onSelect: () => {
+          if (editor) cmd.unsetTextColor(editor);
+          setShowColorPicker(null);
+        },
+        hint: "Back to the document's body colour, leaving bold, italic and links untouched.",
+      },
+    ],
+    [editor, textColor]
+  );
+
+  const highlightSpecials = useMemo<ColorSpecial[]>(
+    () => [
+      {
+        id: 'none',
+        label: 'No highlight',
+        swatch: 'none',
+        isActive: !highlightColor,
+        onSelect: () => {
+          if (editor) cmd.unsetHighlight(editor);
+          setShowColorPicker(null);
+        },
+      },
+    ],
+    [editor, highlightColor]
+  );
+
+  const cellBgSpecials = useMemo<ColorSpecial[]>(
+    () => [
+      {
+        id: 'none',
+        label: 'No background',
+        swatch: 'none',
+        isActive: !cellBgColor,
+        onSelect: () => {
+          if (editor) cmd.setCellBackground(editor, null);
+          setShowCellBgColor(false);
+        },
+      },
+    ],
+    [editor, cellBgColor]
+  );
 
   // Math handlers
   const openMathInput = useCallback((isBlock: boolean) => {
@@ -362,11 +420,17 @@ export function DocumentEditorToolbar() {
                 triggerClassName="document-editor-toolbar-btn"
                 title="Text Color"
               >
-                <div className="color-picker-grid">
-                  {COLOR_PALETTE.map((color) => (
-                    <button key={color} className="color-picker-swatch" style={{ backgroundColor: color }} onClick={() => handleSetTextColor(color)} title={color} />
-                  ))}
-                </div>
+                {/* Contrast is measured against white: a document's legibility
+                    that matters is on the printed/exported page, which is white
+                    regardless of the app's current theme. */}
+                <ColorPicker
+                  value={textColor}
+                  onChange={handleSetTextColor}
+                  preset="canvas"
+                  specials={textColorSpecials}
+                  contrastAgainst="#ffffff"
+                  compact
+                />
               </ToolbarDropdown>
 
               <ToolbarDropdown
@@ -377,14 +441,16 @@ export function DocumentEditorToolbar() {
                 triggerClassName="document-editor-toolbar-btn"
                 title="Highlight"
               >
-                <div className="color-picker-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
-                  {HIGHLIGHT_PALETTE.map((color) => (
-                    <button key={color} className="color-picker-swatch" style={{ backgroundColor: color }} onClick={() => handleSetHighlight(color)} title={color} />
-                  ))}
-                </div>
-                <button className="color-picker-clear" onClick={() => { if (editor) cmd.unsetHighlight(editor); setShowColorPicker(null); }}>
-                  Remove Highlight
-                </button>
+                {/* Highlight sits *behind* body text, so contrast is measured
+                    against black — the colour that has to stay readable on it. */}
+                <ColorPicker
+                  value={highlightColor}
+                  onChange={handleSetHighlight}
+                  preset="highlight"
+                  specials={highlightSpecials}
+                  contrastAgainst="#000000"
+                  compact
+                />
               </ToolbarDropdown>
 
               <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} title="Clear Formatting" aria-label="Clear formatting">
@@ -597,14 +663,17 @@ export function DocumentEditorToolbar() {
                 triggerClassName={`document-editor-toolbar-btn ${!isInTable ? 'disabled' : ''}`}
                 title="Cell Background"
               >
-                <div className="color-picker-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
-                  {HIGHLIGHT_PALETTE.map((color) => (
-                    <button key={color} className="color-picker-swatch" style={{ backgroundColor: color }} onClick={() => handleSetCellBg(color)} title={color} />
-                  ))}
-                </div>
-                <button className="color-picker-clear" onClick={() => handleSetCellBg(null)}>
-                  Remove Background
-                </button>
+                {/* Neutrals lead here: table styling is overwhelmingly header
+                    greys and zebra tints, which the old highlighter palette
+                    could not express at all. */}
+                <ColorPicker
+                  value={cellBgColor}
+                  onChange={handleSetCellBg}
+                  preset="document"
+                  specials={cellBgSpecials}
+                  contrastAgainst="#000000"
+                  compact
+                />
               </ToolbarDropdown>
             </div>
 

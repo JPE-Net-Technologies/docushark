@@ -21,6 +21,16 @@ export type NotificationCategory = 'transient' | 'permanent' | 'info';
 export interface Notification {
   /** Unique ID */
   id: string;
+  /**
+   * Optional short headline above the message (JP-479).
+   *
+   * Deliberately optional: every existing caller passes a message only, and a
+   * titled toast is a different shape — a headline you can scan plus a sentence
+   * you can read. Adding one where the message is already a single short
+   * sentence would just say the same thing twice, so most toasts shouldn't
+   * have one.
+   */
+  title?: string;
   /** Message to display */
   message: string;
   /** Severity level */
@@ -41,6 +51,8 @@ export interface Notification {
 
 /** Notification creation options */
 export interface NotificationOptions {
+  /** Optional short headline above the message (JP-479). */
+  title?: string;
   /** Message to display */
   message: string;
   /** Severity level (default: 'info') */
@@ -82,8 +94,22 @@ interface NotificationState {
    */
   update: (
     id: string,
-    changes: Partial<Pick<Notification, 'message' | 'severity' | 'progress'>>,
+    changes: Partial<Pick<Notification, 'title' | 'message' | 'severity' | 'progress'>>,
   ) => void;
+
+  /**
+   * Hold a toast's auto-dismiss countdown where it is (JP-479).
+   *
+   * Called while the pointer is over the toast stack: a timer that keeps
+   * running while you're reading is a timer that deletes the thing you're
+   * reading, and on a toast carrying an action button it can retract the button
+   * out from under the cursor. Idempotent, and a no-op for a toast with no
+   * countdown (`duration: 0`) or one already paused.
+   */
+  pauseDismiss: (id: string) => void;
+
+  /** Resume a paused countdown from wherever it stopped. */
+  resumeDismiss: (id: string) => void;
 
   /** Dismiss a notification by ID */
   dismiss: (id: string) => void;
@@ -96,6 +122,45 @@ interface NotificationState {
 const generateId = (): string => {
   return `notif-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 };
+
+/**
+ * Live auto-dismiss countdowns, keyed by notification id (JP-479).
+ *
+ * Held outside the store: they're host timers, not rendered state, and putting
+ * them in the store would re-render every toast each time one is paused. A
+ * timer is removed the moment its notification leaves, so an evicted or
+ * hand-dismissed toast can't fire a stale dismissal later.
+ */
+interface DismissTimer {
+  handle: ReturnType<typeof setTimeout>;
+  /** Wall-clock ms when the current run began. */
+  startedAt: number;
+  /** Ms left to run when this run began. */
+  remaining: number;
+}
+
+const timers = new Map<string, DismissTimer>();
+
+function armTimer(id: string, ms: number, onFire: (id: string) => void): void {
+  timers.set(id, {
+    handle: setTimeout(() => {
+      timers.delete(id);
+      onFire(id);
+    }, ms),
+    startedAt: Date.now(),
+    remaining: ms,
+  });
+}
+
+function clearTimer(id: string): void {
+  const timer = timers.get(id);
+  if (!timer) return;
+  clearTimeout(timer.handle);
+  timers.delete(id);
+}
+
+/** Paused countdowns, keyed by id → ms still owed. */
+const paused = new Map<string, number>();
 
 /**
  * Default durations by severity. Bumped (JP-237) so toasts linger long enough to
@@ -123,6 +188,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       category: options.category ?? 'info',
       duration: options.duration ?? DEFAULT_DURATIONS[severity],
       createdAt: Date.now(),
+      ...(options.title !== undefined ? { title: options.title } : {}),
       ...(options.actionLabel !== undefined ? { actionLabel: options.actionLabel } : {}),
       ...(options.onAction !== undefined ? { onAction: options.onAction } : {}),
       ...(options.progress !== undefined ? { progress: options.progress } : {}),
@@ -133,6 +199,13 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
       // Enforce max notifications limit
       if (notifications.length > state.maxNotifications) {
+        const evicted = notifications.slice(0, notifications.length - state.maxNotifications);
+        // Drop the evicted toasts' countdowns with them — otherwise a timer
+        // outlives the toast it belonged to and fires into an empty id.
+        for (const gone of evicted) {
+          clearTimer(gone.id);
+          paused.delete(gone.id);
+        }
         notifications = notifications.slice(-state.maxNotifications);
       }
 
@@ -141,9 +214,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
     // Auto-dismiss if duration > 0
     if (notification.duration > 0) {
-      setTimeout(() => {
-        get().dismiss(id);
-      }, notification.duration);
+      armTimer(id, notification.duration, (expired) => get().dismiss(expired));
     }
 
     return id;
@@ -181,13 +252,40 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     }));
   },
 
+  pauseDismiss: (id) => {
+    const timer = timers.get(id);
+    // No timer means either no countdown (duration 0) or already paused.
+    if (!timer) return;
+    clearTimeout(timer.handle);
+    timers.delete(id);
+    const elapsed = Date.now() - timer.startedAt;
+    // Floor at a beat rather than 0: a toast whose countdown expired under the
+    // cursor should still get a moment on screen after the pointer leaves,
+    // instead of vanishing the instant it moves away.
+    paused.set(id, Math.max(400, timer.remaining - elapsed));
+  },
+
+  resumeDismiss: (id) => {
+    const remaining = paused.get(id);
+    if (remaining === undefined) return;
+    paused.delete(id);
+    // The toast may have been dismissed while paused; don't resurrect a timer
+    // for something that's gone.
+    if (!get().notifications.some((n) => n.id === id)) return;
+    armTimer(id, remaining, (expired) => get().dismiss(expired));
+  },
+
   dismiss: (id) => {
+    clearTimer(id);
+    paused.delete(id);
     set((state) => ({
       notifications: state.notifications.filter((n) => n.id !== id),
     }));
   },
 
   dismissAll: () => {
+    for (const id of [...timers.keys()]) clearTimer(id);
+    paused.clear();
     set({ notifications: [] });
   },
 }));

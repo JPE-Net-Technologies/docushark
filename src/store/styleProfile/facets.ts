@@ -56,6 +56,9 @@ function makeCustomPropsFacet(config: CustomPropsFacetConfig): StyleFacet {
   return {
     id: config.id,
     names: config.names,
+    // Derived, not restated: the field descriptors already are the key list, so
+    // adding a field to a customProperties shape can't leave `keys` stale.
+    keys: config.fields.map((f) => f.key),
     appliesTo: (type) => typeSet.has(type),
     extract: (shape) => {
       const raw = asRecord(shape)['customProperties'];
@@ -87,6 +90,7 @@ function makeCustomPropsFacet(config: CustomPropsFacetConfig): StyleFacet {
 const universalFacet: StyleFacet = {
   id: 'universal',
   names: ['Fill', 'Stroke', 'Stroke Width', 'Opacity'],
+  keys: ['fill', 'stroke', 'strokeWidth', 'opacity'],
   appliesTo: () => true,
   extract: (shape) => ({
     fill: shape.fill ?? null,
@@ -106,6 +110,7 @@ const universalFacet: StyleFacet = {
 const cornerRadiusFacet: StyleFacet = {
   id: 'cornerRadius',
   names: ['Corner Radius'],
+  keys: ['cornerRadius'],
   appliesTo: (type) => type === 'rectangle' || type === 'group',
   extract: (shape) => {
     const extra = asRecord(shape);
@@ -118,6 +123,7 @@ const cornerRadiusFacet: StyleFacet = {
 const labelFacet: StyleFacet = {
   id: 'label',
   names: ['Label Font Size', 'Label Color'],
+  keys: ['labelFontSize', 'labelColor'],
   appliesTo: shapeSupportsLabel,
   extract: (shape, opts) => {
     if (!opts.includeLabelStyle) return {};
@@ -139,6 +145,7 @@ const labelFacet: StyleFacet = {
 const textFacet: StyleFacet = {
   id: 'text',
   names: ['Font Size', 'Font Family'],
+  keys: ['fontSize', 'fontFamily'],
   appliesTo: (type) => type === 'text',
   extract: (shape) => {
     const extra = asRecord(shape);
@@ -159,6 +166,7 @@ const textFacet: StyleFacet = {
 const arrowsFacet: StyleFacet = {
   id: 'arrows',
   names: ['Start Arrow', 'End Arrow'],
+  keys: ['startArrow', 'endArrow'],
   appliesTo: (type) => type === 'line' || type === 'connector',
   extract: (shape) => {
     const extra = asRecord(shape);
@@ -179,6 +187,7 @@ const arrowsFacet: StyleFacet = {
 const lineStyleFacet: StyleFacet = {
   id: 'lineStyle',
   names: ['Line Style'],
+  keys: ['lineStyle'],
   appliesTo: (type) => type === 'connector',
   extract: (shape) => {
     const extra = asRecord(shape);
@@ -191,6 +200,7 @@ const lineStyleFacet: StyleFacet = {
 const groupFacet: StyleFacet = {
   id: 'group',
   names: ['Background Color', 'Border Color', 'Border Width'],
+  keys: ['backgroundColor', 'borderColor', 'borderWidth'],
   appliesTo: (type) => type === 'group',
   extract: (shape) => {
     const extra = asRecord(shape);
@@ -247,6 +257,16 @@ const swimlaneFacet: StyleFacet = makeCustomPropsFacet({
 const iconFacet: StyleFacet = {
   id: 'icon',
   names: ['Icon', 'Icon Size', 'Icon Position'],
+  keys: [
+    'iconId',
+    'iconSize',
+    'iconPadding',
+    'iconColor',
+    'iconPosition',
+    'iconDisplayMode',
+    'iconBadge',
+    'icons',
+  ],
   appliesTo: shapeSupportsIcon,
   extract: (shape, opts) => {
     if (!opts.includeIconStyle) return {};

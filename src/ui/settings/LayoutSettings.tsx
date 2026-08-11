@@ -12,7 +12,17 @@ import {
   LAYOUT_PRESETS,
   resolvePanelState,
 } from '../layout/modes';
-import { LAYOUT_MODES, PANEL_IDS, type DockSide, type LayoutMode, type PanelId, type PanelState } from '../layout/types';
+import {
+  LAYOUT_MODES,
+  PANEL_IDS,
+  READING_WIDTHS,
+  READING_WIDTH_DESCRIPTIONS,
+  READING_WIDTH_LABELS,
+  type DockSide,
+  type LayoutMode,
+  type PanelId,
+  type PanelState,
+} from '../layout/types';
 import { LayoutThumbnail } from '../layout/LayoutThumbnail';
 import './LayoutSettings.css';
 
@@ -20,6 +30,7 @@ const PANEL_LABELS: Record<PanelId, string> = {
   document: 'Document',
   properties: 'Properties',
   layers: 'Layers',
+  navigator: 'Navigator',
 };
 
 const DOCK_LABELS: Record<DockSide, string> = {
@@ -43,6 +54,7 @@ export function LayoutSettings({ embedded = false }: LayoutSettingsProps = {}) {
   const setPanelVisibleFor = useUIPreferencesStore((s) => s.setPanelVisibleFor);
   const togglePinFor = useUIPreferencesStore((s) => s.togglePinFor);
   const resetLayoutCustomization = useUIPreferencesStore((s) => s.resetLayoutCustomization);
+  const setReadingWidth = useUIPreferencesStore((s) => s.setReadingWidth);
 
   const handleReset = () => {
     const ok = window.confirm(
@@ -78,6 +90,36 @@ export function LayoutSettings({ embedded = false }: LayoutSettingsProps = {}) {
               <div className="layout-settings-default-text">
                 <div className="layout-settings-default-name">{LAYOUT_LABELS[mode]}</div>
                 <div className="layout-settings-default-desc">{LAYOUT_DESCRIPTIONS[mode]}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section className="layout-settings-section">
+        <h4>Reading width</h4>
+        <p className="layout-settings-section-hint">
+          How wide the writing column grows before it stops. Applies wherever
+          prose is the main region, including alongside the canvas.
+        </p>
+        <div className="layout-settings-reading-row">
+          {READING_WIDTHS.map((width) => (
+            <label
+              key={width}
+              className={`layout-settings-reading-option ${layout.readingWidth === width ? 'active' : ''}`}
+            >
+              <input
+                type="radio"
+                name="reading-width"
+                value={width}
+                checked={layout.readingWidth === width}
+                onChange={() => setReadingWidth(width)}
+              />
+              <div className="layout-settings-default-text">
+                <div className="layout-settings-default-name">{READING_WIDTH_LABELS[width]}</div>
+                <div className="layout-settings-default-desc">
+                  {READING_WIDTH_DESCRIPTIONS[width]}
+                </div>
               </div>
             </label>
           ))}

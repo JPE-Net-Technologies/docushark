@@ -2,18 +2,22 @@
  * Notification Toast Styles
  *
  * Phase 14.9.2 — Error Handling & Resilience.
- * JP-237 polish: rounded toasts, rich per-severity coloring + haloed icons, and
- * a rotating glow ring on appearance that pauses on hover/focus.
+ * JP-237 polish: rounded toasts, per-severity coloring, rotating glow ring.
+ * JP-479 — the drafting-card treatment:
+ *
+ *   - The card is the app's own surface, translucent, ruled with the same grid
+ *     the canvas is ruled with (`--grid-minor`). Severity moved to a spine on
+ *     the leading edge, which is what frees the body to match the surface
+ *     behind it instead of being tinted a different colour per severity.
+ *   - One settle-pulse on arrival, then rest. JP-237's ring rotated forever;
+ *     perpetual motion in a persistent element is a distraction that carries no
+ *     information, and it kept a compositor layer alive for the toast's life.
+ *   - Every colour now comes from a token that EXISTS. This file previously
+ *     referenced `--color-surface`, `--color-text`, `--color-surface-hover` and
+ *     `--color-info`, none of which are defined — so every fallback fired and
+ *     the toast rendered on stale Tailwind greys (#fff/#1f2937, #f9fafb) while
+ *     the rest of the app wore warm paper and navy.
  */
-
-/* Animatable angle for the rotating glow ring. Registered so the custom prop
-   actually interpolates; where @property is unsupported the ring stays static
-   (graceful degradation). */
-@property --toast-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
 
 .notification-container {
   position: fixed;
@@ -28,83 +32,335 @@
 }
 
 .notification-toast {
+  --toast-accent: var(--info-text);
+
   position: relative;
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 13px 16px;
-  /* Round, not square. */
-  border-radius: 16px;
-  /* Drop shadow + a soft severity-tinted glow. */
-  box-shadow: var(--shadow-lg), 0 0 18px -6px var(--toast-glow, transparent);
+  /* Extra leading padding clears the severity spine. */
+  padding: 13px 14px 13px 20px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
   pointer-events: auto;
-  animation: toast-enter 0.22s ease-out;
-  /* Subtle severity tint over the surface (falls back to plain surface where
-     color-mix is unsupported — the preceding declaration wins there). */
-  background: var(--color-surface, #fff);
-  background: color-mix(in srgb, var(--toast-glow, transparent) 7%, var(--color-surface, #fff));
-  border: 1px solid color-mix(in srgb, var(--toast-glow, transparent) 22%, transparent);
+  /* Pinned to the right edge so the hover magnify grows inward, away from the
+     viewport edge the stack is anchored to. */
+  transform-origin: 100% 50%;
+  transition:
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+  /* No fill-mode on the settle. A filling animation keeps holding the property
+     it animated after it finishes, and an animated value outranks a normal
+     declaration — with `both` here, the pulse's final frame pinned `box-shadow`
+     for the toast's whole life and the hover lift below simply never rendered.
+     The 100% keyframe is the resting value anyway, so letting it release is
+     seamless. */
+  animation:
+    toast-enter 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+    toast-settle 1.15s ease-out 0.1s 1;
 }
 
-/* Rotating glow ring drawn just outside the toast, masked to a thin border. */
-.notification-toast::before {
-  content: '';
-  position: absolute;
-  inset: -1.5px;
-  border-radius: inherit;
-  padding: 1.5px;
-  background: conic-gradient(
-    from var(--toast-angle, 0deg),
-    transparent 0deg,
-    var(--toast-glow, transparent) 70deg,
-    transparent 150deg,
-    transparent 210deg,
-    var(--toast-glow, transparent) 290deg,
-    transparent 360deg
-  );
-  /* Show only the 1.5px ring (exclude the filled centre). */
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  animation: toast-glow-rotate 3.2s linear infinite;
-  pointer-events: none;
-  opacity: 0.9;
-}
-
-/* The user reads/interacts — settle the rotation. */
-.notification-toast:hover::before,
-.notification-toast:focus-within::before {
-  animation-play-state: paused;
-}
-
-@keyframes toast-glow-rotate {
-  to {
-    --toast-angle: 360deg;
+/* Translucency only where the engine can actually blur behind it. Without the
+   blur a semi-transparent card just shows whatever it happens to be sitting
+   over — legible one moment, not the next — so opaque is the correct fallback,
+   not a degraded one. WebKitGTK (the Tauri shell) is the reason this is
+   guarded rather than assumed. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .notification-toast {
+    background: color-mix(in srgb, var(--bg-primary) 86%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    backdrop-filter: blur(14px) saturate(1.4);
   }
 }
 
+/* Blueprint etching — the canvas's own rule colour, at the canvas's own
+   rhythm, fading out toward the trailing edge so it reads as texture under the
+   text rather than a table the text is sitting in. */
+.notification-toast::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      var(--grid-minor) 0 1px,
+      transparent 1px 12px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      var(--grid-minor) 0 1px,
+      transparent 1px 12px
+    );
+  -webkit-mask-image: linear-gradient(105deg, #000 0%, rgba(0, 0, 0, 0.35) 55%, transparent 92%);
+  mask-image: linear-gradient(105deg, #000 0%, rgba(0, 0, 0, 0.35) 55%, transparent 92%);
+}
+
+/* Severity spine. */
+.notification-toast__spine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--toast-accent);
+}
+
+/* Gentle magnify. The lift is small on purpose — the toast is telling you it's
+   interactive, not presenting itself. */
+.notification-toast:hover,
+.notification-toast:focus-within {
+  transform: scale(1.02);
+  box-shadow: var(--shadow-xl);
+  border-color: color-mix(in srgb, var(--toast-accent) 32%, var(--border-color));
+}
+
+/* Arrival: rise and settle. */
 @keyframes toast-enter {
   from {
     opacity: 0;
-    transform: translateX(16px) scale(0.98);
+    transform: translateY(8px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translateY(0) scale(1);
   }
 }
 
-/* Reduced motion: no rotation, no slide — just a gentle fade and a static glow. */
+/* One pulse of the severity colour, then gone — the card announcing itself
+   once. `both` holds the resting frame so nothing snaps at the end. */
+@keyframes toast-settle {
+  0% {
+    box-shadow: var(--shadow-lg), 0 0 0 0 transparent;
+  }
+  35% {
+    box-shadow:
+      var(--shadow-lg),
+      0 0 22px 3px color-mix(in srgb, var(--toast-accent) 42%, transparent);
+  }
+  100% {
+    box-shadow: var(--shadow-lg), 0 0 0 0 transparent;
+  }
+}
+
+/* Severity → accent. These read the `-text` variants, not the raw fills:
+   `--success` and `--danger` are IDENTICAL in both themes (only the `-text`
+   pair flips), so driving the accent from the fill put a deep maroon error
+   spine on a navy surface. Same defect class as the rail's in JP-477. */
+.notification-toast--info {
+  --toast-accent: var(--info-text);
+}
+.notification-toast--success {
+  --toast-accent: var(--success-text);
+}
+.notification-toast--warning {
+  --toast-accent: var(--warning);
+}
+.notification-toast--error {
+  --toast-accent: var(--danger-text);
+}
+
+/* Icon — severity-coloured, sitting above the etching. */
+.notification-toast__icon {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--toast-accent);
+}
+
+/* Content */
+.notification-toast__content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Title — a slow gradient across two adjacent brand tones. Wide background,
+   slid slowly: the movement should register at the edge of attention and never
+   pull the eye off the message underneath. */
+.notification-toast__title {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+/* Gated: without background-clip support, `color: transparent` would render an
+   invisible title. The solid colour above stays as-is where that's the case. */
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .notification-toast__title {
+    /* The bright stop is the accent pulled toward the text colour, not the raw
+       accent. Raw, it fails contrast at the moment it sweeps a glyph — ochre on
+       warm paper is ~3.4:1, and a 13.5px title doesn't qualify as large text.
+       Mixing toward `--text-primary` works in both themes by construction,
+       since that token is always the highest-contrast ink for the surface. */
+    --toast-title-lift: color-mix(in srgb, var(--toast-accent) 55%, var(--text-primary));
+
+    background-image: linear-gradient(
+      100deg,
+      var(--text-primary) 0%,
+      var(--toast-title-lift) 38%,
+      var(--text-primary) 74%,
+      var(--toast-title-lift) 100%
+    );
+    background-size: 260% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: toast-title-drift 9s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes toast-title-drift {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+.notification-toast__message {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  word-wrap: break-word;
+}
+
+/* With a title above it, the message steps back so the headline leads. */
+.notification-toast__message--secondary {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.notification-toast__hint {
+  display: block;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Actions */
+/* The gap has to clear the dismiss button's expanded hit area (below), or the
+   two targets overlap and the edge of Retry dismisses the toast instead. */
+.notification-toast__actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.notification-toast__action-btn {
+  position: relative;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--toast-accent) 45%, transparent);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.notification-toast__action-btn:hover {
+  background: var(--color-cta);
+  border-color: var(--color-cta);
+  color: var(--color-cta-text);
+}
+
+.notification-toast__dismiss-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+/* The visible controls stay 30px so they don't shout, but their hit areas
+   extend past them to ~44px. Sized in the negative so a target grows without
+   moving anything — the old dismiss button was 24×24, well under any touch
+   guidance.
+
+   Growth is deliberately asymmetric. A symmetric `inset: -7px` on the dismiss
+   button reached back across the 4px gap and covered the last few pixels of
+   the Retry button, so clicking the edge of Retry dismissed the toast instead
+   of retrying — the one mis-click on this component that actually costs the
+   user something. Vertical growth is free; horizontal growth stops short of
+   whatever sits alongside. */
+.notification-toast__action-btn::after,
+.notification-toast__dismiss-btn::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+
+.notification-toast__dismiss-btn::after {
+  /* Right expands toward the card edge (nothing there); left stays inside the
+     10px gap so it can never reach the action button. */
+  inset: -7px -7px -7px -4px;
+}
+
+.notification-toast__dismiss-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Determinate progress bar (blob sync + long-running operations) */
+.notification-toast__progress {
+  position: relative;
+  margin-top: 7px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.notification-toast__progress-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--toast-accent);
+  transition: width 0.2s ease-out;
+}
+
+/* Reduced motion: keep the arrival legible, drop everything that moves for its
+   own sake — no rise, no pulse, no drifting title. */
 @media (prefers-reduced-motion: reduce) {
   .notification-toast {
     animation: toast-fade 0.2s ease-out;
+    transition: box-shadow 0.18s ease, border-color 0.18s ease;
   }
-  .notification-toast::before {
+  .notification-toast:hover,
+  .notification-toast:focus-within {
+    transform: none;
+  }
+  .notification-toast__title {
     animation: none;
-    /* Even, static halo. */
-    background: var(--toast-glow, transparent);
-    opacity: 0.5;
+    /* Park the gradient somewhere legible rather than mid-sweep. */
+    background-position: 0% 50%;
   }
   @keyframes toast-fade {
     from {
@@ -114,131 +370,4 @@
       opacity: 1;
     }
   }
-}
-
-/* Severity → glow color (drives the ring, the box-shadow halo, the tint, and the
-   icon). One variable per severity keeps the treatment consistent. */
-.notification-toast--info {
-  --toast-glow: var(--color-info, #3b82f6);
-}
-.notification-toast--success {
-  --toast-glow: var(--success);
-}
-.notification-toast--warning {
-  --toast-glow: var(--warning);
-}
-.notification-toast--error {
-  --toast-glow: var(--danger);
-}
-
-/* Icon — colored to the severity with a soft halo so it reads rich, not flat. */
-.notification-toast__icon {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--toast-glow, var(--color-info, #3b82f6));
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--toast-glow, transparent) 55%, transparent));
-}
-
-/* Content */
-.notification-toast__content {
-  flex: 1;
-  min-width: 0;
-}
-
-.notification-toast__message {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.4;
-  color: var(--color-text, #1f2937);
-  word-wrap: break-word;
-}
-
-.notification-toast__hint {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-/* Actions */
-.notification-toast__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.notification-toast__action-btn {
-  padding: 4px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-primary);
-  background: transparent;
-  border: 1px solid var(--color-primary);
-  border-radius: 999px; /* pill, matching the rounded toast */
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.notification-toast__action-btn:hover {
-  background: var(--color-cta);
-  color: var(--color-cta-text);
-}
-
-.notification-toast__dismiss-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 999px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.notification-toast__dismiss-btn:hover {
-  background: var(--color-surface-hover, #f3f4f6);
-  color: var(--color-text, #1f2937);
-}
-
-/* Dark theme support */
-[data-theme='dark'] .notification-toast {
-  background: var(--color-surface, #1f2937);
-  background: color-mix(in srgb, var(--toast-glow, transparent) 12%, var(--color-surface, #1f2937));
-  box-shadow: var(--shadow-lg), 0 0 20px -6px var(--toast-glow, transparent);
-}
-
-[data-theme='dark'] .notification-toast__message {
-  color: var(--color-text, #f9fafb);
-}
-
-[data-theme='dark'] .notification-toast__dismiss-btn:hover {
-  background: var(--color-surface-hover, #374151);
-  color: var(--color-text, #f9fafb);
-}
-
-/* Determinate progress bar (blob sync + long-running operations) */
-.notification-toast__progress {
-  margin-top: 6px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--color-surface-hover, #e5e7eb);
-  overflow: hidden;
-}
-
-.notification-toast__progress-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--color-primary, #1f3354);
-  transition: width 0.2s ease-out;
-}
-
-[data-theme='dark'] .notification-toast__progress {
-  background: var(--color-surface-hover, #374151);
 }

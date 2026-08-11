@@ -107,6 +107,37 @@ describe('uiPreferencesStore — rounded tables', () => {
   });
 });
 
+describe('uiPreferencesStore — glass chrome', () => {
+  it('defaults to on (opt-out)', () => {
+    expect(useUIPreferencesStore.getState().appearancePrefs.glass).toBe(true);
+  });
+
+  it('setGlass flips the preference', () => {
+    useUIPreferencesStore.getState().setGlass(false);
+    expect(useUIPreferencesStore.getState().appearancePrefs.glass).toBe(false);
+    useUIPreferencesStore.getState().setGlass(true);
+    expect(useUIPreferencesStore.getState().appearancePrefs.glass).toBe(true);
+  });
+
+  it('leaves an existing appearance choice alone when migrating in', async () => {
+    // A v13 payload predates `glass`; the migration must add it without
+    // disturbing what the user already picked.
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 13,
+        state: { appearancePrefs: { density: 'compact', uiScale: 1.1 } },
+      })
+    );
+    const { useUIPreferencesStore: fresh } = await import('./uiPreferencesStore');
+    await fresh.persist.rehydrate();
+    const prefs = fresh.getState().appearancePrefs;
+    expect(prefs.glass).toBe(true);
+    expect(prefs.density).toBe('compact');
+    expect(prefs.uiScale).toBe(1.1);
+  });
+});
+
 describe('uiPreferencesStore — spellcheck mode', () => {
   it('defaults to the custom (built-in) checker', () => {
     expect(useUIPreferencesStore.getState().appearancePrefs.spellcheck).toBe('custom');
@@ -297,6 +328,7 @@ describe('uiPreferencesStore — migration', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      glass: true,
     });
     // Layout from the older payload is untouched.
     expect(state.layout.defaultMode).toBe('power');
@@ -328,6 +360,7 @@ describe('uiPreferencesStore — migration', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      glass: true,
     });
   });
 
@@ -356,6 +389,7 @@ describe('uiPreferencesStore — migration', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      glass: true,
     });
   });
 
@@ -468,6 +502,7 @@ describe('uiPreferencesStore — appearance slice', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      glass: true,
     });
   });
 

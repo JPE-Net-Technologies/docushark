@@ -329,3 +329,113 @@ export function withAlpha(hex: string, alpha: number): string {
   const a = Math.max(0, Math.min(1, alpha));
   return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`;
 }
+
+/**
+ * Named CSS colors accepted as color *input*.
+ *
+ * This table is the single source shared with the PDF exporter
+ * (`pdfExportUtils.parseColor` imports it) so the two grammars cannot drift.
+ * Adding a name here must keep `parseColorInput`'s output PDF-renderable —
+ * which it does by construction, since that function always emits `#rrggbb`.
+ */
+export const NAMED_COLORS: Readonly<Record<string, RGB>> = {
+  black: { r: 0, g: 0, b: 0 },
+  white: { r: 255, g: 255, b: 255 },
+  red: { r: 255, g: 0, b: 0 },
+  green: { r: 0, g: 128, b: 0 },
+  blue: { r: 0, g: 0, b: 255 },
+  yellow: { r: 255, g: 255, b: 0 },
+  cyan: { r: 0, g: 255, b: 255 },
+  magenta: { r: 255, g: 0, b: 255 },
+  orange: { r: 255, g: 165, b: 0 },
+  purple: { r: 128, g: 0, b: 128 },
+  pink: { r: 255, g: 192, b: 203 },
+  gray: { r: 128, g: 128, b: 128 },
+  grey: { r: 128, g: 128, b: 128 },
+  darkred: { r: 139, g: 0, b: 0 },
+  darkgreen: { r: 0, g: 100, b: 0 },
+  darkblue: { r: 0, g: 0, b: 139 },
+  lightgray: { r: 211, g: 211, b: 211 },
+  lightgrey: { r: 211, g: 211, b: 211 },
+  brown: { r: 165, g: 42, b: 42 },
+  navy: { r: 0, g: 0, b: 128 },
+  teal: { r: 0, g: 128, b: 128 },
+  maroon: { r: 128, g: 0, b: 0 },
+  olive: { r: 128, g: 128, b: 0 },
+  coral: { r: 255, g: 127, b: 80 },
+  salmon: { r: 250, g: 128, b: 114 },
+  tomato: { r: 255, g: 99, b: 71 },
+  indianred: { r: 205, g: 92, b: 92 },
+  crimson: { r: 220, g: 20, b: 60 },
+};
+
+/** Hex with an optional leading `#`; length is validated separately. */
+const HEX_INPUT_RE = /^#?([0-9a-f]+)$/i;
+
+/**
+ * `rgb()` / `rgba()` in either the legacy comma form or the modern
+ * space-separated form. Alpha is captured only so it can be discarded.
+ */
+const RGB_FN_RE =
+  /^rgba?\(\s*(\d{1,3})\s*(?:,|\s)\s*(\d{1,3})\s*(?:,|\s)\s*(\d{1,3})\s*(?:(?:,|\/)\s*[\d.]+%?\s*)?\)$/i;
+
+/**
+ * Parse a user-supplied color string into DocuShark's canonical storage form.
+ *
+ * Deliberately **liberal in what it accepts and strict in what it emits**: the
+ * output is always lowercase `#rrggbb`, which every consumer — the canvas
+ * renderer, prose inline styles, the relay, and `pdfExportUtils.parseColor` —
+ * can render. Alpha is accepted on input but **dropped**, because the PDF
+ * exporter cannot represent it and would silently lose the color entirely;
+ * shapes express transparency through their separate opacity property.
+ *
+ * Accepts: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa` (with or without the `#`),
+ * `rgb()` / `rgba()` in comma or space form, and the {@link NAMED_COLORS} names.
+ *
+ * @param input - Raw text from a color field, paste, or import
+ * @returns Canonical `#rrggbb`, or null if the input is not a color
+ */
+export function parseColorInput(input: string): string | null {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  const named = NAMED_COLORS[trimmed];
+  if (named) return rgbToHex(named);
+
+  const hexMatch = HEX_INPUT_RE.exec(trimmed);
+  if (hexMatch) {
+    const digits = hexMatch[1]!;
+    // Only the four CSS hex lengths are colors; 5 or 7 digits is a typo, not a
+    // color, and must not be coerced into one.
+    if (digits.length !== 3 && digits.length !== 4 && digits.length !== 6 && digits.length !== 8) {
+      return null;
+    }
+    const rgb = hexToRgb(`#${digits}`);
+    return rgb ? rgbToHex(rgb) : null;
+  }
+
+  const fnMatch = RGB_FN_RE.exec(trimmed);
+  if (fnMatch) {
+    const r = Number(fnMatch[1]);
+    const g = Number(fnMatch[2]);
+    const b = Number(fnMatch[3]);
+    if (r > 255 || g > 255 || b > 255) return null;
+    return rgbToHex({ r, g, b });
+  }
+
+  return null;
+}
+
+/**
+ * Whether {@link parseColorInput} can make a color out of this text.
+ *
+ * Use for validation feedback while editing. Prefer calling `parseColorInput`
+ * directly when the parsed value is needed — this is a convenience wrapper, not
+ * a second grammar.
+ *
+ * @param input - Raw text from a color field
+ * @returns True when the input parses to a color
+ */
+export function isValidColorInput(input: string): boolean {
+  return parseColorInput(input) !== null;
+}

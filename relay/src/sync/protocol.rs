@@ -13,6 +13,7 @@ use yrs::updates::encoder::Encode;
 use yrs::{Doc, ReadTxn, Transact, Update};
 
 use crate::server::protocol::MESSAGE_SYNC;
+use crate::sync::decode_guard::guard_decode;
 
 /// What a single inbound sync frame produced. Both fields are already
 /// `MESSAGE_SYNC`-prefixed and ready to put on the wire.
@@ -40,8 +41,14 @@ pub enum SyncError {
 /// * `SyncStep2(update)` / `Update(update)` → apply, then rebroadcast the
 ///   update to peers. (Rebroadcasting the received update is idempotent and
 ///   is exactly what other peers need to converge.)
+///
+/// `body` is attacker-controlled: it arrives straight off a peer's WebSocket
+/// (chunked frames funnel here too, after reassembly). Both decodes therefore
+/// go through [`guard_decode`], which turns a `yrs` decoder panic on malformed
+/// input into an ordinary `SyncError::Decode` — see JP-476.
 pub fn process_sync_message(doc: &Doc, body: &[u8]) -> Result<SyncOutcome, SyncError> {
-    let msg = SyncMessage::decode_v1(body).map_err(|e| SyncError::Decode(e.to_string()))?;
+    let msg = guard_decode("sync frame", || SyncMessage::decode_v1(body))
+        .map_err(SyncError::Decode)?;
     match msg {
         SyncMessage::SyncStep1(sv) => {
             let update = doc.transact().encode_state_as_update_v1(&sv);
@@ -51,8 +58,8 @@ pub fn process_sync_message(doc: &Doc, body: &[u8]) -> Result<SyncOutcome, SyncE
             })
         }
         SyncMessage::SyncStep2(update) | SyncMessage::Update(update) => {
-            let decoded =
-                Update::decode_v1(&update).map_err(|e| SyncError::Decode(e.to_string()))?;
+            let decoded = guard_decode("sync update", || Update::decode_v1(&update))
+                .map_err(SyncError::Decode)?;
             doc.transact_mut()
                 .apply_update(decoded)
                 .map_err(|e| SyncError::Apply(e.to_string()))?;
@@ -231,5 +238,94 @@ mod tests {
                 break;
             }
         }
+    }
+
+    // ============================================================
+    // JP-476: oversized client ids must be rejected, never panic
+    // ============================================================
+    //
+    // `yrs` asserts its 53-bit client-id bound *inside* the decoder
+    // (`block.rs:92`) instead of returning `Err`, so a peer can panic the frame
+    // handler with a client id >= 2^53. Two production call sites read one from
+    // untrusted bytes — `StateVector::decode` (`state_vector.rs:125`, the
+    // SyncStep1 path) and `impl Decode for ClientID` (`block.rs:149`, the update
+    // path) — so both are pinned here.
+    //
+    // These shrink the randomized finding to a fixed input: the original was
+    // `DOCUSHARK_FUZZ_SEED=1785484546059070237` against
+    // `fuzz_ws_awareness_and_mcp_workspace_mismatch`, where a garbage SYNC frame
+    // panicked the handler, dropped the sender's socket, and surfaced as the
+    // *next* iteration's awareness assertion. A seed only reproduces by luck;
+    // these always do.
+
+    /// One bit past the largest client id `yrs` accepts.
+    const OVERSIZED_CLIENT_ID: u64 = 1 << 53;
+
+    #[test]
+    fn oversized_client_id_in_sync_step1_is_rejected_not_panicked() {
+        let mut sv = Vec::new();
+        write_varuint(&mut sv, 1); // one state-vector entry
+        write_varuint(&mut sv, OVERSIZED_CLIENT_ID); // client
+        write_varuint(&mut sv, 0); // clock
+
+        let mut body = Vec::new();
+        write_varuint(&mut body, 0); // MSG_SYNC_STEP_1
+        write_varuint(&mut body, sv.len() as u64); // length-prefixed buf
+        body.extend_from_slice(&sv);
+
+        let doc = doc_with_shape("s1");
+        let err = process_sync_message(&doc, &body)
+            .expect_err("an out-of-range client id must be rejected");
+        assert!(
+            matches!(err, SyncError::Decode(_)),
+            "expected a decode error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn oversized_client_id_in_update_is_rejected_not_panicked() {
+        let mut update = Vec::new();
+        write_varuint(&mut update, 1); // one client block
+        write_varuint(&mut update, 1); // one struct in it
+        write_varuint(&mut update, OVERSIZED_CLIENT_ID); // client
+        write_varuint(&mut update, 0); // clock
+
+        let mut body = Vec::new();
+        write_varuint(&mut body, 2); // MSG_SYNC_UPDATE
+        write_varuint(&mut body, update.len() as u64);
+        body.extend_from_slice(&update);
+
+        let doc = doc_with_shape("s1");
+        let err = process_sync_message(&doc, &body)
+            .expect_err("an out-of-range client id must be rejected");
+        assert!(
+            matches!(err, SyncError::Decode(_)),
+            "expected a decode error, got {err:?}"
+        );
+    }
+
+    /// The relay must survive the frame *and stay usable* — the JP-476 failure
+    /// mode was not the rejection itself but the panic unwinding out of
+    /// `handle_message`, which tore down the sender's connection and made the
+    /// next legitimate frame vanish.
+    #[test]
+    fn doc_still_serves_sync_after_rejecting_an_oversized_client_id() {
+        let mut sv = Vec::new();
+        write_varuint(&mut sv, 1);
+        write_varuint(&mut sv, OVERSIZED_CLIENT_ID);
+        write_varuint(&mut sv, 0);
+        let mut hostile = Vec::new();
+        write_varuint(&mut hostile, 0);
+        write_varuint(&mut hostile, sv.len() as u64);
+        hostile.extend_from_slice(&sv);
+
+        let server = doc_with_shape("s1");
+        assert!(process_sync_message(&server, &hostile).is_err());
+
+        // A well-formed SyncStep1 immediately afterwards still gets an answer.
+        let body = SyncMessage::SyncStep1(StateVector::default()).encode_v1();
+        let outcome = process_sync_message(&server, &body)
+            .expect("relay must keep serving after a rejected frame");
+        assert!(outcome.reply.is_some(), "expected a SyncStep2 answer");
     }
 }

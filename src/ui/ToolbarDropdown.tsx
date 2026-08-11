@@ -145,7 +145,21 @@ export function ToolbarDropdown({
             ref={dropdownRef}
             className="toolbar-dropdown-portal"
             style={{ top: position.top, left: position.left }}
-            onMouseDown={(e) => e.preventDefault()}
+            onMouseDown={(e) => {
+              // Suppressing the default keeps the editor's selection alive
+              // while a control in here is clicked, so a toolbar action still
+              // applies to the text the user had selected.
+              //
+              // It must not apply to a focusable field, though: blocking the
+              // default also blocks focus, so an input inside a dropdown could
+              // never be typed into — the caret stays in the document and the
+              // keystrokes go there instead. Harmless while these dropdowns
+              // held only buttons; not once the shared colour picker put a hex
+              // field in one.
+              const target = e.target as HTMLElement | null;
+              if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+              e.preventDefault();
+            }}
           >
             {children}
           </div>,

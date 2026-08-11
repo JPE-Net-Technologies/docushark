@@ -4,6 +4,7 @@ import {
   clampPanelBounds,
   resolveIndicatorPosition,
   resolveViewerPanelBounds,
+  resolveMenuPlacement,
   MIN_PANEL_SIZE,
   VIEWPORT_MARGIN,
   DEFAULT_TOP,
@@ -119,5 +120,102 @@ describe('resolveViewerPanelBounds', () => {
   it('respects stored in-range bounds', () => {
     const stored = { x: 100, y: 120, w: 480, h: 560 };
     expect(resolveViewerPanelBounds(stored, VIEWPORT)).toEqual(stored);
+  });
+});
+
+describe('resolveMenuPlacement (anchored menu / popover)', () => {
+  // A toolbar chip near the right edge of a roomy window.
+  const TRIGGER = { top: 8, bottom: 40, right: 1044 };
+  const ROOMY = { w: 1280, h: 860 };
+  const base = {
+    trigger: TRIGGER,
+    viewport: ROOMY,
+    preferredWidth: 340,
+    narrow: false,
+    contentHeight: 560,
+  };
+
+  it('opens below the trigger, right-aligned to it', () => {
+    const out = resolveMenuPlacement(base);
+    expect(out.flipped).toBe(false);
+    expect(out.top).toBe(TRIGGER.bottom + 6);
+    expect(out.left + out.width).toBe(TRIGGER.right);
+    expect(out.width).toBe(340);
+  });
+
+  it('keeps its full width on a roomy viewport', () => {
+    expect(resolveMenuPlacement(base).width).toBe(340);
+  });
+
+  it('shrinks to fit rather than running off a narrow viewport', () => {
+    // The reported bug: a 340px panel on a 320px window used to overflow,
+    // because the compact variant was gated on a coarse pointer.
+    const viewport = { w: 320, h: 640 };
+    const out = resolveMenuPlacement({
+      ...base,
+      viewport,
+      narrow: true,
+      trigger: { top: 8, bottom: 40, right: 300 },
+    });
+    expect(out.width).toBe(320 - VIEWPORT_MARGIN * 2);
+    expect(out.left).toBeGreaterThanOrEqual(VIEWPORT_MARGIN);
+    expect(out.left + out.width).toBeLessThanOrEqual(viewport.w - VIEWPORT_MARGIN);
+  });
+
+  it('never pushes off the left edge when the trigger sits near it', () => {
+    const out = resolveMenuPlacement({
+      ...base,
+      trigger: { top: 8, bottom: 40, right: 120 },
+    });
+    expect(out.left).toBeGreaterThanOrEqual(VIEWPORT_MARGIN);
+  });
+
+  it('caps its height on a short viewport so it scrolls instead of truncating', () => {
+    const viewport = { w: 1100, h: 400 };
+    const out = resolveMenuPlacement({ ...base, viewport });
+    expect(out.maxHeight).toBeLessThan(base.contentHeight);
+    expect(out.top + out.maxHeight).toBeLessThanOrEqual(viewport.h);
+  });
+
+  it('flips above the trigger when below is cramped and above is roomier', () => {
+    // A trigger low in the window: 60px underneath, ~700 above.
+    const out = resolveMenuPlacement({
+      ...base,
+      viewport: { w: 1280, h: 860 },
+      trigger: { top: 760, bottom: 790, right: 1044 },
+    });
+    expect(out.flipped).toBe(true);
+    expect(out.top + Math.min(base.contentHeight, out.maxHeight)).toBeLessThanOrEqual(790);
+  });
+
+  it('does not flip when below is cramped but above is worse', () => {
+    // Trigger near the top of a short window: little room either way, but more
+    // below than above — flipping would make it worse, not better.
+    const out = resolveMenuPlacement({
+      ...base,
+      viewport: { w: 1280, h: 300 },
+      trigger: { top: 8, bottom: 40, right: 1044 },
+    });
+    expect(out.flipped).toBe(false);
+  });
+
+  it('stays on screen in every combination of the above', () => {
+    for (const viewport of [{ w: 320, h: 480 }, { w: 768, h: 400 }, { w: 1280, h: 860 }]) {
+      for (const trigger of [
+        { top: 8, bottom: 40, right: 100 },
+        { top: 8, bottom: 40, right: viewport.w - 8 },
+        { top: viewport.h - 60, bottom: viewport.h - 28, right: viewport.w - 8 },
+      ]) {
+        const out = resolveMenuPlacement({
+          ...base,
+          viewport,
+          trigger,
+          narrow: viewport.w < 640,
+        });
+        expect(out.left).toBeGreaterThanOrEqual(VIEWPORT_MARGIN);
+        expect(out.left + out.width).toBeLessThanOrEqual(viewport.w - VIEWPORT_MARGIN + 1);
+        expect(out.top).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 });

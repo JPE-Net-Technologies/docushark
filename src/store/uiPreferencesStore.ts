@@ -12,6 +12,7 @@ import type {
   LayoutState,
   PanelId,
   PanelState,
+  ReadingWidth,
 } from '../ui/layout/types';
 import { LAYOUT_MODES } from '../ui/layout/types';
 import { LAYOUT_PRESETS } from '../ui/layout/modes';
@@ -101,6 +102,17 @@ export interface AppearancePrefs {
   spellcheck: SpellcheckMode;
   /** Rounded corners on prose tables. Opt-out — on by default (JP-416). */
   roundedTables: boolean;
+  /**
+   * Translucent ("glass") chrome on floating surfaces — the settings sheet and
+   * the layout menu. Opt-out; on by default (JP-253).
+   *
+   * `backdrop-filter` makes the compositor read back and blur what is behind the
+   * surface, and re-run whenever that changes. One blurred surface per floating
+   * panel is cheap; the escape hatch exists because the Tauri shell runs
+   * WebKitGTK, where this is historically weaker than Chromium. Turning it off
+   * resolves every glass token back to the opaque surfaces.
+   */
+  glass: boolean;
 }
 
 /**
@@ -231,6 +243,8 @@ export interface UIPreferencesActions {
   togglePinFor: (mode: LayoutMode, panel: PanelId) => void;
   /** Set the custom-chrome opt-in flag. */
   setCustomChrome: (enabled: boolean) => void;
+  /** Set how wide the prose reading column may grow (app-level). */
+  setReadingWidth: (width: ReadingWidth) => void;
   /** Drop all per-layout customization, preserving defaultMode + customChrome. */
   resetLayoutCustomization: () => void;
 
@@ -255,6 +269,8 @@ export interface UIPreferencesActions {
   setSmoothCaret: (smoothCaret: boolean) => void;
   /** Toggle rounded corners on prose tables. */
   setRoundedTables: (roundedTables: boolean) => void;
+  /** Toggle translucent ("glass") chrome on floating surfaces. */
+  setGlass: (glass: boolean) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
   setUiScale: (uiScale: number) => void;
   /** Set the prose editor background preset. */
@@ -292,6 +308,7 @@ const initialLayoutState: LayoutState = {
   defaultMode: 'relaxed',
   modeOverrides: EMPTY_MODE_OVERRIDES,
   customChrome: false,
+  readingWidth: 'normal',
 };
 
 /**
@@ -322,6 +339,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   caretColor: null,
   spellcheck: 'custom',
   roundedTables: true,
+  glass: true,
 };
 
 /** Clamp a UI-scale value into the supported range. */
@@ -562,6 +580,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ layout: { ...get().layout, customChrome: enabled } });
       },
 
+      setReadingWidth: (width) => {
+        set({ layout: { ...get().layout, readingWidth: width } });
+      },
+
       resetLayoutCustomization: () => {
         const { layout } = get();
         set({
@@ -632,6 +654,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         set({ appearancePrefs: { ...get().appearancePrefs, roundedTables } });
       },
 
+      setGlass: (glass) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, glass } });
+      },
+
       setCaretColor: (caretColor) => {
         set({ appearancePrefs: { ...get().appearancePrefs, caretColor } });
       },
@@ -646,7 +672,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
     }),
     {
       name: 'docushark-ui-preferences',
-      version: 13,
+      version: 14,
       partialize: (state) => ({
         expandedSections: state.expandedSections,
         rotationUnit: state.rotationUnit,
@@ -805,6 +831,14 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         // (opt-out) without clobbering existing appearance choices. (The `merge`
         // below also backstops this.)
         if (fromVersion < 13) {
+          next['appearancePrefs'] = {
+            ...initialAppearancePrefs,
+            ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),
+          };
+        }
+        // v13 → v14: appearance slice gained `glass` (JP-253). Default on
+        // (opt-out), preserving every existing appearance choice.
+        if (fromVersion < 14) {
           next['appearancePrefs'] = {
             ...initialAppearancePrefs,
             ...((next['appearancePrefs'] as Partial<AppearancePrefs> | undefined) ?? {}),

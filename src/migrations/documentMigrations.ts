@@ -90,7 +90,96 @@ interface Migration {
  *   id form in the same pass. See `mintHeadingIdsAndRewriteLinks`.
  */
 function normalizeInvariants(doc: DiagramDocument): DiagramDocument {
-  return mintHeadingIdsAndRewriteLinks(healActivePageIds(backfillGroupOwnership(doc)));
+  return liftRestoredProvenance(
+    mintHeadingIdsAndRewriteLinks(healActivePageIds(backfillGroupOwnership(doc))),
+  );
+}
+
+/**
+ * Matches a trailing `(Restored <something>)`, where `<something>` holds no
+ * parentheses of its own. Anchored to the END and non-nesting on purpose: a
+ * name that compounded (`X (Restored A) (Restored B)`) is peeled one suffix at
+ * a time, newest first.
+ */
+const RESTORED_SUFFIX = /^(.*?)\s*\(Restored\s+([^()]+)\)\s*$/;
+
+/** Earliest plausible restore stamp — the product did not exist before this. */
+const PLAUSIBLE_FROM = Date.UTC(2020, 0, 1);
+
+/**
+ * Parse a legacy suffix's timestamp, or null when it isn't one.
+ *
+ * The suffix was written with `toLocaleString()`, so its exact shape depends on
+ * the locale of the machine that produced it. Rather than try to reverse every
+ * locale, this accepts only what `Date.parse` understands AND what lands in a
+ * plausible window — so a deliberately-titled `Notes (Restored from backup)`
+ * fails the test and keeps its name, which is the point.
+ */
+function parseRestoredStamp(raw: string): number | null {
+  const ms = Date.parse(raw.trim());
+  if (!Number.isFinite(ms)) return null;
+  // A day of slack ahead of now absorbs clock skew between devices.
+  if (ms < PLAUSIBLE_FROM || ms > Date.now() + 86_400_000) return null;
+  return ms;
+}
+
+/**
+ * Peel every machine-generated `(Restored <timestamp>)` off a document name.
+ *
+ * Returns the cleaned name plus the newest timestamp found (`null` when there
+ * was nothing to lift). Exported because the restore path needs the same
+ * parsing on a name it's handed directly, not just on a stored document —
+ * otherwise restoring a legacy-named document would nest the suffix again.
+ *
+ * Peeling repeatedly cleans names that already compounded; the FIRST match (the
+ * outermost, newest suffix) is the one reported.
+ */
+export function stripRestoredSuffix(rawName: string): {
+  name: string;
+  restoredFrom: number | null;
+} {
+  let name = rawName;
+  let newest: number | null = null;
+
+  // Bounded: every pass removes one suffix, and a name is finite.
+  for (;;) {
+    const match = RESTORED_SUFFIX.exec(name);
+    if (!match) break;
+    const stamp = parseRestoredStamp(match[2]!);
+    // Unparseable means it probably wasn't machine-generated — stop here and
+    // leave this suffix (and anything left of it) alone.
+    if (stamp === null) break;
+    if (newest === null) newest = stamp;
+    name = match[1]!;
+  }
+
+  const trimmed = name.trim();
+  // A name that was ONLY a suffix would end up empty; keep the original rather
+  // than leave the document nameless.
+  if (trimmed.length === 0) return { name: rawName, restoredFrom: null };
+  return { name: trimmed, restoredFrom: newest };
+}
+
+/**
+ * Lift `Name (Restored <timestamp>)` out of the title and into `restoredFrom`
+ * (JP-481). Pure and idempotent — a document with no such suffix, or with an
+ * unparseable one, is returned by reference. An existing `restoredFrom` is
+ * never overwritten.
+ */
+export function liftRestoredProvenance(doc: DiagramDocument): DiagramDocument {
+  const { name, restoredFrom: newest } = stripRestoredSuffix(doc.name);
+
+  if (name === doc.name) return doc;
+
+  // Conditional spread, not `restoredFrom: … ?? undefined` — the project runs
+  // `exactOptionalPropertyTypes`, where an explicit `undefined` is not the same
+  // as an absent key.
+  const stamp = doc.restoredFrom ?? newest;
+  return {
+    ...doc,
+    name: name.trim(),
+    ...(stamp !== null && stamp !== undefined ? { restoredFrom: stamp } : {}),
+  };
 }
 
 /** Stamp `ownerId: null` on any group shape missing it. Pure; returns the same

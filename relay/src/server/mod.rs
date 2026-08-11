@@ -20,6 +20,7 @@ pub mod documents;
 pub mod permissions;
 pub mod protocol;
 pub mod publish;
+pub mod style_profiles;
 
 use axum::{
     body::Body,
@@ -216,6 +217,15 @@ async fn run_doc_mirror_worker(
                 let key = s3.workspace_collections_key(&ws);
                 if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
                     log::warn!("R2 collections mirror PUT failed for {}: {}", key, e);
+                }
+            }
+            MirrorOp::PutStyleProfiles { ws } => {
+                let Some(bytes) = doc_store.read_workspace_style_profiles_bytes(&ws) else {
+                    continue;
+                };
+                let key = s3.workspace_style_profiles_key(&ws);
+                if let Err(e) = s3.put_object_at(&key, bytes, "application/json").await {
+                    log::warn!("R2 style-profiles mirror PUT failed for {}: {}", key, e);
                 }
             }
             MirrorOp::PutDeleted { ws } => {
@@ -446,6 +456,35 @@ pub(crate) struct EffectiveLimits {
     pub editor_limit: Option<u32>,
     /// Per-document serialized-JSON size ceiling (JP-443).
     pub max_doc_bytes: Option<u64>,
+}
+
+/// The shares of one workspace's single storage meter. Built by
+/// [`ServerState::workspace_storage_split`] and consumed by both the usage
+/// endpoint and the blob-grant gate, so the number a user is shown and the
+/// number they are gated on come from the same place.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StorageSplit {
+    /// Blob bytes, full-size-per-grant.
+    pub blob_bytes: u64,
+    /// Document JSON bytes, including published projection artifacts.
+    pub doc_bytes: u64,
+    /// Labeled configuration — the workspace's style-profile registry.
+    pub config_bytes: u64,
+}
+
+impl StorageSplit {
+    /// Everything the workspace is using.
+    pub fn total(&self) -> u64 {
+        self.blob_bytes
+            .saturating_add(self.doc_bytes)
+            .saturating_add(self.config_bytes)
+    }
+
+    /// Everything except blobs — the amount pre-charged against a new blob
+    /// grant so the grant path can keep its blob-only ledger.
+    pub fn non_blob_bytes(&self) -> u64 {
+        self.doc_bytes.saturating_add(self.config_bytes)
+    }
 }
 
 /// Shared state for the WebSocket server
@@ -1002,6 +1041,21 @@ impl ServerState {
         self.doc_store.memoize_collections_probe(ws);
     }
 
+    /// Cold-start restore for a workspace's style-profile registry, keyed off
+    /// presence exactly like the collections gate so an emptied registry isn't
+    /// re-fetched (and resurrected) from a stale mirror.
+    pub(crate) async fn ensure_workspace_style_profiles_local(&self, ws: &WorkspaceId) {
+        if self.doc_store.has_workspace_style_profiles_loaded(ws) {
+            return;
+        }
+        if let Some(s3) = &self.s3 {
+            self.doc_store
+                .restore_workspace_style_profiles_from(s3.as_ref(), ws)
+                .await;
+        }
+        self.doc_store.memoize_style_profiles_probe(ws);
+    }
+
     /// Try to register a new authenticated WS connection for the
     /// given workspace. Returns:
     /// - `Err(CapExceeded)` if the total-connection safety ceiling
@@ -1068,6 +1122,15 @@ impl ServerState {
         (v != 0).then_some(v)
     }
 
+    /// Ceiling on a workspace's style-profile registry (`[tenancy.limits]
+    /// max_config_bytes`), `None` = no ceiling. Config-only for the same reason
+    /// as `publish_max_bytes` — no JWT claim, so the number has one home and
+    /// the token surface doesn't grow for an abuse guard.
+    pub(crate) fn max_config_bytes(&self) -> Option<u64> {
+        let v = self.tenancy.limits.max_config_bytes;
+        (v != 0).then_some(v)
+    }
+
     /// Best-effort restore of a workspace's published-projection registry from
     /// R2 before serving publish state on a cold machine. Presence-keyed and
     /// probe-memoized exactly like `ensure_workspace_collections_local` — a
@@ -1085,32 +1148,51 @@ impl ServerState {
         self.doc_store.memoize_published_probe(ws);
     }
 
-    /// The two halves of the single storage meter for a workspace (JP-443):
-    /// blob bytes (ACL-grant attributed) + document-derived JSON bytes. The
-    /// doc half includes **published projection artifacts** — a published
-    /// snapshot is a second stored copy of the document, and metering it here
-    /// puts it in every consumer (usage reporting, blob-grant headroom) at
-    /// once.
-    pub(crate) fn workspace_storage_split(&self, ws: &WorkspaceId) -> (u64, u64) {
-        (
-            self.blob_store.get_workspace_size(ws),
-            self.doc_store
+    /// The shares of the single storage meter for a workspace (JP-443): blob
+    /// bytes (ACL-grant attributed), document-derived JSON bytes, and labeled
+    /// configuration. The doc share includes **published projection
+    /// artifacts** — a published snapshot is a second stored copy of the
+    /// document, and metering it here puts it in every consumer (usage
+    /// reporting, blob-grant headroom) at once.
+    ///
+    /// The `config` share is the workspace's style-profile registry. It is
+    /// deliberately reported as its own line rather than folded into documents:
+    /// it is durable stored state a user accrues (and can lose), so it is
+    /// metered honestly — but it is also two orders of magnitude smaller than
+    /// either other share, and presenting it separately is what keeps that
+    /// legible instead of looking like unexplained document growth.
+    pub(crate) fn workspace_storage_split(&self, ws: &WorkspaceId) -> StorageSplit {
+        StorageSplit {
+            blob_bytes: self.blob_store.get_workspace_size(ws),
+            doc_bytes: self
+                .doc_store
                 .workspace_doc_bytes(ws)
                 .saturating_add(self.doc_store.published_bytes_total(ws, None)),
-        )
+            config_bytes: self.doc_store.workspace_config_bytes(ws),
+        }
     }
 
     /// Storage quota available to NEW BLOB grants (JP-443): the effective
-    /// workspace quota minus recorded document bytes. The blob store keeps its
-    /// blob-only ledger and unchanged signatures — the document share of the
-    /// meter is pre-charged here, so gating blobs on this *remaining* quota is
-    /// arithmetically identical to gating on `blob + doc ≤ quota`. When docs
-    /// alone exceed the quota this saturates to 0 — every new grant refused.
-    /// `None` = unlimited.
+    /// workspace quota minus every non-blob share of the meter. The blob store
+    /// keeps its blob-only ledger and unchanged signatures — the other shares
+    /// are pre-charged here, so gating blobs on this *remaining* quota is
+    /// arithmetically identical to gating on `blob + doc + config ≤ quota`.
+    /// When the non-blob shares alone exceed the quota this saturates to 0 —
+    /// every new grant refused. `None` = unlimited.
+    ///
+    /// This deliberately reads the **same** [`Self::workspace_storage_split`]
+    /// the usage endpoint reports, so the gate and the meter can never disagree
+    /// about what a workspace is using. Previously it subtracted only
+    /// `workspace_doc_bytes`, which silently omitted published-projection
+    /// artifacts even though the meter counted them — the two drifted apart for
+    /// any workspace with a published document. Sourcing both from one function
+    /// is what keeps the doc-comment's arithmetic claim true as shares are
+    /// added.
     pub(crate) fn blob_quota_remaining(&self, ws: &WorkspaceId, claim: ClaimLimits) -> Option<u64> {
+        let split = self.workspace_storage_split(ws);
         self.resolve_limits(claim)
             .quota_bytes
-            .map(|q| q.saturating_sub(self.doc_store.workspace_doc_bytes(ws)))
+            .map(|q| q.saturating_sub(split.non_blob_bytes()))
     }
 
     /// Mirror of `try_register_workspace_connection` used on clean

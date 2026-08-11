@@ -48,21 +48,26 @@ export const LAYOUT_PRESETS: Record<LayoutMode, LayoutPanelMap> = {
     document: { dock: 'left', visible: true, order: 0 },
     properties: { dock: 'right', visible: false, order: 0, width: 240 },
     layers: { dock: 'right', visible: false, order: 0 },
+    navigator: { dock: 'right', visible: false, order: 1, width: 300 },
   },
   designer: {
     document: { dock: 'left', visible: false, order: 0, width: 320 },
     properties: { dock: 'right', visible: true, order: 0, width: 240 },
     layers: { dock: 'right', visible: true, order: 1 },
+    navigator: { dock: 'right', visible: false, order: 2, width: 300 },
   },
   technician: {
     document: { dock: 'left', visible: true, order: 0, width: 320 },
     properties: { dock: 'right', visible: true, order: 0, width: 240 },
     layers: { dock: 'right', visible: true, order: 1 },
+    navigator: { dock: 'right', visible: false, order: 2, width: 300 },
   },
   power: {
     document: { dock: 'left', visible: true, order: 0, width: 320 },
     properties: { dock: 'right', visible: true, order: 0, width: 240, pinned: true },
     layers: { dock: 'right', visible: true, order: 1, pinned: true },
+    // Opt-in everywhere (AGENTS.md: new panels default hidden), Power included.
+    navigator: { dock: 'right', visible: false, order: 2, width: 300, pinned: true },
   },
 };
 
@@ -130,6 +135,24 @@ export function resolveRegions(
     default:
       return { primary: 'document', split: false };
   }
+}
+
+/**
+ * Is the canvas absent from the resolved region layout?
+ *
+ * Only Relaxed can hide the canvas outright (`write` focus, or `split` collapsed
+ * to single-pane on a narrow viewport); every other mode always renders it. Kept
+ * here rather than inline at the call sites so `App` (which sizes the editor
+ * regions) and `StatusBar` (which drops canvas-only readouts when there is no
+ * canvas to read out) cannot drift apart.
+ */
+export function isCanvasHidden(
+  mode: LayoutMode,
+  focus: RelaxedFocus,
+  band: ViewportBand
+): boolean {
+  const regions = resolveRegions(mode, focus, band);
+  return regions.primary === 'document' && !regions.split;
 }
 
 /** Human-readable label for a layout mode (UI display). */

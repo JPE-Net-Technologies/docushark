@@ -170,6 +170,21 @@ export interface StyleFacet {
   readonly id: string;
   /** Human-readable property names this facet contributes (drives the UI hint). */
   readonly names: readonly string[];
+  /**
+   * The profile keys this facet owns.
+   *
+   * Deliberately NOT derivable from {@link names} — the two are not 1:1 (the
+   * ERD facet presents three labels over five keys), and they answer different
+   * questions: `names` is what to *show*, `keys` is what the facet actually
+   * reads and writes.
+   *
+   * Declaring it makes the registry self-describing, which is what lets the
+   * Style Profile Studio say whether a given key is **saved** into a profile or
+   * **inherited** from defaults. Inferring that by running `extract` on a probe
+   * shape would report what the probe happened to carry, not what the facet
+   * owns.
+   */
+  readonly keys: readonly (keyof StyleProfileProperties)[];
   /** Whether this facet applies to the given shape type. */
   appliesTo(type: string): boolean;
   /** Pull this facet's concrete fields off a shape into the flat profile bag. */

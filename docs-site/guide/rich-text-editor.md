@@ -41,8 +41,21 @@ reaching for the toolbar.
 
 ### Text Color & Highlighting
 
-- **Text color** — Choose from a 20+ color palette via the toolbar
-- **Highlight** — 12 highlight colors for emphasis
+Text color, highlight, and table cell background all open the same color
+picker you get on the canvas, so a color you use in a diagram is one click
+away in your prose.
+
+- **Text color** — the full palette, plus **Default** at the top to drop the
+  color and go back to the document's body text (unlike Clear Formatting,
+  this leaves bold, italic, and links alone)
+- **Highlight** — tints chosen to stay readable behind body text
+- **Any color you like** — type a hex value into the field at the bottom of
+  the picker. It accepts `#ff6600`, `ff6600`, `#f60`, `rgb(255, 102, 0)`, or
+  a name like `crimson`, and stores whichever you type as standard hex
+- **Recent colors** — carried across the whole editor, prose and canvas alike
+
+The picker also shows a contrast reading for text and cell backgrounds, so you
+can see at a glance whether a pairing will still be readable in an export.
 
 ### Text Alignment
 
@@ -122,7 +135,10 @@ Click **Table** in the toolbar to insert a 3×3 table with header row.
 - **Merge cells**: Select cells → Right-click → Merge
 - **Split cells**: Right-click → Split
 - **Toggle headers**: Right-click → Toggle header row/column
-- **Cell background**: Right-click → Set background color
+- **Cell background**: Put the cursor in a cell, then use the paint bucket on
+  the **Table** tab of the toolbar. The picker leads with neutral greys and
+  pale tints — the shades you actually want for a header row or zebra
+  striping — with the full palette and hex entry below them.
 
 ### Table Navigation
 

@@ -1,11 +1,13 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from 'react';
-import { Search, LayoutGrid, List, Plus, X } from 'lucide-react';
+import { Search, LayoutGrid, List, Plus, X, RefreshCw } from 'lucide-react';
 import { getSelectedShapes, useSessionStore } from '../store/sessionStore';
 import { useStyleProfileStore, type StyleProfile } from '../store/styleProfileStore';
+import { useCollectionStore, isWorkspaceCollection } from '../store/collectionStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { clampToViewport, MENU_SIZE_ESTIMATES } from './contextMenuUtils';
 import { useProfileActions } from './styleProfile/useProfileActions';
 import { ProfileCard, type MenuAnchor } from './styleProfile/ProfileCard';
+import { StudioModal } from './styleProfile/studio/StudioModal';
 import './StyleProfilePanel.css';
 
 type ViewMode = 'grid' | 'list';
@@ -46,6 +48,21 @@ export function StyleProfilePanel() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  /** Collection filter (JP-301). `null` = show everything. */
+  const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
+  /** Profile currently open in the Studio, if any. */
+  const [studioProfileId, setStudioProfileId] = useState<string | null>(null);
+
+  // Only workspace collections can scope a profile, so those are the only ones
+  // worth offering — a local collection has no counterpart in the registry.
+  const collections = useCollectionStore((s) => s.collections);
+  const filterableCollections = useMemo(
+    () =>
+      Object.values(collections)
+        .filter(isWorkspaceCollection)
+        .sort((a, b) => a.order - b.order),
+    [collections],
+  );
 
   // Sorted (favorites first) via the store's own comparator; filtered locally.
   const sorted = useMemo(() => useStyleProfileStore.getState().getSortedProfiles(), [profilesRaw]);
@@ -53,8 +70,17 @@ export function StyleProfilePanel() {
     () =>
       sorted
         .filter((p) => !hideDefaultStyleProfiles || !p.id.startsWith('default-'))
-        .filter((p) => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase())),
-    [sorted, hideDefaultStyleProfiles, searchQuery]
+        .filter((p) => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        // A profile with no collection tags belongs everywhere, so it survives
+        // every filter — tagging is opt-in narrowing, not a requirement.
+        .filter(
+          (p) =>
+            collectionFilter === null ||
+            !p.collectionIds ||
+            p.collectionIds.length === 0 ||
+            p.collectionIds.includes(collectionFilter),
+        ),
+    [sorted, hideDefaultStyleProfiles, searchQuery, collectionFilter]
   );
 
   useEffect(() => {
@@ -153,6 +179,16 @@ export function StyleProfilePanel() {
           >
             <List size={15} />
           </button>
+          {actions.canSync && (
+            <button
+              className="style-profile-view-btn"
+              onClick={() => void actions.refreshFromWorkspace()}
+              title="Refresh style profiles from this workspace"
+              aria-label="Refresh style profiles from this workspace"
+            >
+              <RefreshCw size={15} />
+            </button>
+          )}
           {hasSelection && (
             <button
               className="style-profile-add-btn"
@@ -186,6 +222,27 @@ export function StyleProfilePanel() {
               <X size={14} />
             </button>
           )}
+        </div>
+      )}
+
+      {/* Collection filter — only worth showing once the workspace actually has
+          collections to filter by; an always-visible control offering a single
+          "All" option is chrome, not a feature. */}
+      {filterableCollections.length > 0 && (
+        <div className="style-profile-collection-filter">
+          <select
+            className="style-profile-collection-select"
+            value={collectionFilter ?? ''}
+            onChange={(e) => setCollectionFilter(e.target.value === '' ? null : e.target.value)}
+            aria-label="Filter style profiles by collection"
+          >
+            <option value="">All profiles</option>
+            {filterableCollections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
@@ -259,11 +316,20 @@ export function StyleProfilePanel() {
             onCancelEdit={cancelEdit}
             onPreviewEnter={() => actions.previewProfile(profile)}
             onPreviewLeave={endPreview}
+            onUpdateFromShape={
+              hasSelection && !profile.id.startsWith('default-')
+                ? () => actions.updateProfileFromShape(profile.id)
+                : undefined
+            }
           />
         ))}
       </div>
 
       {!hasSelection && <div className="style-profile-hint">Select a shape to apply or save styles</div>}
+
+      {studioProfileId && (
+        <StudioModal profileId={studioProfileId} onClose={() => setStudioProfileId(null)} />
+      )}
 
       {contextMenu && menuProfile && (
         <div
@@ -294,12 +360,35 @@ export function StyleProfilePanel() {
           <button
             className="style-profile-context-menu-item"
             onClick={() => {
+              setStudioProfileId(menuProfile.id);
+              closeMenu();
+            }}
+          >
+            Open in Studio
+          </button>
+          <button
+            className="style-profile-context-menu-item"
+            onClick={() => {
               actions.duplicateProfile(menuProfile);
               closeMenu();
             }}
           >
             Duplicate
           </button>
+          {actions.canSync && !menuProfile.id.startsWith('default-') && (
+            <button
+              className="style-profile-context-menu-item"
+              onClick={() => {
+                closeMenu();
+                void actions.setProfileScope(
+                  menuProfile,
+                  menuProfile.scope === 'workspace' ? 'local' : 'workspace',
+                );
+              }}
+            >
+              {menuProfile.scope === 'workspace' ? 'Stop syncing' : 'Sync to workspace'}
+            </button>
+          )}
           {!menuProfile.id.startsWith('default-') && (
             <>
               <button

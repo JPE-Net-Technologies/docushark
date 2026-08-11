@@ -1,36 +1,42 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { useColorPaletteStore } from '../store/colorPaletteStore';
-import { ColorPalette } from './ColorPalette';
+import { ColorPicker, type ColorSpecial } from './color/ColorPicker';
+import { parseColorInput } from '../utils/color';
 import './CompactColorInput.css';
 
 /**
  * Props for the CompactColorInput component.
  */
 interface CompactColorInputProps {
-  /** Current color value */
+  /** Current color value. May be `''` (no fill) or `'auto'` (contrast-aware). */
   value: string;
   /** Callback when color changes */
   onChange: (color: string) => void;
   /** Label for the input */
   label: string;
-  /** Whether to show palette on click */
-  showPalette?: boolean;
-  /** Whether to show the "no fill" option in palette */
+  /** Whether to show the "no fill" option in the picker */
   showNoFill?: boolean;
   /** Whether to show the "Automatic" (contrast-aware) option */
   showAuto?: boolean;
+  /**
+   * Render the swatch alone — no label or hex readout. For dense strips (the
+   * property panel's quick bar) where the colour itself is the control and
+   * `label` becomes its accessible name. The picker dropdown is unaffected.
+   */
+  swatchOnly?: boolean;
 }
 
 /**
- * Compact color input component with inline picker and hex display.
+ * The canvas-side trigger for the shared color picker.
  *
- * Features:
- * - Native color picker
- * - Hex value display/input
- * - Click to expand color palette
- * - Recent colors tracking
- * - Portal-based dropdown to avoid overflow clipping
+ * Owns the swatch, the hex readout, and the portal; the picker body itself is
+ * {@link ColorPicker}, shared with the prose and table surfaces.
+ *
+ * There are deliberately only **two** controls here. The previous version had
+ * three — a swatch and a hex readout that both opened the palette, plus a `#`
+ * button that opened a *second* hex editor seeded from a different source than
+ * the palette's own field. Both now open the one picker, whose hex field is
+ * always seeded from `value`.
  *
  * Usage:
  * ```tsx
@@ -46,25 +52,24 @@ export function CompactColorInput({
   value,
   onChange,
   label,
-  showPalette = true,
   showNoFill = false,
   showAuto = false,
+  swatchOnly = false,
 }: CompactColorInputProps) {
-  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState(value || '');
-  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const { addRecentColor } = useColorPaletteStore();
 
   // Calculate dropdown position
   const updateDropdownPosition = useCallback(() => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
-      // Bound the width so the palette never stretches across the screen, and
+      // Bound the width so the picker never stretches across the screen, and
       // clamp the left edge so it stays on-screen.
       const width = Math.min(264, Math.max(rect.width, 232));
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
@@ -72,9 +77,9 @@ export function CompactColorInput({
     }
   }, []);
 
-  // Close palette when clicking outside (check both container and portal dropdown)
+  // Close when clicking outside (check both container and portal dropdown)
   useEffect(() => {
-    if (!isPaletteOpen) return;
+    if (!isOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -85,17 +90,17 @@ export function CompactColorInput({
         !containerRef.current.contains(target) &&
         (!dropdown || !dropdown.contains(target))
       ) {
-        setIsPaletteOpen(false);
+        setIsOpen(false);
       }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isPaletteOpen]);
+  }, [isOpen]);
 
   // Update position on scroll/resize
   useEffect(() => {
-    if (!isPaletteOpen) return;
+    if (!isOpen) return;
 
     const handleUpdate = () => updateDropdownPosition();
     window.addEventListener('scroll', handleUpdate, true);
@@ -105,98 +110,74 @@ export function CompactColorInput({
       window.removeEventListener('scroll', handleUpdate, true);
       window.removeEventListener('resize', handleUpdate);
     };
-  }, [isPaletteOpen, updateDropdownPosition]);
+  }, [isOpen, updateDropdownPosition]);
 
-  // Handle native picker change
-  const handlePickerChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const color = e.target.value;
-      onChange(color);
-      addRecentColor(color);
-    },
-    [onChange, addRecentColor]
-  );
+  const togglePicker = useCallback(() => {
+    if (!isOpen) updateDropdownPosition();
+    setIsOpen((prev) => !prev);
+  }, [isOpen, updateDropdownPosition]);
 
-  // Handle hex input click - toggle palette
-  const handleHexClick = useCallback(() => {
-    if (showPalette) {
-      if (!isPaletteOpen) {
-        updateDropdownPosition();
-      }
-      setIsPaletteOpen((prev) => !prev);
-    } else {
-      setIsEditing(true);
-      setEditValue(value || '');
-    }
-  }, [showPalette, value, isPaletteOpen, updateDropdownPosition]);
-
-  // Handle starting edit mode
-  const handleStartEdit = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      setIsEditing(true);
-      setEditValue(value || '');
-      setIsPaletteOpen(false);
-    },
-    [value]
-  );
-
-  // Handle edit input change
-  const handleEditChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    let val = e.target.value;
-    if (val && !val.startsWith('#')) {
-      val = '#' + val;
-    }
-    setEditValue(val);
-  }, []);
-
-  // Handle edit input blur
-  const handleEditBlur = useCallback(() => {
-    setIsEditing(false);
-    if (editValue && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(editValue)) {
-      onChange(editValue.toLowerCase());
-      addRecentColor(editValue.toLowerCase());
-    } else {
-      setEditValue(value || '');
-    }
-  }, [editValue, onChange, addRecentColor, value]);
-
-  // Handle edit input keydown
-  const handleEditKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') {
-        handleEditBlur();
-      } else if (e.key === 'Escape') {
-        setIsEditing(false);
-        setEditValue(value || '');
-      }
-    },
-    [handleEditBlur, value]
-  );
-
-  // Handle palette color selection
-  const handlePaletteSelect = useCallback(
+  const handlePick = useCallback(
     (color: string) => {
       onChange(color);
-      setIsPaletteOpen(false);
     },
     [onChange]
   );
 
-  // Focus input when editing starts
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [isEditing]);
-
   const displayValue = value || '';
   const isAuto = displayValue === 'auto';
-  const hasValue = displayValue && displayValue !== 'transparent' && !isAuto;
+  const hasValue = Boolean(parseColorInput(displayValue));
 
-  // Render dropdown via portal
-  const dropdownContent = isPaletteOpen && showPalette && dropdownPosition && (
+  // The canvas expresses "no colour" and "contrast-aware" as stored values, so
+  // its specials write those sentinels. Other surfaces pass their own callbacks
+  // — the picker never invents a value of its own.
+  const specials = useMemo<ColorSpecial[]>(() => {
+    const out: ColorSpecial[] = [];
+    if (showAuto) {
+      out.push({
+        id: 'auto',
+        label: 'Automatic',
+        swatch: 'auto',
+        isActive: isAuto,
+        onSelect: () => {
+          onChange('auto');
+          setIsOpen(false);
+        },
+        hint: 'Adapts to the canvas background — white text on dark shapes, black on light shapes. Always renders as black in exported PDFs.',
+      });
+    }
+    if (showNoFill) {
+      out.push({
+        id: 'none',
+        label: 'No fill',
+        swatch: 'none',
+        isActive: !hasValue && !isAuto,
+        onSelect: () => {
+          onChange('');
+          setIsOpen(false);
+        },
+      });
+    }
+    return out;
+  }, [showAuto, showNoFill, isAuto, hasValue, onChange]);
+
+  // Visual style for the swatch button: solid colour, "no fill" diagonal, or
+  // the contrast-aware "Auto" half-and-half pattern.
+  const swatchStyle: React.CSSProperties = isAuto
+    ? {
+        background:
+          'linear-gradient(135deg, #ffffff 0%, #ffffff 50%, #000000 50%, #000000 100%)',
+      }
+    : hasValue
+      ? { backgroundColor: displayValue }
+      : {
+          background:
+            'repeating-linear-gradient(45deg, #fff, #fff 4px, #eee 4px, #eee 8px)',
+        };
+
+  const swatchTitle = `Open ${label.toLowerCase()} picker`;
+
+  const dropdownContent = isOpen && dropdownPosition && (
     <div
       className="compact-color-palette-dropdown compact-color-palette-portal"
       // Logically part of whatever panel opened us, even though we render in a
@@ -213,93 +194,53 @@ export function CompactColorInput({
         zIndex: 10000,
       }}
     >
-      <ColorPalette
+      <ColorPicker
         value={displayValue}
-        onChange={handlePaletteSelect}
-        showNoFill={showNoFill}
-        showAuto={showAuto}
+        onChange={handlePick}
+        preset="canvas"
+        specials={specials}
         compact
       />
     </div>
   );
 
-  // Visual style for the swatch button: solid colour, "no fill" diagonal, or
-  // the contrast-aware "Auto" half-and-half pattern.
-  const swatchStyle: React.CSSProperties = isAuto
-    ? {
-        background:
-          'linear-gradient(135deg, #ffffff 0%, #ffffff 50%, #000000 50%, #000000 100%)',
-      }
-    : hasValue
-      ? { backgroundColor: displayValue }
-      : {
-          background:
-            'repeating-linear-gradient(45deg, #fff, #fff 4px, #eee 4px, #eee 8px)',
-        };
-
-  const swatchTitle = showPalette
-    ? `Open ${label.toLowerCase()} palette`
-    : `Pick ${label.toLowerCase()} color`;
-
   return (
-    <div className="compact-color-input" ref={containerRef}>
-      <label className="compact-color-label">{label}</label>
+    <div
+      className={`compact-color-input${swatchOnly ? ' compact-color-input--swatch-only' : ''}`}
+      ref={containerRef}
+    >
+      {!swatchOnly && <label className="compact-color-label">{label}</label>}
       <div className="compact-color-controls" ref={triggerRef}>
-        {showPalette ? (
+        <button
+          type="button"
+          className="compact-color-swatch"
+          style={swatchStyle}
+          onClick={togglePicker}
+          title={swatchTitle}
+          aria-label={swatchTitle}
+          aria-expanded={isOpen}
+        >
+          {isAuto && <span className="compact-color-swatch-auto">A</span>}
+          {!hasValue && !isAuto && <span className="compact-color-swatch-none">/</span>}
+        </button>
+        {!swatchOnly && (
           <button
             type="button"
-            className="compact-color-swatch"
-            style={swatchStyle}
-            onClick={handleHexClick}
-            title={swatchTitle}
-            aria-label={swatchTitle}
-          >
-            {isAuto && <span className="compact-color-swatch-auto">A</span>}
-            {!hasValue && !isAuto && (
-              <span className="compact-color-swatch-none">/</span>
-            )}
-          </button>
-        ) : (
-          <input
-            type="color"
-            value={hasValue ? displayValue : '#000000'}
-            onChange={handlePickerChange}
-            className="compact-color-picker"
-            title={swatchTitle}
-          />
-        )}
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={editValue}
-            onChange={handleEditChange}
-            onBlur={handleEditBlur}
-            onKeyDown={handleEditKeyDown}
-            className="compact-color-hex-input editing"
-            maxLength={7}
-          />
-        ) : (
-          <button
             className="compact-color-hex-input"
-            onClick={handleHexClick}
-            title={showPalette ? 'Open color palette' : 'Edit color'}
+            onClick={togglePicker}
+            title={swatchTitle}
           >
-            {isAuto ? <span className="compact-color-auto-label">Auto</span> : hasValue ? displayValue : 'none'}
-          </button>
-        )}
-        {(hasValue || isAuto) && showPalette && !isEditing && (
-          <button
-            className="compact-color-edit"
-            onClick={handleStartEdit}
-            title="Edit hex value"
-          >
-            #
+            {isAuto ? (
+              <span className="compact-color-auto-label">Auto</span>
+            ) : hasValue ? (
+              displayValue
+            ) : (
+              'none'
+            )}
           </button>
         )}
       </div>
 
-      {/* Color Palette Dropdown - rendered via portal */}
       {dropdownContent && createPortal(dropdownContent, document.body)}
     </div>
   );

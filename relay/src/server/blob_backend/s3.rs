@@ -139,6 +139,18 @@ impl S3Backend {
         format!("{}docs/{}/collections.json", self.config.key_prefix, ws.as_str())
     }
 
+    /// Object key for a workspace's style-profile registry:
+    /// `{prefix}docs/{ws}/style-profiles.json`. Beside the collections registry
+    /// for the same reason — a region migration that copies the workspace
+    /// subtree carries a user's saved styles with it.
+    pub fn workspace_style_profiles_key(&self, ws: &WorkspaceId) -> String {
+        format!(
+            "{}docs/{}/style-profiles.json",
+            self.config.key_prefix,
+            ws.as_str()
+        )
+    }
+
     /// Object key for a doc's **public projection artifact** or its manifest:
     /// `{prefix}docs/{ws}/public/{docId}.{json|manifest.json}`. Deliberately
     /// inside the workspace's `docs/{ws}/` subtree — a region migration that
@@ -460,6 +472,13 @@ pub trait DocObjectStore: Send + Sync {
         ws: &WorkspaceId,
     ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
 
+    /// Fetch a workspace's style-profile registry (best-effort restore so a
+    /// cold machine keeps the user's saved styles and their meter contribution).
+    fn get_workspace_style_profiles(
+        &self,
+        ws: &WorkspaceId,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, String>> + Send;
+
     /// Fetch a workspace's deleted-id tombstone registry (JP-375; best-effort
     /// restore so a cold machine won't resurrect tombstoned ids).
     fn get_workspace_deleted_ids(
@@ -491,6 +510,13 @@ impl DocObjectStore for S3Backend {
 
     async fn get_workspace_collections(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {
         self.get_object_at(&self.workspace_collections_key(ws)).await
+    }
+
+    async fn get_workspace_style_profiles(
+        &self,
+        ws: &WorkspaceId,
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.get_object_at(&self.workspace_style_profiles_key(ws)).await
     }
 
     async fn get_workspace_deleted_ids(&self, ws: &WorkspaceId) -> Result<Option<Vec<u8>>, String> {

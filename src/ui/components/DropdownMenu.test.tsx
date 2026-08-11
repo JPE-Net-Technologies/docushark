@@ -192,4 +192,132 @@ describe('DropdownMenu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Alpha' }));
     expect(surfaceClick).not.toHaveBeenCalled();
   });
+
+  /**
+   * Context-menu mode: a controlled, trigger-less menu placed at a cursor
+   * point. Every prop involved is additive and defaults off, so the suite
+   * above doubles as the regression guard for existing consumers.
+   */
+  describe('controlled + anchorPoint (right-click menus)', () => {
+    it('renders with no trigger button and opens from the `open` prop', () => {
+      render(
+        <DropdownMenu
+          open
+          anchorPoint={{ x: 40, y: 60 }}
+          entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+        />,
+      );
+      // No trigger was passed, so none should be rendered.
+      expect(screen.queryByRole('button', { name: 'Menu' })).toBeNull();
+      expect(screen.getByRole('menuitem', { name: 'Alpha' })).toBeTruthy();
+    });
+
+    it('positions the panel at the anchor point rather than under a trigger', () => {
+      render(
+        <DropdownMenu
+          open
+          anchorPoint={{ x: 120, y: 200 }}
+          entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+        />,
+      );
+      const panel = screen.getByRole('menu') as HTMLElement;
+      // jsdom reports zero-size elements, so the clamp leaves x untouched and
+      // the panel opens down-right of the point (y + 4px offset).
+      expect(panel.style.left).toBe('120px');
+      expect(panel.style.top).toBe('204px');
+    });
+
+    it('a controlled parent is asked to close, and stays open until it agrees', () => {
+      const onOpenChange = vi.fn();
+      render(
+        <DropdownMenu
+          open
+          anchorPoint={{ x: 10, y: 10 }}
+          onOpenChange={onOpenChange}
+          entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+        />,
+      );
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Alpha' }));
+      expect(onOpenChange).toHaveBeenLastCalledWith(false);
+      // `open` is still true from the parent, so the menu must not self-close —
+      // that is what "controlled" means.
+      expect(screen.getByRole('menu')).toBeTruthy();
+    });
+  });
+
+  describe('openOnHover', () => {
+    it('opens on pointer enter without stealing focus', () => {
+      render(
+        <DropdownMenu
+          trigger={<span>Menu</span>}
+          triggerTitle="Menu"
+          openOnHover
+          entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+        />,
+      );
+      fireEvent.mouseEnter(screen.getByRole('button', { name: 'Menu' }));
+      const item = screen.getByRole('menuitem', { name: 'Alpha' });
+      expect(item).toBeTruthy();
+      // Hover is pointer-driven: yanking focus out of whatever the user was
+      // doing would be a bug, not a convenience.
+      expect(document.activeElement).not.toBe(item);
+    });
+
+    it('survives the trip from trigger to the portaled panel', () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <DropdownMenu
+            trigger={<span>Menu</span>}
+            triggerTitle="Menu"
+            openOnHover
+            entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+          />,
+        );
+        const trigger = screen.getByRole('button', { name: 'Menu' });
+        fireEvent.mouseEnter(trigger);
+        // Leaving the trigger starts the grace timer; the panel is portaled, so
+        // this fires the instant the pointer sets off toward the menu.
+        fireEvent.mouseLeave(trigger);
+        fireEvent.mouseEnter(screen.getByRole('menu'));
+        act(() => void vi.advanceTimersByTime(500));
+        expect(screen.getByRole('menuitem', { name: 'Alpha' })).toBeTruthy();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('closes once the pointer leaves the panel too', () => {
+      vi.useFakeTimers();
+      try {
+        render(
+          <DropdownMenu
+            trigger={<span>Menu</span>}
+            triggerTitle="Menu"
+            openOnHover
+            entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+          />,
+        );
+        fireEvent.mouseEnter(screen.getByRole('button', { name: 'Menu' }));
+        fireEvent.mouseLeave(screen.getByRole('menu'));
+        act(() => void vi.advanceTimersByTime(500));
+        expect(screen.queryByRole('menu')).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a click still focuses the first item (keyboard-equivalent intent)', () => {
+      render(
+        <DropdownMenu
+          trigger={<span>Menu</span>}
+          triggerTitle="Menu"
+          openOnHover
+          entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+      expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Alpha' }));
+    });
+  });
 });

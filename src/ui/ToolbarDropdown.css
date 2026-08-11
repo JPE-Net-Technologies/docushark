@@ -13,43 +13,12 @@
   pointer-events: auto;
 }
 
-/* Color picker grid */
-.toolbar-dropdown-portal .color-picker-grid {
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: var(--space-0-5);
-}
-
-.toolbar-dropdown-portal .color-picker-swatch {
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  cursor: pointer;
-  transition: transform 0.1s ease;
-  padding: 0;
-}
-
-.toolbar-dropdown-portal .color-picker-swatch:hover {
-  transform: scale(1.2);
-  z-index: 1;
-  box-shadow: var(--shadow-md);
-}
-
-.toolbar-dropdown-portal .color-picker-clear {
-  width: 100%;
-  margin-top: var(--space-2);
-  padding: var(--space-1-5) var(--space-2);
-  border: 1px solid var(--border-color-input);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.toolbar-dropdown-portal .color-picker-clear:hover {
-  background: var(--bg-hover);
+/* Shared color picker (text colour, highlight, cell background). Given a
+   width here so the popover does not resize as the user switches between
+   presets with different row lengths. */
+.toolbar-dropdown-portal .color-picker {
+  width: 268px;
+  max-width: calc(100vw - 24px);
 }
 
 /* Simple vertical button menu (table options, callout variants, …) */

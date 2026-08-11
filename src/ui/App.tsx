@@ -4,8 +4,14 @@ import './mobile/mobile.css';
 import { CanvasContainer } from './CanvasContainer';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
+import { NavigatorPanel } from './NavigatorPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
-import { isFlyoutLayout, propertiesDockedVisible, resolveRegions } from './layout/modes';
+import {
+  isCanvasHidden,
+  isFlyoutLayout,
+  propertiesDockedVisible,
+  resolveRegions,
+} from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
@@ -129,6 +135,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const documentPanelState = useActivePanelState('document');
   const propertiesPanelState = useActivePanelState('properties');
   const layersPanelState = useActivePanelState('layers');
+  const navigatorPanelState = useActivePanelState('navigator');
   const layoutActions = useLayoutActions();
   const isDocumentVisible = documentPanelState.visible;
   // Relaxed never docks Properties (selection-only overlay) even if a stale
@@ -136,6 +143,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // otherwise it shows docked over the prose, including in `write` focus.
   const isPropertiesVisible = propertiesDockedVisible(activeMode, propertiesPanelState);
   const isLayersVisible = layersPanelState.visible;
+  const isNavigatorVisible = navigatorPanelState.visible;
+  const navigatorUsesFlyout =
+    isNavigatorVisible && isFlyoutLayout(activeMode) && !navigatorPanelState.pinned;
   // Properties panel uses the fly-out wrapper in Designer/Technician unless the
   // user has pinned it for this layout. Power keeps it docked; Relaxed hides
   // it (unless selection triggers the transient overlay — see below).
@@ -170,7 +180,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // remounts on a layout switch). In Relaxed it becomes a resizable secondary
   // pane in split focus, or hides in write focus; elsewhere it stays dominant.
   const canvasIsSecondary = isRelaxed && regions.primary === 'document' && regions.split;
-  const canvasIsHidden = isRelaxed && regions.primary === 'document' && !regions.split;
+  // Shared with StatusBar, which drops its canvas-only readouts when the canvas
+  // is hidden — the two must agree on what "no canvas" means.
+  const canvasIsHidden = isCanvasHidden(activeMode, relaxedFocus, band);
   const relaxedSplitCanvasWidth = useUIPreferencesStore((s) => s.relaxedSplitCanvasWidth);
   const canvasWrapperClass = [
     'canvas-area-wrapper',
@@ -496,10 +508,14 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
                       onCustomizeLayout={handleOpenLayoutSettings}
-                      // Centered reading column when prose owns the full width
-                      // (write); fill the pane edge-to-edge when sharing with
-                      // the canvas (split).
-                      presentation={regions.split ? 'docked' : 'reading'}
+                      // Centered reading column whenever prose is the primary
+                      // region — write AND split. Keyed on the region's role,
+                      // not on `regions.split` (a pane-count boolean): the
+                      // measure is now `min(100%, …)`, so in a split pane it
+                      // simply resolves to the pane width and contributes
+                      // gutters rather than a cap. Gating on the pane count
+                      // instead left split prose flush against both edges.
+                      presentation={regions.primary === 'document' ? 'reading' : 'docked'}
                     />
                   </Suspense>
                 </ErrorBoundary>
@@ -520,6 +536,29 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                 </DockedPanel>
               </PanelChromeWrapper>
             )
+          )}
+
+          {/* Navigator on left (JP-475). Docked = resizable (DockedPanel), so a
+              deep subpage tree can be given the width it needs. */}
+          {!mobileActive && isNavigatorVisible && navigatorPanelState.dock === 'left' && (
+            <PanelChromeWrapper panelId="navigator">
+              <ErrorBoundary sectionName="Navigator">
+                {navigatorUsesFlyout ? (
+                  <FlyoutPanel
+                    panelId="navigator"
+                    label="Navigator"
+                    icon={<span style={{ fontSize: 12, fontWeight: 700 }}>N</span>}
+                    side="left"
+                  >
+                    <NavigatorPanel />
+                  </FlyoutPanel>
+                ) : (
+                  <DockedPanel panelId="navigator" side="left" defaultWidth={300} minWidth={240}>
+                    <NavigatorPanel />
+                  </DockedPanel>
+                )}
+              </ErrorBoundary>
+            </PanelChromeWrapper>
           )}
 
           {/* Properties on left (suppressed on mobile — the full-screen
@@ -598,6 +637,29 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                   </FlyoutPanel>
                 ) : (
                   <PropertyPanel />
+                )}
+              </ErrorBoundary>
+            </PanelChromeWrapper>
+          )}
+
+          {/* Navigator on right (JP-475). Docked = resizable (DockedPanel), so a
+              deep subpage tree can be given the width it needs. */}
+          {!mobileActive && isNavigatorVisible && navigatorPanelState.dock === 'right' && (
+            <PanelChromeWrapper panelId="navigator">
+              <ErrorBoundary sectionName="Navigator">
+                {navigatorUsesFlyout ? (
+                  <FlyoutPanel
+                    panelId="navigator"
+                    label="Navigator"
+                    icon={<span style={{ fontSize: 12, fontWeight: 700 }}>N</span>}
+                    side="right"
+                  >
+                    <NavigatorPanel />
+                  </FlyoutPanel>
+                ) : (
+                  <DockedPanel panelId="navigator" side="right" defaultWidth={300} minWidth={240}>
+                    <NavigatorPanel />
+                  </DockedPanel>
                 )}
               </ErrorBoundary>
             </PanelChromeWrapper>

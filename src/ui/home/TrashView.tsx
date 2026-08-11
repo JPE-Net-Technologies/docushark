@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, Flame, RotateCcw, Trash2, Cloud, HardDrive } from 'lucide-react';
 import { useTrashStore, getTrashReclaimableBytes } from '../../store/trashStore';
 import type { TrashItem } from '../../storage/TrashStorage';
-import { formatFileSize } from '../../utils/imageUtils';
+import { formatFileSize } from '../../utils/byteSize';
 
 export interface TrashViewProps {
   /** Back to the documents list. */

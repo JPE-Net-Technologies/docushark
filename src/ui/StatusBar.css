@@ -9,6 +9,14 @@
   border-top: 1px solid var(--border-color);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
+  /* Backstop (JP-486): this bar shipped for a long time overflowing its own
+     width on a narrow viewport, silently pushing the active tool name and part
+     of the Fit button past the right edge where nothing could reach them.
+     Clipping is not a fix for that — the responsive rules at the bottom of this
+     file are — but it guarantees a future addition fails visibly, inside the
+     bar, instead of escaping the viewport unnoticed. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Sections */
@@ -222,4 +230,72 @@
 
 [data-theme="dark"] .status-bar-btn:hover {
   background: var(--bg-hover);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive + touch (JP-486)
+
+   Two independent axes, kept separate on purpose:
+
+   - WIDTH (`max-width: 640px`, the `--bp-compact` value) — stop overflowing.
+     The structural cause was the fixed `min-width: 120px` floors on the outer
+     sections: 120 + zoom cluster + 120 exceeded a 375px viewport before any
+     content was measured. A narrow *mouse* window needs this and nothing else;
+     it must not become chunky.
+   - INPUT (`pointer: coarse`) — size the targets for a finger. The bar's own
+     24px height is the binding constraint, so it grows too.
+
+   Which readouts render at all is decided in StatusBar.tsx, not here; these
+   rules only handle the geometry. Placed last so they win on source order.
+   ------------------------------------------------------------------------ */
+
+@media (max-width: 640px) {
+  .status-bar-left,
+  .status-bar-right {
+    min-width: 0;
+  }
+
+  /* The connection chip is the one thing that may still need to give ground;
+     it carries a `title`, so a truncated label stays recoverable. */
+  .status-bar-right {
+    overflow: hidden;
+  }
+
+  .status-bar-conn {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* The compact bar drops its outer sections, so `space-between` can leave a lone
+   cluster hugging one edge. A gap keeps whatever remains from touching. */
+.status-bar--compact {
+  gap: var(--space-2);
+}
+
+@media (pointer: coarse) {
+  .status-bar {
+    height: 44px;
+  }
+
+  /* 44px is the touch-target size already adopted for the Relaxed focus
+     segments; matching it keeps one answer in the codebase rather than two. */
+  .status-bar-zoom-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .status-bar-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 var(--space-3);
+  }
+
+  /* Text scaled for a 24px strip is too small to read at arm's length. */
+  .status-bar-zoom-value,
+  .status-bar-value {
+    font-size: var(--font-size-sm);
+  }
 }

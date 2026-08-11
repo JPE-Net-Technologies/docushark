@@ -38,8 +38,9 @@ import {
   type DropdownMenuEntry,
 } from './components/DropdownMenu';
 import { confirmDialog } from './confirm/confirmStore';
-import { formatFileSize } from '../utils/fileUtils';
+import { formatFileSize } from '../utils/byteSize';
 import { PeopleStack } from './home/PeopleStack';
+import { DocumentPreview, useDocumentPreview } from './home/DocumentPreview';
 import { usePersonName, UNKNOWN_PERSON } from '../store/workspaceDirectoryStore';
 import { TagChips } from './TagChips';
 import { TagEditorPopover } from './TagEditorPopover';
@@ -334,6 +335,9 @@ function DocumentCardImpl({
   } | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
+  // Grid cards lead with a thumbnail (JP-477); every other mode skips the work.
+  const gridPreview = useDocumentPreview(record, mode === 'grid');
+
   // Sync editName when record.name changes externally
   useEffect(() => {
     if (!isEditing) {
@@ -363,6 +367,14 @@ function DocumentCardImpl({
     }
   }, [onMoveToPersonal, record.id]);
 
+  /**
+   * Select mode: the browser already has a selection, so the surface is being
+   * used to pick documents rather than to open one. Driven by the same flag
+   * that reveals the checkboxes, so what the card looks like and what a click
+   * does can't disagree.
+   */
+  const selectMode = showSelectionCheckbox;
+
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (isEditing) return;
@@ -375,11 +387,21 @@ function DocumentCardImpl({
         });
         return;
       }
+      // Once a selection exists, the browser is IN select mode and a plain
+      // click extends that selection instead of opening (JP-480). Opening
+      // navigates away from the surface, which threw the whole selection away —
+      // so the click that costs the most was the easiest one to make. Every
+      // file manager behaves this way; clear the selection to open again.
+      if (selectMode && onSelectToggle) {
+        e.preventDefault();
+        onSelectToggle(record.id, { shift: false, meta: true });
+        return;
+      }
       if (onOpen) {
         onOpen(record.id);
       }
     },
-    [isEditing, onOpen, onSelectToggle, record.id]
+    [isEditing, onOpen, onSelectToggle, record.id, selectMode]
   );
 
   const handleCheckboxClick = useCallback(
@@ -616,7 +638,7 @@ function DocumentCardImpl({
   return (
     <div
       ref={cardRef}
-      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${menuOpen || tagEditorAnchor ? 'document-card--menu-open' : ''}`}
+      className={`document-card document-card--${mode} ${isActive ? 'document-card--active' : ''} ${isSelected ? 'document-card--selected' : ''} ${selectMode ? 'document-card--select-mode' : ''} ${menuOpen || tagEditorAnchor ? 'document-card--menu-open' : ''}`}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
     >
@@ -630,6 +652,15 @@ function DocumentCardImpl({
         >
           {isSelected ? <Check size={14} aria-hidden="true" /> : null}
         </button>
+      )}
+      {/* Grid cards lead with the document itself (JP-477). The same preview
+          engine the "Continue working" strip uses — without it the grid was a
+          strictly worse view of the same documents shown as thumbnails
+          immediately above it. */}
+      {mode === 'grid' && (
+        <div className="document-card__preview">
+          <DocumentPreview preview={gridPreview} />
+        </div>
       )}
       <div className="document-card__content">
         {/* Name */}
@@ -724,6 +755,20 @@ function DocumentCardImpl({
                 <offline.Icon size={12} aria-hidden="true" />
               </span>
             )
+          )}
+
+          {/* Restored copy (JP-481) — provenance, not part of the name. The
+              chip says WHAT it is; the tooltip says which point in time the
+              content came from, which is the detail that used to be jammed
+              into the document's title. */}
+          {record.restoredFrom !== undefined && (
+            <span
+              className="document-card__restored"
+              title={`Restored from a version saved ${formatDate(record.restoredFrom)}`}
+            >
+              <History size={11} aria-hidden="true" />
+              Restored
+            </span>
           )}
 
           {/* Tags (JP-388) — deterministic-color chips; clicking one filters

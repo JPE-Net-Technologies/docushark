@@ -1,0 +1,275 @@
+/**
+ * Style Profile Studio.
+ *
+ * Structural rule the layout encodes: a family that is genuinely tuned is
+ * visually distinct from one that only inherits. That single distinction is the
+ * whole point of the surface, so it gets the one piece of emphasis here (an
+ * accent edge + a filled state dot) and everything else stays quiet.
+ */
+
+.sps-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4, 16px);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.sps-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  max-height: min(80vh, 720px);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.sps-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.sps-title h2 {
+  margin: 0;
+  font-size: var(--font-size-lg, 16px);
+  color: var(--text-primary);
+}
+
+.sps-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 3px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.sps-synced,
+.sps-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-secondary);
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.sps-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  flex-shrink: 0;
+}
+
+.sps-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sps-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sps-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+
+.sps-body {
+  padding: var(--space-3, 12px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.sps-family {
+  /* The body is a flex column, so without this the sections get SQUASHED by
+     flex-shrink instead of scrolling — rows collapsed into each other and the
+     key lists were clipped to a sliver. */
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+/* The one emphasis in the surface: a tuned family reads as substantive, an
+   inherit-only one recedes. */
+.sps-family.is-tuned {
+  border-left: 3px solid var(--accent-color, var(--brand-gold));
+}
+
+.sps-family-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  padding: 10px 12px;
+}
+
+.sps-preview {
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px var(--border-color);
+}
+
+.sps-family-name {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.sps-family-sub {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* ── Keys ───────────────────────────────────────────────────────────────── */
+
+.sps-keys {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2px 12px;
+}
+
+.sps-key {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: var(--font-size-xs);
+}
+
+/* Saved vs inherited, stated twice — a filled/hollow dot AND the value text —
+   so the distinction never rests on colour alone. */
+.sps-key-state {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px var(--text-tertiary, var(--text-secondary));
+}
+
+.sps-key.is-saved .sps-key-state {
+  background: var(--accent-color, var(--brand-gold));
+  box-shadow: none;
+}
+
+.sps-key-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sps-key.is-saved .sps-key-label {
+  color: var(--text-primary);
+}
+
+.sps-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+
+.sps-value code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.sps-value--inherited {
+  font-style: italic;
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.75;
+}
+
+.sps-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.sps-forget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary, var(--text-secondary));
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.sps-key:hover .sps-forget,
+.sps-key:focus-within .sps-forget {
+  opacity: 1;
+}
+
+.sps-forget:hover {
+  color: var(--danger);
+  background: var(--bg-hover);
+}
+
+/* ── Empty ──────────────────────────────────────────────────────────────── */
+
+.sps-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.sps-empty-hint {
+  margin-top: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sps-forget {
+    transition: none;
+  }
+}

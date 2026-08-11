@@ -11,6 +11,7 @@
  *   set for overridden tokens, removed otherwise — so a Light customization can
  *   never bleed onto Dark, and clearing a slot reverts cleanly to the base.
  * Density → `data-density` root attribute.
+ * Glass → `data-glass` root attribute (the glass token block's on/off switch).
  * UI size → `--ui-scale` root var (rem root font-size).
  * Motion → handed to `adaptiveBudget`, the sole authority over `data-reduced-motion`.
  *
@@ -57,6 +58,11 @@ function applyNonColor(prefs: AppearancePrefs): void {
     // Rounded prose tables (opt-out). The table CSS keys off this attribute;
     // only the "false" (squared) case needs an override (JP-416).
     root.dataset['roundedTables'] = String(prefs.roundedTables);
+    // Glass chrome (opt-out). `[data-glass="off"]` in index.css resolves every
+    // --glass-*/--shadow-float/--grad-* token back to the opaque surface values,
+    // so the whole treatment is one attribute — no per-component branching and
+    // no second code path to keep in sync (JP-253).
+    root.dataset['glass'] = prefs.glass ? 'on' : 'off';
   }
   setMotionPreference(prefs.motion);
 }

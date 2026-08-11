@@ -1,0 +1,284 @@
+/* NavigatorPanel (JP-475) — per-document hub: pages tree + mirror sources. */
+
+/* Fills its container: docked it lives inside a resizable DockedPanel (which
+   owns the width + edge border); in a flyout it fills the flyout body. */
+.navigator-panel {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px 8px 4px;
+  background: var(--bg-primary);
+
+  /* Tree rails. Derived from `--text-muted` (theme-aware) rather than
+     `--border-color`: that token is 10% alpha, tuned for long panel edges, and
+     a 1px vertical hairline drawn in it lands at ~1.3:1 against this panel —
+     present in the DOM, invisible on screen. The lit rail marks the path to the
+     active page and is the one deliberately loud thing here, so it takes the
+     brand accent and an extra pixel. */
+  --nav-guide: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  --nav-guide-lit: color-mix(in srgb, var(--color-primary) 70%, transparent);
+  --nav-row-min-height: 26px;
+}
+
+.navigator-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.navigator-section-head h3 {
+  margin: 0;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.navigator-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.navigator-head-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-color);
+  /* `--radius-full` is 50% — an ellipse on a chip this shape. Pills use
+     `--radius-pill`. */
+  border-radius: var(--radius-pill);
+  /* A surface distinct from the panel: on `--bg-primary` these chips read as
+     floating text held together only by a 10%-alpha border. */
+  background: var(--bg-tertiary, var(--bg-secondary));
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs, 11px);
+  line-height: var(--line-height-snug, 1.3);
+  cursor: pointer;
+}
+
+.navigator-head-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.navigator-head-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.navigator-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.navigator-collapse-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary, var(--bg-secondary));
+}
+
+.navigator-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.navigator-block-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.navigator-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 2px;
+  color: var(--text-muted);
+  cursor: grab;
+  flex: none;
+}
+
+.navigator-block-rows {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.navigator-row {
+  display: flex;
+  /* `stretch`, not `center`: the guide columns draw their rail edge-to-edge, so
+     adjacent rows join into one continuous spine. Any vertical gap or padding
+     between rows would break it into dashes. */
+  align-items: stretch;
+  min-height: var(--nav-row-min-height);
+  min-width: 0;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.navigator-row:hover {
+  background: var(--bg-secondary);
+}
+
+.navigator-row.active {
+  background: var(--color-primary-light, var(--bg-secondary));
+  /* Same marker the fly-out rail uses for its active panel. */
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.navigator-row.active .navigator-row-name {
+  color: var(--color-primary, var(--text-primary));
+  font-weight: var(--font-weight-medium, 500);
+}
+
+/* --- Tree rails ------------------------------------------------------- */
+
+.navigator-guide {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+}
+
+/* Centred in its column so the rail descends directly under the parent row's
+   twisty chevron rather than hanging off the row's left edge. */
+.navigator-guide::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--nav-guide);
+}
+
+.navigator-guide.lit::before {
+  width: 2px;
+  background: var(--nav-guide-lit);
+}
+
+.navigator-twisty {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  /* Rotation is the whole animation budget for this panel. */
+  transition: transform 120ms ease, color 120ms ease;
+  transform: rotate(90deg);
+}
+
+.navigator-twisty.collapsed {
+  transform: rotate(0deg);
+}
+
+.navigator-twisty:hover {
+  color: var(--text-primary);
+}
+
+.navigator-twisty-spacer {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navigator-twisty {
+    transition: none;
+  }
+}
+
+/* --- Row content ------------------------------------------------------ */
+
+.navigator-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-md, 13px);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The name is the point of the row: it takes the slack, everything else is
+   sized to content so a deep tree still reads at the minimum panel width. */
+.navigator-row-main > :not(.navigator-row-name) {
+  flex: none;
+}
+
+.navigator-row-name {
+  flex: 1 1 auto;
+  /* min-width:0 is what actually lets a flex child ellipsize instead of
+     forcing the row wider than the panel. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.navigator-row-synced {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--font-size-2xs, 10px);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.navigator-row-menu {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 4px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  flex: none;
+  /* Names win the width fight — the kebab appears on row hover (or while its
+     menu is open) rather than reserving space on every row. */
+  visibility: hidden;
+}
+
+.navigator-row:hover .navigator-row-menu,
+.navigator-row:focus-within .navigator-row-menu,
+.navigator-row-menu[aria-expanded='true'] {
+  visibility: visible;
+}
+
+.navigator-row-menu:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary, var(--bg-secondary));
+}
+
+/* Keyboard users get the same targets the mouse does. `-2px` keeps the ring
+   inside the row so it never overlaps a neighbouring rail. */
+.navigator-row-main:focus-visible,
+.navigator-twisty:focus-visible,
+.navigator-row-menu:focus-visible,
+.navigator-head-btn:focus-visible,
+.navigator-collapse-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm, 4px);
+}

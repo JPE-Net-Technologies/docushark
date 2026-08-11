@@ -148,3 +148,58 @@ describe('richTextPagesStore — page mirror provenance (JP-415)', () => {
     expect(snapshot.pages['m1']?.mirror).toEqual(mirror);
   });
 });
+
+describe('richTextPagesStore — positional insert + block move (JP-475)', () => {
+  beforeEach(() => {
+    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+  });
+
+  function seed(names: string[]): string[] {
+    return names.map((n) => useRichTextPagesStore.getState().createPage(n));
+  }
+
+  function orderNames(): string[] {
+    const { pages, pageOrder } = useRichTextPagesStore.getState();
+    return pageOrder.map((id) => pages[id]?.name ?? '?');
+  }
+
+  it('createPage with an index splices instead of appending, renumbering order', () => {
+    seed(['A', 'B', 'C']);
+    useRichTextPagesStore.getState().createPage('X', undefined, undefined, { index: 1 });
+    expect(orderNames()).toEqual(['A', 'X', 'B', 'C']);
+    const { pages, pageOrder } = useRichTextPagesStore.getState();
+    pageOrder.forEach((id, i) => expect(pages[id]?.order).toBe(i));
+  });
+
+  it('createPage clamps an out-of-range index to the ends', () => {
+    seed(['A']);
+    useRichTextPagesStore.getState().createPage('End', undefined, undefined, { index: 99 });
+    useRichTextPagesStore.getState().createPage('Start', undefined, undefined, { index: -5 });
+    expect(orderNames()).toEqual(['Start', 'A', 'End']);
+  });
+
+  it('movePages moves a contiguous block, preserving relative order', () => {
+    seed(['A', 'B', 'C', 'D', 'E']);
+    const { pageOrder } = useRichTextPagesStore.getState();
+    const b = pageOrder[1]!;
+    const c = pageOrder[2]!;
+    // Move [B, C] to the end (toIndex counted against the order minus the block).
+    useRichTextPagesStore.getState().movePages([b, c], 3);
+    expect(orderNames()).toEqual(['A', 'D', 'E', 'B', 'C']);
+    const after = useRichTextPagesStore.getState();
+    after.pageOrder.forEach((id, i) => expect(after.pages[id]?.order).toBe(i));
+  });
+
+  it('movePages preserves current relative order even for an unordered id set', () => {
+    seed(['A', 'B', 'C', 'D']);
+    const { pageOrder } = useRichTextPagesStore.getState();
+    useRichTextPagesStore.getState().movePages([pageOrder[3]!, pageOrder[0]!], 0);
+    expect(orderNames()).toEqual(['A', 'D', 'B', 'C']);
+  });
+
+  it('movePages ignores unknown ids and does nothing for an empty match', () => {
+    seed(['A', 'B']);
+    useRichTextPagesStore.getState().movePages(['nope'], 0);
+    expect(orderNames()).toEqual(['A', 'B']);
+  });
+});

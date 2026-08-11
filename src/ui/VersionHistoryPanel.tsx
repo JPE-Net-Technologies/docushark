@@ -28,7 +28,7 @@ import { collectBlobReferences } from '../storage/AssetBundler';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { getDocumentMetadata } from '../types/Document';
 import type { DiagramDocument } from '../types/Document';
-import { migrateDocument } from '../migrations/documentMigrations';
+import { migrateDocument, stripRestoredSuffix } from '../migrations/documentMigrations';
 import { confirmDialog } from './confirm/confirmStore';
 import {
   summarizeDocument,
@@ -39,6 +39,7 @@ import {
 import type { RelayRecoveryPoint } from '../api/relayClient';
 import { repointShareLink, stashPendingRepoint } from '../share/publishFlow';
 import { webClient } from '../api/webClient';
+import { ModalShell } from './components/ModalShell';
 import './VersionHistoryPanel.css';
 
 interface VersionHistoryPanelProps {
@@ -65,7 +66,18 @@ export function buildLocalCopyFromVersion(
   const copy = {
     ...migrateDocument(content),
     id: crypto.randomUUID(),
-    name: `${docName} (Restored ${formatTimestamp(createdAt)})`,
+    // The copy keeps the document's name (JP-481). It used to become
+    // `${docName} (Restored ${localeTimestamp})`, which put a machine-generated
+    // string in a user-facing title and compounded on every subsequent restore
+    // — `X (Restored A) (Restored B)`. The restore point is provenance, so it
+    // rides in `restoredFrom` and renders as a badge. `migrateDocument` above
+    // has already lifted any legacy suffix off the source CONTENT's name, but
+    // `docName` arrives as a prop and needs the same treatment — otherwise
+    // restoring a document that was named under the old scheme would carry its
+    // suffix straight into the new copy. This stamp supersedes whatever the
+    // name yielded, since this restore is the newer one.
+    name: stripRestoredSuffix(docName).name,
+    restoredFrom: createdAt,
     isRelayDocument: false,
   };
   delete copy.ownerId;
@@ -375,20 +387,18 @@ export function VersionHistoryPanel({
   };
 
   return (
-    <div className="version-history__overlay" onClick={onClose}>
-      <div
-        className="version-history"
-        role="dialog"
-        aria-label={`Version history for ${docName}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="version-history__header">
-          <h3>Version history — {docName}</h3>
-          <button className="version-history__close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        </div>
-        <div className="version-history__content">
+    // ModalShell (JP-481) — the shared overlay + card chrome this panel was
+    // always meant to adopt (JP-456 deferred it to stay scoped). It brings the
+    // portal, the focus trap, Escape handling and `aria-modal`, none of which
+    // the hand-rolled shell had, and puts the panel on the same z-index as
+    // every other dialog instead of its own 1000.
+    <ModalShell
+      title="Version history"
+      subtitle={docName}
+      onClose={onClose}
+      className="version-history"
+    >
+      <div className="version-history__content">
           <div className="version-history__current">
             <span className="version-history__time">Current version</span>
             <span className="version-history__sub">
@@ -443,8 +453,7 @@ export function VersionHistoryPanel({
               </section>
             ))
           )}
-        </div>
       </div>
-    </div>
+    </ModalShell>
   );
 }

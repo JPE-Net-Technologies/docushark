@@ -45,12 +45,22 @@ export default defineConfig({
       manifest: {
         name: 'DocuShark',
         short_name: 'DocuShark',
-        description: 'High-performance diagramming and whiteboard editor.',
+        // Positioning, not feature list: DocuShark is a document hub — prose, a
+        // real drawing canvas and files in one place — not the "diagramming and
+        // whiteboard editor" this said when the product was only the canvas.
+        description:
+          'Prose, a real drawing canvas, and your files — in one document.',
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        background_color: '#ffffff',
-        theme_color: '#2196f3',
+        // Brand surfaces (JP-481). These were '#ffffff' and Material blue
+        // '#2196f3' — predating the palette entirely, so an installed PWA
+        // opened on a blue splash and a pure-white background while the app
+        // itself is warm paper. Matches the light `--bg-primary` and the
+        // `theme-color` meta in index.html, which themeStore then tracks at
+        // runtime.
+        background_color: '#f9f6ee',
+        theme_color: '#f9f6ee',
         icons: [
           { src: '/icon-192x192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icon-512x512.png', sizes: '512x512', type: 'image/png' },

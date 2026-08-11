@@ -55,14 +55,93 @@ Go to **Settings → Style Profiles** to:
 - Toggle **Hide Default Style Profiles** to hide the 5 built-in profiles
 - Control whether icon and label settings are included when saving profiles
 
+### Using your profiles on more than one device
+
+A style profile starts out on the device you made it on. When you're signed in
+to a workspace you can share one across every device you use:
+
+1. Right-click the profile in the Style Profiles panel
+2. Choose **Sync to workspace**
+
+A synced profile shows a small cloud marker, and appears automatically the next
+time you sign in to that workspace somewhere else. Editing a synced profile
+updates it for everyone in the workspace.
+
+To pull down changes someone else made, use **Refresh** in the panel header.
+Profiles refresh when you ask them to rather than continuously — your styles are
+a working set, and having them change underneath you mid-edit would be worse
+than a button.
+
+**Stop syncing** moves a profile back to being yours alone. It stays on the
+device you're using and is removed from the workspace, so other people lose
+their copy — you'll be asked to confirm.
+
+::: tip Profiles you haven't synced stay put
+Existing profiles are never uploaded automatically, including when you sign in
+for the first time. Syncing is always something you choose.
+:::
+
+### The Studio — see what a profile actually does
+
+A style profile remembers how *each kind of shape* should look, not one style.
+That makes a mature profile genuinely valuable — and, until now, invisible: two
+profiles that behave completely differently both showed up as a single coloured
+square.
+
+Right-click a profile and choose **Open in Studio** to see inside it. Each row is
+a set of shapes that style identically — rectangles, connectors, ERD entities,
+swimlanes — drawn as they'd actually look under this profile, with every style
+that set can receive listed underneath:
+
+- **Saved** — the profile sets this. Applying it changes the shape.
+- **Inherited** — the profile has no value here, so shapes keep their own.
+
+That distinction is the useful one. It's the difference between a profile that
+genuinely knows how your swimlanes should look and one that will only ever paint
+them a fill colour. The header sums it up: *Tuned for 3 of 10 shape sets*.
+
+To drop a style back to inherited, hover it and choose the eraser. This is the
+only way to *remove* something from a profile — saving into one is additive, so
+before the Studio a style could be overwritten but never taken out again. Fill,
+stroke, stroke width and opacity are always present and can't be removed.
+
+Built-in profiles open read-only.
+
+### How profiles count toward storage
+
+Synced profiles are stored in your workspace, so they count toward its storage
+allowance under **Configuration** — its own arc alongside Documents and Files in
+the storage ring on Documents Home.
+
+In practice this is a rounding error: a profile holds a few dozen style values,
+so a thousand of them is a fraction of a megabyte. The arc exists so nothing in
+your workspace is unaccounted for, not because styling is expected to compete
+with your documents for space.
+
 ## Color Palettes
 
-DocuShark maintains a color palette that remembers your recently used colors. When you pick a fill or stroke color, you'll see:
+Every color control in DocuShark opens the same picker — shape fill and stroke,
+text color, highlight, and table cell backgrounds. Whatever you learn in one
+place works in the others, and your recent colors follow you between the canvas
+and your writing.
 
-- A set of preset colors
-- Your recent colors from the current session
+Clicking a color swatch or its hex readout opens the picker, which offers:
 
-This makes it easy to maintain a consistent color scheme across your diagram.
+- **A clearing option first** — *No fill* or *Automatic* on a shape, *Default*
+  or *No highlight* in prose. It is always the top entry, whichever control
+  you opened.
+- **The palette** — ten color families in five shades each.
+- **Recent colors**, remembered across sessions.
+- **A hex field**, always showing the color currently in effect. It accepts
+  `#ff6600`, `ff6600`, `#f60`, `rgb(255, 102, 0)`, or a name like `crimson`,
+  and stores whichever you type as standard hex.
+- **Custom** — expands a shade-and-hue picker for choosing a color by eye,
+  along with lighter and darker variations of it.
+
+**Automatic** deserves a note: a shape's text color can be set to adapt to
+whatever it sits on — white on a dark fill, black on a light one — so recoloring
+a shape keeps its label readable without you revisiting it. It always exports as
+black in PDFs.
 
 ## Default Styles
 
