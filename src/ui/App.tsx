@@ -6,7 +6,12 @@ import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { NavigatorPanel } from './NavigatorPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
-import { isFlyoutLayout, propertiesDockedVisible, resolveRegions } from './layout/modes';
+import {
+  isCanvasHidden,
+  isFlyoutLayout,
+  propertiesDockedVisible,
+  resolveRegions,
+} from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
@@ -175,7 +180,9 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // remounts on a layout switch). In Relaxed it becomes a resizable secondary
   // pane in split focus, or hides in write focus; elsewhere it stays dominant.
   const canvasIsSecondary = isRelaxed && regions.primary === 'document' && regions.split;
-  const canvasIsHidden = isRelaxed && regions.primary === 'document' && !regions.split;
+  // Shared with StatusBar, which drops its canvas-only readouts when the canvas
+  // is hidden — the two must agree on what "no canvas" means.
+  const canvasIsHidden = isCanvasHidden(activeMode, relaxedFocus, band);
   const relaxedSplitCanvasWidth = useUIPreferencesStore((s) => s.relaxedSplitCanvasWidth);
   const canvasWrapperClass = [
     'canvas-area-wrapper',

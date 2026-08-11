@@ -137,6 +137,24 @@ export function resolveRegions(
   }
 }
 
+/**
+ * Is the canvas absent from the resolved region layout?
+ *
+ * Only Relaxed can hide the canvas outright (`write` focus, or `split` collapsed
+ * to single-pane on a narrow viewport); every other mode always renders it. Kept
+ * here rather than inline at the call sites so `App` (which sizes the editor
+ * regions) and `StatusBar` (which drops canvas-only readouts when there is no
+ * canvas to read out) cannot drift apart.
+ */
+export function isCanvasHidden(
+  mode: LayoutMode,
+  focus: RelaxedFocus,
+  band: ViewportBand
+): boolean {
+  const regions = resolveRegions(mode, focus, band);
+  return regions.primary === 'document' && !regions.split;
+}
+
 /** Human-readable label for a layout mode (UI display). */
 export const LAYOUT_LABELS: Record<LayoutMode, string> = {
   relaxed: 'Relaxed',
