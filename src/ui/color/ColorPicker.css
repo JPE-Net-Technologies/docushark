@@ -1,0 +1,347 @@
+/* ── Shared color picker ──────────────────────────────────────────
+   One popover body behind every color control: shape fill/stroke, prose text
+   and highlight, table cell backgrounds. The hex footer is pinned so the one
+   element common to every surface can never scroll out of reach. */
+
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Bounded so a tall palette cannot run off a short viewport; the swatch
+     region scrolls inside this while the footer stays put. */
+  max-height: min(70vh, 460px);
+}
+
+.color-picker__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 2px 10px;
+}
+
+.color-picker--compact .color-picker__scroll {
+  gap: 7px;
+}
+
+/* ── Specials (No fill / Automatic / Default) ─────────────────── */
+
+.color-picker__specials {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.color-picker__special-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-picker__special-swatch {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.color-picker__special-swatch--auto {
+  background: linear-gradient(135deg, #ffffff 0%, #ffffff 50%, #000000 50%, #000000 100%);
+}
+
+.color-picker__special-swatch--none {
+  background: repeating-linear-gradient(45deg, #fff, #fff 4px, #eee 4px, #eee 8px);
+}
+
+[data-theme='dark'] .color-picker__special-swatch--none {
+  background: repeating-linear-gradient(45deg, #333, #333 4px, #444 4px, #444 8px);
+}
+
+.color-picker__special-swatch.is-selected {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.color-picker__special-glyph {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 50%;
+  width: 17px;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.color-picker__special-glyph--none {
+  color: var(--danger, #cc0000);
+  background: transparent;
+  font-size: 16px;
+}
+
+.color-picker__special-label {
+  font-size: 0.8rem;
+  color: var(--text-primary);
+}
+
+/* Info tooltip */
+.color-picker__info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  font-style: italic;
+  cursor: default;
+  user-select: none;
+}
+
+.color-picker__info-tip {
+  display: none;
+  position: absolute;
+  left: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 210px;
+  padding: 8px 10px;
+  background: var(--bg-tooltip);
+  color: #fff;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.5;
+  border-radius: var(--radius-sm, 6px);
+  box-shadow: var(--shadow-lg);
+  z-index: 10001;
+  pointer-events: none;
+}
+
+.color-picker__info:hover .color-picker__info-tip {
+  display: block;
+}
+
+/* ── Swatch groups ────────────────────────────────────────────── */
+
+.color-picker__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Always rendered. Compact mode controls density only — hiding these is what
+   left the panel showing three unexplained rows of swatches. */
+.color-picker__group-label {
+  margin: 0;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.color-picker__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.color-picker--compact .color-picker__row {
+  gap: 3px;
+}
+
+.color-picker__swatch {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.color-picker__swatch:hover {
+  transform: scale(1.12);
+  box-shadow: var(--shadow-md);
+}
+
+.color-picker__swatch:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.color-picker__swatch.is-selected {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* ── Custom disclosure ────────────────────────────────────────── */
+
+.color-picker__custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.color-picker__custom .react-colorful {
+  width: 100%;
+  height: 148px;
+}
+
+.color-picker__custom .react-colorful__saturation {
+  border-radius: var(--radius-sm, 4px) var(--radius-sm, 4px) 0 0;
+}
+
+.color-picker__custom .react-colorful__hue {
+  height: 18px;
+  border-radius: 0 0 var(--radius-sm, 4px) var(--radius-sm, 4px);
+}
+
+/* ── Pinned hex footer ────────────────────────────────────────── */
+
+.color-picker__footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.color-picker__preview {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  background: repeating-linear-gradient(45deg, #fff, #fff 4px, #eee 4px, #eee 8px);
+}
+
+[data-theme='dark'] .color-picker__preview {
+  background: repeating-linear-gradient(45deg, #333, #333 4px, #444 4px, #444 8px);
+}
+
+.color-picker__hex {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 0.75rem;
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  outline: none;
+}
+
+.color-picker__hex:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+.color-picker__hex.is-invalid {
+  border-color: var(--danger, #cc0000);
+}
+
+.color-picker__hex.is-invalid:focus {
+  box-shadow: 0 0 0 2px var(--danger-alpha, rgba(204, 0, 0, 0.25));
+}
+
+.color-picker__contrast {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  border-radius: var(--radius-pill, 999px);
+  white-space: nowrap;
+}
+
+.color-picker__contrast--pass {
+  background: var(--success-bg, rgba(16, 185, 129, 0.14));
+  color: var(--success, #047857);
+}
+
+.color-picker__contrast--warn {
+  background: var(--warning-bg, rgba(245, 158, 11, 0.16));
+  color: var(--warning, #b45309);
+}
+
+.color-picker__contrast--fail {
+  background: var(--danger-bg, rgba(239, 68, 68, 0.16));
+  color: var(--danger, #b91c1c);
+}
+
+.color-picker__custom-toggle {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.color-picker__custom-toggle:hover,
+.color-picker__custom-toggle.is-open {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* ── Touch pointers ───────────────────────────────────────────────
+   22px swatches with 3px gaps are roughly half the WCAG 2.5.5 target and are
+   genuinely hard to hit on a phone. Follow the convention already used by
+   RelaxedFocusControl.css and resizeHandle.css. */
+
+@media (pointer: coarse) {
+  .color-picker__swatch,
+  .color-picker--compact .color-picker__swatch {
+    width: 32px;
+    height: 32px;
+  }
+
+  .color-picker__row,
+  .color-picker--compact .color-picker__row {
+    gap: 6px;
+  }
+
+  .color-picker__special-swatch {
+    width: 36px;
+    height: 36px;
+  }
+
+  .color-picker__preview {
+    width: 32px;
+    height: 32px;
+  }
+
+  .color-picker__hex {
+    padding: 8px;
+    font-size: 0.85rem;
+  }
+
+  .color-picker__custom-toggle {
+    padding: 8px 10px;
+  }
+}

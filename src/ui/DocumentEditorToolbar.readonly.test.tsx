@@ -27,6 +27,9 @@ vi.mock('./TiptapEditorContext', () => ({
     on: vi.fn(),
     off: vi.fn(),
     can: () => ({ chain: () => ({ focus: () => ({ run: () => true }) }) }),
+    // The colour pickers read the selection's current colour so each opens
+    // showing the colour in effect (JP-485).
+    getAttributes: () => ({}),
     state: { selection: {} },
   }),
 }));
