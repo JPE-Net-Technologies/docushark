@@ -120,12 +120,28 @@ with your documents for space.
 
 ## Color Palettes
 
-DocuShark maintains a color palette that remembers your recently used colors. When you pick a fill or stroke color, you'll see:
+Every color control in DocuShark opens the same picker — shape fill and stroke,
+text color, highlight, and table cell backgrounds. Whatever you learn in one
+place works in the others, and your recent colors follow you between the canvas
+and your writing.
 
-- A set of preset colors
-- Your recent colors from the current session
+Clicking a color swatch or its hex readout opens the picker, which offers:
 
-This makes it easy to maintain a consistent color scheme across your diagram.
+- **A clearing option first** — *No fill* or *Automatic* on a shape, *Default*
+  or *No highlight* in prose. It is always the top entry, whichever control
+  you opened.
+- **The palette** — ten color families in five shades each.
+- **Recent colors**, remembered across sessions.
+- **A hex field**, always showing the color currently in effect. It accepts
+  `#ff6600`, `ff6600`, `#f60`, `rgb(255, 102, 0)`, or a name like `crimson`,
+  and stores whichever you type as standard hex.
+- **Custom** — expands a shade-and-hue picker for choosing a color by eye,
+  along with lighter and darker variations of it.
+
+**Automatic** deserves a note: a shape's text color can be set to adapt to
+whatever it sits on — white on a dark fill, black on a light one — so recoloring
+a shape keeps its label readable without you revisiting it. It always exports as
+black in PDFs.
 
 ## Default Styles
 

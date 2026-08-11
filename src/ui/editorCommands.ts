@@ -59,6 +59,11 @@ export const setTextAlign = (editor: Editor, alignment: 'left' | 'center' | 'rig
 // Colors
 export const setTextColor = (editor: Editor, color: string) =>
   editor.chain().focus().setColor(color).run();
+// Back to the theme's body colour. Distinct from clearFormatting, which also
+// strips bold/italic/links — before this existed, dropping a text colour meant
+// losing every other mark on the selection with it.
+export const unsetTextColor = (editor: Editor) =>
+  editor.chain().focus().unsetColor().run();
 export const setHighlight = (editor: Editor, color: string) =>
   editor.chain().focus().setHighlight({ color }).run();
 export const unsetHighlight = (editor: Editor) =>

@@ -23,6 +23,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape, type Shape, type ConnectorShape } from '../shapes/Shape';
 import { normalizeAutoColorsForExport } from '../engine/ContrastResolver';
 import { parseHeadingHref } from './headingLinks';
+import { NAMED_COLORS } from './color';
 import type { ImageCompression, ImageFormat } from 'jspdf';
 import type { PDFQuality } from '../types/PDFExport';
 
@@ -1509,22 +1510,10 @@ export function parseColor(color: string): [number, number, number] | null {
     ];
   }
 
-  // Named CSS colors (most commonly used in editors)
-  const NAMED_COLORS: Record<string, [number, number, number]> = {
-    black: [0, 0, 0], white: [255, 255, 255],
-    red: [255, 0, 0], green: [0, 128, 0], blue: [0, 0, 255],
-    yellow: [255, 255, 0], cyan: [0, 255, 255], magenta: [255, 0, 255],
-    orange: [255, 165, 0], purple: [128, 0, 128], pink: [255, 192, 203],
-    gray: [128, 128, 128], grey: [128, 128, 128],
-    darkred: [139, 0, 0], darkgreen: [0, 100, 0], darkblue: [0, 0, 139],
-    lightgray: [211, 211, 211], lightgrey: [211, 211, 211],
-    brown: [165, 42, 42], navy: [0, 0, 128], teal: [0, 128, 128],
-    maroon: [128, 0, 0], olive: [128, 128, 0], coral: [255, 127, 80],
-    salmon: [250, 128, 114], tomato: [255, 99, 71],
-    indianred: [205, 92, 92], crimson: [220, 20, 60],
-  };
+  // Named CSS colors — shared with the editor's color input so the two
+  // grammars cannot drift (see utils/color.ts NAMED_COLORS).
   const named = NAMED_COLORS[trimmed.toLowerCase()];
-  if (named) return named;
+  if (named) return [named.r, named.g, named.b];
 
   return null;
 }

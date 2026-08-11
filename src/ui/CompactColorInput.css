@@ -21,38 +21,7 @@
   flex: 1;
 }
 
-/* Native Color Picker */
-.compact-color-picker {
-  width: var(--control-height-md);
-  height: var(--control-height-md);
-  padding: 0;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  background: transparent;
-  flex-shrink: 0;
-}
-
-.compact-color-picker::-webkit-color-swatch-wrapper {
-  padding: 2px;
-}
-
-.compact-color-picker::-webkit-color-swatch {
-  border: none;
-  border-radius: 2px;
-}
-
-.compact-color-picker:hover {
-  border-color: var(--color-primary, var(--color-primary));
-}
-
-.compact-color-picker:focus {
-  outline: none;
-  border-color: var(--color-primary, var(--color-primary));
-  box-shadow: 0 0 0 2px var(--color-primary-alpha);
-}
-
-/* Swatch button — opens our palette instead of the OS picker */
+/* Swatch button — opens the shared picker, never an OS color dialog */
 .compact-color-swatch {
   width: var(--control-height-md);
   height: var(--control-height-md);
@@ -144,39 +113,7 @@
   box-shadow: 0 0 0 2px var(--color-primary-alpha);
 }
 
-.compact-color-hex-input.editing {
-  background: var(--bg-primary);
-  cursor: text;
-}
-
-/* Edit Button */
-.compact-color-edit {
-  width: var(--control-height-md);
-  height: var(--control-height-md);
-  padding: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.compact-color-edit:hover {
-  background: var(--color-cta);
-  color: var(--color-cta-text);
-  border-color: var(--color-primary, var(--color-primary));
-}
-
-.compact-color-edit:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--color-primary-alpha);
-}
-
-/* Palette Dropdown */
+/* Picker Dropdown */
 .compact-color-palette-dropdown {
   position: absolute;
   top: 100%;
@@ -192,15 +129,6 @@
 }
 
 /* Dark mode adjustments */
-[data-theme="dark"] .compact-color-picker {
-  border-color: var(--border-color);
-}
-
-[data-theme="dark"] .compact-color-picker:hover,
-[data-theme="dark"] .compact-color-picker:focus {
-  border-color: var(--color-primary);
-}
-
 [data-theme="dark"] .compact-color-hex-input {
   background: var(--bg-secondary);
   border-color: var(--border-color);
@@ -209,19 +137,6 @@
 
 [data-theme="dark"] .compact-color-hex-input:hover {
   background: var(--bg-hover);
-}
-
-[data-theme="dark"] .compact-color-hex-input.editing {
-  background: var(--bg-primary);
-}
-
-[data-theme="dark"] .compact-color-edit {
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
-}
-
-[data-theme="dark"] .compact-color-edit:hover {
-  background: var(--color-primary);
 }
 
 [data-theme="dark"] .compact-color-palette-dropdown {
