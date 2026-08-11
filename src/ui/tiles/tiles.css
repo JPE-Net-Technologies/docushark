@@ -1,0 +1,526 @@
+/* ==========================================================================
+   Tile system (JP-253) — the mosaic engine and the eight tile types.
+   Shared by the layout menu and Settings. Surface tokens come from the glass
+   block in index.css; nothing here reaches for a raw brand ramp.
+   ========================================================================== */
+
+/* --- The mosaic ----------------------------------------------------------- */
+.tile-grid {
+  /* Overridden per-instance by TileGrid's inline style. */
+  --tile-min: 150px;
+  --tile-row: 86px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--tile-min), 100%), 1fr));
+  /* A FLOOR, not a fixed height — see the note in Tile.tsx. A constant row
+     silently clips segmented controls once density or --ui-scale moves. */
+  grid-auto-rows: minmax(var(--tile-row), auto);
+  grid-auto-flow: row dense;
+  gap: var(--space-2);
+}
+
+/* --- Group ---------------------------------------------------------------- */
+.tile-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tile-group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.tile-group__icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+}
+
+.tile-group__title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.tile-group__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-color-light);
+}
+
+/* --- Tile base ------------------------------------------------------------ */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  padding: calc(var(--space-2) + var(--space-0-5)) var(--space-3);
+  background: var(--glass-tile);
+  /* NO backdrop-filter here, deliberately. Each backdrop-filter element costs
+     its own backdrop read-back + blur pass, and a nested one re-blurs its
+     already-blurred parent. The sheet blurs once; tiles are plain translucent
+     fills over it — visually identical, ~1/20th the cost. `tiles.test.tsx`
+     pins this so it cannot creep back in. */
+  border: 1px solid var(--glass-tile-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-tile), var(--glass-highlight-soft);
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+  overflow: hidden;
+  /* Paint isolation per tile: a tile repainting on hover or toggle cannot dirty
+     its neighbours. (This does NOT shrink the scrollable overflow rectangle —
+     that is handled by keeping descendants inside the box; see the bloom.) */
+  contain: paint;
+  transition:
+    background-color var(--dur-med) var(--ease-out),
+    border-color var(--dur-med) var(--ease-out),
+    box-shadow var(--dur-med) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+button.tile {
+  appearance: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button.tile:hover:not(:disabled) {
+  background: var(--glass-tile-hover);
+  border-color: var(--glass-tile-border);
+  box-shadow: var(--shadow-tile-hover), var(--glass-highlight);
+  transform: translateY(-1px);
+}
+
+button.tile:active:not(:disabled) {
+  transform: translateY(0) scale(0.978);
+  transition-duration: 0.06s;
+}
+
+button.tile:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tile:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* A flex/grid item's default min-size is `auto` — "never shrink below my
+   content" — which is how a segmented control with long labels pushes out of
+   its tile. Every nesting level has to opt out, not just the innermost. */
+.tile > * {
+  min-width: 0;
+}
+
+.tile__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tile__chip {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color-light);
+  box-shadow: var(--shadow-sm);
+  transition:
+    background var(--dur-med) var(--ease-out),
+    color var(--dur-med) var(--ease-out),
+    border-color var(--dur-med) var(--ease-out),
+    transform var(--dur-slow) var(--ease-spring);
+}
+
+.tile__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Titles wrap to two lines rather than truncating — a settings label reading
+   "Mobile prev…" is a label that failed, and the tile has the vertical room. */
+.tile__title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.tile__value {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--dur-med) var(--ease-out);
+}
+
+.tile__body {
+  margin-top: auto;
+  min-width: 0;
+}
+
+/* The Slider primitive is a fixed 160px; in a tile it should fill the row. */
+.tile__body--slider .ds-slider {
+  width: 100%;
+}
+
+.tile__body--status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.tile__metric {
+  margin-left: auto;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.tile__body--status .tile__metric {
+  margin-left: 0;
+}
+
+.tile__badge {
+  align-self: flex-start;
+  margin-left: auto;
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.03em;
+}
+
+.tile__chev {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+}
+
+.tile--w2 {
+  grid-column: span 2;
+}
+
+.tile--h2 {
+  grid-row: span 2;
+}
+
+/* --- 1. Toggle tile -------------------------------------------------------
+   Switching on is one gesture with three parts: a tinted bloom wipes out from
+   behind the icon chip, the chip fills with the accent gradient and springs,
+   and the state word recolours.
+   ------------------------------------------------------------------------- */
+.tile--toggle {
+  justify-content: center;
+  isolation: isolate;
+}
+
+.tile--toggle::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--color-primary-light);
+  /* The wipe is a clip-path, NOT a scaled circle. A transformed or oversized
+     absolutely-positioned child extends the tile's scrollable overflow
+     rectangle — and `overflow: hidden` hides the scrollbar without removing the
+     scroll, so a focus event can shunt tile content sideways (measured at
+     195x102px on the prototype, and only while the toggle was on). clip-path is
+     a paint-time clip with no layout contribution: the element never leaves its
+     own box. Pinned by tiles.test.tsx. */
+  clip-path: circle(0% at calc(var(--space-3) + 15px) calc(var(--space-2) + 15px));
+  opacity: 0;
+  transition:
+    clip-path var(--dur-slow) var(--ease-out),
+    opacity var(--dur-med) var(--ease-out);
+  pointer-events: none;
+}
+
+.tile--toggle[aria-checked='true']::before {
+  clip-path: circle(140% at calc(var(--space-3) + 15px) calc(var(--space-2) + 15px));
+  opacity: 1;
+}
+
+.tile--toggle[aria-checked='true'] {
+  border-color: var(--color-primary-alpha);
+  box-shadow: var(--shadow-tile-hover), var(--glass-highlight);
+}
+
+.tile--toggle[aria-checked='true'] .tile__chip {
+  background: var(--grad-primary);
+  color: var(--color-on-primary);
+  border-color: transparent;
+  transform: scale(1.08);
+  box-shadow: var(--shadow-md);
+}
+
+.tile--toggle[aria-checked='true'] .tile__value {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Compact variant — a row, not a card. Used inside popovers. */
+.tile--chip {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) calc(var(--space-2) + var(--space-0-5));
+  border-radius: var(--radius-lg);
+}
+
+.tile--chip .tile__chip {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-md);
+}
+
+.tile--chip .tile__title {
+  font-size: var(--font-size-sm);
+}
+
+/* --- 3. Slider tile ------------------------------------------------------- */
+.tile--picker {
+  justify-content: center;
+}
+
+.tile__dots {
+  display: flex;
+  gap: 4px;
+  margin-top: auto;
+}
+
+.tile__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+}
+
+/* --- 4. Fill tile --------------------------------------------------------- */
+.tile--fill {
+  --fill-axis: y;
+  padding: 0;
+  cursor: ns-resize;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.tile--fill .fill__level {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--level, 50%);
+  background: var(--grad-fill);
+  transition: height 0.06s linear;
+  pointer-events: none;
+}
+
+/* A bright meniscus at the top of the fill — the liquid edge catching light. */
+.tile--fill .fill__level::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+[data-glass='off'] .tile--fill .fill__level::after {
+  display: none;
+}
+
+.tile--fill .fill__content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-3);
+  pointer-events: none;
+}
+
+.tile--fill .fill__icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color-light);
+  box-shadow: var(--shadow-sm);
+}
+
+.tile--fill .fill__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tile--fill .fill__metric {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.tile--fill .fill__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+/* --- 5. Swatch tile ------------------------------------------------------- */
+.tile--swatch {
+  justify-content: center;
+}
+
+/* Inset hairline so a near-white swatch still reads as a swatch on paper. */
+.tile--swatch .tile__chip {
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.28), var(--shadow-sm);
+  border-color: transparent;
+}
+
+/* --- 7. Action tile ------------------------------------------------------- */
+.tile--action {
+  justify-content: center;
+  border: 1px dashed var(--border-color-input);
+  background: transparent;
+}
+
+button.tile--action:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-style: solid;
+}
+
+.tile--action.is-danger .tile__chip {
+  color: var(--danger-text);
+}
+
+button.tile--action.is-danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
+
+/* --- 8. Status tile ------------------------------------------------------- */
+.tile--status {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   REDUCED MOTION
+   `adaptiveBudget` is the sole authority over `data-reduced-motion` (Settings →
+   Motion + the OS setting), so the tile language answers to that attribute
+   rather than declaring its own media query. State still changes instantly and
+   legibly — it just stops springing.
+   ========================================================================== */
+:root[data-reduced-motion='true'] .tile,
+:root[data-reduced-motion='true'] .tile::before,
+:root[data-reduced-motion='true'] .tile__chip,
+:root[data-reduced-motion='true'] .tile__value,
+:root[data-reduced-motion='true'] .fill__level {
+  transition-duration: 0.01ms;
+}
+
+:root[data-reduced-motion='true'] button.tile:hover:not(:disabled) {
+  transform: none;
+}
+
+:root[data-reduced-motion='true'] .tile--toggle[aria-checked='true'] .tile__chip {
+  transform: none;
+}
+
+/* ==========================================================================
+   CONTAINER QUERIES — last in the file on purpose.
+   A container query adds NO specificity, so these rules only win by source
+   order. Moving this block above anything it overrides silently breaks it.
+   The container itself is established by the consuming surface (the settings
+   sheet, the layout popover) with `container-type: inline-size`.
+   ========================================================================== */
+@container (max-width: 560px) {
+  .tile-grid {
+    --tile-min: 138px;
+  }
+}
+
+@container (max-width: 330px) {
+  /* Only one column fits. A 2-wide tile can no longer span, and a tall fill
+     slider would eat the viewport — so it rotates into a horizontal fill bar
+     rather than collapsing into an unusable square. */
+  .tile--w2 {
+    grid-column: span 1;
+  }
+
+  .tile--h2 {
+    grid-row: span 1;
+  }
+
+  .tile--fill {
+    --fill-axis: x;
+    cursor: ew-resize;
+  }
+
+  .tile--fill .fill__level {
+    inset: 0 auto 0 0;
+    height: auto;
+    width: var(--level, 50%);
+    transition: width 0.06s linear;
+  }
+
+  .tile--fill .fill__content {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+    padding: calc(var(--space-2) + var(--space-0-5)) var(--space-3);
+  }
+
+  .tile--fill .fill__foot {
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin-left: auto;
+  }
+
+  .tile--fill .fill__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
