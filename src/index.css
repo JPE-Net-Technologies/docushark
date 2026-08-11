@@ -329,3 +329,110 @@ html {
 [data-density='spacious'] {
   --density-mult: 1.15;
 }
+
+/* ===========================================================================
+ * Glass + motion tokens (JP-253)
+ * ---------------------------------------------------------------------------
+ * The tile system's surface vocabulary, consumed only by floating chrome (the
+ * settings sheet, the layout menu) and the tiles inside it. Semantic and
+ * mode-flipped like the rest of the token set; components never reach for the
+ * raw ramps.
+ *
+ * Two rules this encodes, both learned by measuring rather than guessing:
+ *
+ * 1. ONE blurred surface per floating panel. `backdrop-filter` costs a backdrop
+ *    read-back plus a blur pass *per element*, and a nested one re-blurs its
+ *    already-blurred parent. Measured with an animating backdrop: 2 blur
+ *    surfaces = 7.15ms/frame, 32 (blur on every tile) = 9.46ms/frame — for no
+ *    visible difference. Tiles therefore use plain translucent fills over the
+ *    panel's single blur.
+ * 2. `[data-glass="off"]` resolves every token here back to today's opaque
+ *    values, so the Appearance opt-out is one attribute on <html> and there is
+ *    no second styling path to maintain.
+ * ======================================================================== */
+:root {
+  --glass-blur: 20px;
+  --glass-saturate: 180%;
+
+  /* The floating panel itself. */
+  --glass-surface: rgba(249, 246, 238, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.6);
+
+  /* A tile: a raised plate ON the panel, so it reads as stacked glass. */
+  --glass-tile: rgba(255, 255, 255, 0.5);
+  --glass-tile-hover: rgba(255, 255, 255, 0.78);
+  --glass-tile-border: rgba(255, 255, 255, 0.55);
+
+  /* The 1px specular line along a top-lit glass edge. */
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --glass-highlight-soft: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+
+  /* Layered elevation. One shadow reads as a sticker; three read as an object
+     above a surface (contact + ambient + cast). */
+  --shadow-float:
+    0 1px 1px rgba(14, 28, 48, 0.05), 0 8px 24px -8px rgba(14, 28, 48, 0.18),
+    0 28px 64px -16px rgba(14, 28, 48, 0.24);
+  --shadow-tile: 0 1px 1px rgba(14, 28, 48, 0.04), 0 2px 8px -3px rgba(14, 28, 48, 0.1);
+  --shadow-tile-hover:
+    0 1px 1px rgba(14, 28, 48, 0.05), 0 8px 20px -6px rgba(14, 28, 48, 0.18);
+
+  /* Accent fills gradate rather than sitting flat — light falls off. */
+  --grad-primary: linear-gradient(145deg, var(--navy-600) 0%, var(--navy-700) 45%, var(--navy-900) 100%);
+  --grad-fill: linear-gradient(to top, var(--navy-900) 0%, var(--navy-700) 60%, var(--navy-600) 100%);
+
+  /* Room light on a full-bleed glass sheet. A sheet that covers the viewport
+     has nothing left around it to refract, so it carries its own soft brand
+     washes — otherwise the blur has nothing to say and it reads as flat tint. */
+  --sheet-wash:
+    radial-gradient(1200px 620px at 12% -8%, rgba(31, 51, 84, 0.07), transparent 62%),
+    radial-gradient(900px 520px at 92% 4%, rgba(201, 162, 98, 0.09), transparent 60%),
+    radial-gradient(760px 700px at 68% 108%, rgba(31, 51, 84, 0.05), transparent 65%);
+
+  /* Motion. The spring overshoots slightly — that small bounce is the
+     difference between "a class toggled" and "a switch was thrown". */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 0.16s;
+  --dur-med: 0.28s;
+  --dur-slow: 0.45s;
+}
+
+[data-theme='dark'] {
+  --glass-surface: rgba(14, 28, 48, 0.58);
+  --glass-border: rgba(214, 224, 240, 0.14);
+  --glass-tile: rgba(214, 224, 240, 0.055);
+  --glass-tile-hover: rgba(214, 224, 240, 0.11);
+  --glass-tile-border: rgba(214, 224, 240, 0.1);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --glass-highlight-soft: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-float:
+    0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.55),
+    0 32px 72px -16px rgba(0, 0, 0, 0.65);
+  --shadow-tile: 0 1px 1px rgba(0, 0, 0, 0.25), 0 2px 8px -3px rgba(0, 0, 0, 0.35);
+  --shadow-tile-hover: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 24px -6px rgba(0, 0, 0, 0.5);
+  --grad-primary: linear-gradient(145deg, #f0dcae 0%, var(--brand-gold-soft) 45%, var(--brand-gold) 100%);
+  --grad-fill: linear-gradient(to top, var(--brand-gold) 0%, var(--brand-gold-soft) 70%, #f0dcae 100%);
+  --sheet-wash:
+    radial-gradient(1200px 620px at 12% -8%, rgba(43, 70, 110, 0.28), transparent 62%),
+    radial-gradient(900px 520px at 92% 4%, rgba(201, 162, 98, 0.07), transparent 58%),
+    radial-gradient(760px 700px at 68% 108%, rgba(31, 51, 84, 0.22), transparent 65%);
+}
+
+/* Appearance → Glass, off. Every token resolves to the opaque equivalent. */
+[data-glass='off'] {
+  --glass-blur: 0px;
+  --glass-saturate: 100%;
+  --glass-surface: var(--bg-primary);
+  --glass-border: var(--border-color);
+  --glass-tile: var(--bg-tertiary);
+  --glass-tile-hover: var(--bg-hover);
+  --glass-tile-border: transparent;
+  --glass-highlight: none;
+  --glass-highlight-soft: none;
+  --shadow-float: var(--shadow-xl);
+  --shadow-tile: none;
+  --shadow-tile-hover: none;
+  --grad-primary: var(--color-primary);
+  --grad-fill: var(--color-primary);
+  --sheet-wash: none;
+}

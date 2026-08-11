@@ -1,4 +1,4 @@
-/* LayoutSelector — toolbar chip + popover dropdown. */
+/* LayoutSelector — toolbar chip + portalled tile popover (JP-253). */
 
 .layout-selector-wrapper {
   position: relative;
@@ -22,154 +22,123 @@
   white-space: nowrap;
 }
 
-.layout-selector-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  width: 320px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  z-index: 1000;
-  padding: var(--space-1-5);
-}
+/* --- The popover ----------------------------------------------------------
+   Portalled to <body>, so `fixed` + viewport coordinates from the placement
+   effect in LayoutSelector.tsx. `left`/`top`/`width`/`max-height` are all set
+   inline there; this rule owns appearance only.
 
-.layout-selector-list {
+   `container-type: inline-size` is what makes the tile container queries in
+   tiles.css resolve against the popover's width rather than the viewport —
+   without it a 340px popover would style itself as though it had the whole
+   window, and the tiles would never reflow.
+   ------------------------------------------------------------------------- */
+.layout-selector-dropdown {
+  position: fixed;
+  z-index: 10100;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: var(--space-0-5);
+  gap: var(--space-3);
+  padding: var(--space-2);
+  background: var(--glass-surface);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-float), var(--glass-highlight);
+  /* A too-tall panel scrolls; it never truncates. Paired with the max-height
+     the placement effect computes from the room actually available. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
-.layout-selector-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: var(--space-2) var(--space-2);
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  text-align: left;
-  color: var(--text-primary);
+/* --- Layout preset tile ---------------------------------------------------
+   The one specialization the tile system doesn't cover: thumbnail-led rather
+   than icon-led, because a layout is a shape and a 30px chip cannot show one.
+   Everything else — surface, hover, focus, radius — is inherited from `.tile`.
+   ------------------------------------------------------------------------- */
+.tile--layout {
+  gap: var(--space-2);
+  justify-content: flex-start;
+}
+
+.layout-tile__thumb {
+  display: block;
   width: 100%;
 }
 
-.layout-selector-option:hover,
-.layout-selector-option:focus-visible {
-  background: var(--bg-secondary);
-  outline: none;
+/* Scales with the tile, but capped: at a single-column width the tile is ~270px
+   and an uncapped thumbnail grows to 164px tall, swamping the name it labels. */
+.layout-tile__thumb svg {
+  width: 100%;
+  max-width: 140px;
+  height: auto;
 }
 
-.layout-selector-option.active {
-  background: var(--bg-secondary);
-}
-
-.layout-selector-option-text {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  min-width: 0;
-}
-
-.layout-selector-option-title {
+.layout-tile__row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
   gap: var(--space-2);
-}
-
-.layout-selector-option-shortcut {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-normal);
-  color: var(--text-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.layout-selector-option-desc {
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  line-height: var(--line-height-snug);
-}
-
-/* Section labels — the popover carries two unrelated groups (presets and
-   panel visibility) and needs to say which is which. */
-.layout-selector-section-label {
-  padding: var(--space-1) var(--space-2) var(--space-0-5);
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.layout-selector-panels {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  margin-top: var(--space-1);
-  padding-top: var(--space-1);
-  border-top: 1px solid var(--border-color);
-}
-
-.layout-selector-panel-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 6px var(--space-2);
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-}
-
-.layout-selector-panel-item:hover:not(:disabled),
-.layout-selector-panel-item:focus-visible:not(:disabled) {
-  background: var(--bg-secondary);
-  outline: none;
-}
-
-.layout-selector-panel-item:disabled {
-  color: var(--text-muted);
-  cursor: default;
-}
-
-/* Fixed box so the labels form a column whether or not a row is checked. */
-.layout-selector-panel-check {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  color: var(--color-primary);
-}
-
-.layout-selector-panel-label {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
-.layout-selector-panel-note {
+.layout-tile__name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+}
+
+.layout-tile__key {
   flex: none;
   font-size: var(--font-size-2xs);
   color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
+.layout-tile__desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: var(--line-height-snug);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* "Which layout am I on" is this popover's whole job, so the active tile gets a
+   solid accent border and a check badge — a background tint alone is too quiet
+   to answer it at a glance. */
+.tile--layout[aria-checked='true'] {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+}
+
+.tile--layout[aria-checked='true']::after {
+  content: '✓';
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* --- Footer --------------------------------------------------------------- */
 .layout-selector-footer {
   display: flex;
   flex-direction: column;
   gap: var(--space-0-5);
-  margin-top: var(--space-1);
-  padding-top: var(--space-1-5);
-  border-top: 1px solid var(--border-color);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-color-light);
 }
 
 .layout-selector-footer-item {
@@ -179,7 +148,7 @@
   padding: 7px 10px;
   border: none;
   background: transparent;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
@@ -189,15 +158,7 @@
 
 .layout-selector-footer-item:hover,
 .layout-selector-footer-item:focus-visible {
-  background: var(--bg-secondary);
+  background: var(--bg-hover);
+  color: var(--text-primary);
   outline: none;
-}
-
-.layout-selector-toggle {
-  cursor: pointer;
-}
-
-.layout-selector-toggle input[type='checkbox'] {
-  margin: 0;
-  cursor: pointer;
 }

@@ -1,13 +1,42 @@
 /**
  * Settings → Appearance — the consolidated home for visual/UX configuration.
  *
- * Sections: Theme builder (base + presets + Primary/CTA/Surface/Text + Surprise
- * me), Motion, Density, Interface size, Canvas, Layout (embedded), and Title bar
- * (desktop-only). Kept self-contained (no coupling to `SettingsModal` internals)
- * so it survives the planned settings-menu rework.
+ * Built on the shared tile system (`../tiles/Tile`), so this panel and the
+ * layout menu read as one vocabulary (JP-253). The tile mosaic also let the
+ * thirteen one-and-two-row groups this panel used to carry collapse into five
+ * a reader can scan: Theme, Writing, Interface, Layout, Reset. (Canvas held a
+ * single control — grid opacity — and folded into Interface.)
+ *
+ * Every store binding, option set and piece of behaviour is unchanged from the
+ * row-based version — this is presentation only.
+ *
+ * Help text lives INSIDE its tile via the `hint` prop, not in a tooltip and not
+ * floating beside the mosaic. A tooltip is reachable only by hovering, which
+ * rules it out on touch entirely, and text sitting outside a tile reads as
+ * commentary on the group rather than on the control it belongs to.
  */
 
-import { Monitor, Moon, Sun, Wand2 } from 'lucide-react';
+import {
+  AppWindow,
+  Contrast,
+  Grid3x3,
+  Maximize,
+  Monitor,
+  Moon,
+  PanelsTopLeft,
+  RotateCcw,
+  Rows3,
+  Smartphone,
+  SpellCheck,
+  SquareDashed,
+  Sun,
+  SwatchBook,
+  Table,
+  TextCursorInput,
+  Type,
+  Wand2,
+  Zap,
+} from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useThemeStore, type ThemePreference } from '../../store/themeStore';
 import {
@@ -36,10 +65,15 @@ import {
   THEME_SLOTS,
   surpriseTheme,
 } from '../appearance/themeEngine';
-import { SegmentedControl } from '../components/SegmentedControl';
-import { Slider } from '../components/Slider';
-import { Switch } from '../components/Switch';
 import { ColorField } from '../components/ColorField';
+import {
+  ActionTile,
+  CustomTile,
+  FillTile,
+  SegmentedTile,
+  TileGroup,
+  ToggleTile,
+} from '../tiles/Tile';
 import { resetAppearance } from '../appearance/appearanceConfig';
 import { LayoutSettings } from './LayoutSettings';
 import './AppearanceSettings.css';
@@ -69,7 +103,7 @@ const CARET_OPTIONS = [
 
 const SPELLCHECK_OPTIONS = [
   { value: 'custom' as const, label: 'Custom', title: "DocuShark's dictionary + Add to dictionary" },
-  { value: 'system' as const, label: 'System', title: "Your browser / OS spellchecker" },
+  { value: 'system' as const, label: 'System', title: 'Your browser / OS spellchecker' },
   { value: 'off' as const, label: 'Off', title: 'No spellchecking' },
 ];
 
@@ -105,6 +139,8 @@ export function AppearanceSettings() {
   const setSpellcheckMode = useUIPreferencesStore((s) => s.setSpellcheckMode);
   const roundedTables = useUIPreferencesStore((s) => s.appearancePrefs.roundedTables);
   const setRoundedTables = useUIPreferencesStore((s) => s.setRoundedTables);
+  const glass = useUIPreferencesStore((s) => s.appearancePrefs.glass);
+  const setGlass = useUIPreferencesStore((s) => s.setGlass);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
   const setGridOpacity = useSettingsStore((s) => s.setGridOpacity);
 
@@ -135,26 +171,25 @@ export function AppearanceSettings() {
     <div className="appearance-settings">
       <h3 className="settings-section-title">Appearance</h3>
 
-      {/* Theme builder */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Theme</h4>
+      {/* ---------------------------------------------------------------- */}
+      <TileGroup title="Theme" icon={SwatchBook}>
+        <SegmentedTile
+          icon={Contrast}
+          label="Base"
+          ariaLabel="Theme base"
+          value={themePreference}
+          onValueChange={(v: ThemePreference) => setThemePreference(v)}
+          options={THEME_OPTIONS}
+          hint={`You're editing your ${activeBase} theme — switch base to customize the other independently.`}
+        />
 
-        <div className="settings-row">
-          <span className="settings-label">Base</span>
-          <SegmentedControl
-            ariaLabel="Theme base"
-            value={themePreference}
-            onValueChange={(v: ThemePreference) => setThemePreference(v)}
-            options={THEME_OPTIONS}
-          />
-          <span className="settings-hint">
-            Light or dark foundation. You're editing your <strong>{activeBase}</strong> theme;
-            switch base to customize the other independently.
-          </span>
-        </div>
-
-        <div className="settings-row">
-          <span className="settings-label">Presets</span>
+        <CustomTile
+          wide
+          icon={Wand2}
+          label="Presets"
+          value={activePresetId ? THEME_PRESETS.find((p) => p.id === activePresetId)?.label : 'Custom'}
+          hint="Start from a preset, then fine-tune the colors below."
+        >
           <div className="theme-preset-row">
             {THEME_PRESETS.map((preset) => (
               <button
@@ -180,13 +215,13 @@ export function AppearanceSettings() {
               <Wand2 size={14} aria-hidden="true" /> Surprise me
             </button>
           </div>
-          <span className="settings-hint">Start from a preset, then fine-tune the colors below.</span>
-        </div>
+        </CustomTile>
 
-        <div className="theme-slots">
-          {THEME_SLOTS.map(({ slot, label, hint }) => (
+        {/* ColorField renders its own label, hint, value and contrast warning,
+            and owns the picker popover — so the tile is a container only. */}
+        {THEME_SLOTS.map(({ slot, label, hint }) => (
+          <CustomTile key={slot} wide className="tile--field">
             <ColorField
-              key={slot}
               label={label}
               hint={hint}
               value={themeInputs[slot]}
@@ -194,26 +229,27 @@ export function AppearanceSettings() {
               onChange={(value) => setThemeInput(activeBase, slot, value)}
               {...(warnFor(slot) !== undefined ? { warning: warnFor(slot) as string } : {})}
             />
-          ))}
-        </div>
+          </CustomTile>
+        ))}
 
-        <div className="settings-row">
-          <button
-            type="button"
-            className="theme-reset-base"
-            disabled={Object.keys(themeInputs as ThemeInputs).length === 0}
-            onClick={() => setThemeInputs(activeBase, {})}
-          >
-            Reset {activeBase} theme to default
-          </button>
-        </div>
-      </div>
+        <ActionTile
+          icon={RotateCcw}
+          label={`Reset ${activeBase} theme`}
+          value="Back to base"
+          disabled={Object.keys(themeInputs as ThemeInputs).length === 0}
+          onClick={() => setThemeInputs(activeBase, {})}
+        />
+      </TileGroup>
 
-      {/* Prose background */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Prose background</h4>
-        <div className="settings-row">
-          <span className="settings-label">Editor backdrop</span>
+      {/* ---------------------------------------------------------------- */}
+      <TileGroup title="Writing" icon={Type}>
+        <CustomTile
+          wide
+          icon={SquareDashed}
+          label="Prose background"
+          value={PROSE_BACKGROUNDS[proseBackground].label}
+          hint="The backdrop behind the writing area. Presets follow your theme colors."
+        >
           <div className="prose-bg-row">
             {(Object.keys(PROSE_BACKGROUNDS) as ProseBackground[]).map((id) => (
               <button
@@ -222,6 +258,7 @@ export function AppearanceSettings() {
                 className={`prose-bg-option${proseBackground === id ? ' is-active' : ''}`}
                 onClick={() => setProseBackground(id)}
                 aria-pressed={proseBackground === id}
+                title={PROSE_BACKGROUNDS[id].label}
               >
                 <span
                   className="prose-bg-preview"
@@ -232,186 +269,137 @@ export function AppearanceSettings() {
               </button>
             ))}
           </div>
-          <span className="settings-hint">
-            The backdrop behind the writing area. Presets follow your theme colors.
-          </span>
-        </div>
-      </div>
+        </CustomTile>
 
-      {/* Caret */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Caret</h4>
-        <div className="settings-row">
-          <span className="settings-label">Style</span>
-          <SegmentedControl
-            ariaLabel="Caret style"
-            value={caretStyle}
-            onValueChange={(v: CaretStyle) => setCaretStyle(v)}
-            options={CARET_OPTIONS}
-          />
-          <span className="settings-hint">
-            The text cursor shape in the writing editor.
-          </span>
-        </div>
-        <div className="settings-row">
-          <span className="settings-label">Smooth writing</span>
-          <Switch
-            ariaLabel="Smooth caret"
-            checked={smoothCaret}
-            onCheckedChange={setSmoothCaret}
-          />
-          <span className="settings-hint">
-            Glide the caret between positions as you type instead of jumping.
-            Automatically off when interface motion is reduced.
-          </span>
-        </div>
-        <ColorField
-          label="Color"
-          hint="The writing caret's color. Defaults to the theme text color; applies to the block / smooth caret."
-          value={caretColor ?? undefined}
-          defaultSwatch="#0a1525"
-          onChange={(value) => setCaretColor(value ?? null)}
+        <SegmentedTile
+          icon={TextCursorInput}
+          label="Caret style"
+          value={caretStyle}
+          onValueChange={(v: CaretStyle) => setCaretStyle(v)}
+          options={CARET_OPTIONS}
+          hint="The text cursor shape in the writing editor."
         />
-      </div>
 
-      {/* Spelling */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Spelling</h4>
-        <div className="settings-row">
-          <span className="settings-label">Spellcheck</span>
-          <SegmentedControl
-            ariaLabel="Spellcheck"
-            value={spellcheck}
-            onValueChange={(v: SpellcheckMode) => setSpellcheckMode(v)}
-            options={SPELLCHECK_OPTIONS}
+        <ToggleTile
+          icon={Type}
+          label="Smooth writing"
+          checked={smoothCaret}
+          onCheckedChange={setSmoothCaret}
+          hint="Glides between positions as you type. Off automatically when motion is reduced."
+        />
+
+        <ToggleTile
+          icon={Table}
+          label="Rounded tables"
+          checked={roundedTables}
+          onCheckedChange={setRoundedTables}
+          hint="Off gives square, grid-style tables."
+        />
+
+        <CustomTile wide className="tile--field">
+          <ColorField
+            label="Caret color"
+            hint="Defaults to the theme text color; applies to the block / smooth caret."
+            value={caretColor ?? undefined}
+            defaultSwatch="#0a1525"
+            onChange={(value) => setCaretColor(value ?? null)}
           />
-          <span className="settings-hint">
-            <strong>Custom</strong> uses DocuShark's dictionary and “Add to dictionary”.
-            <strong> System</strong> uses your browser/OS spellchecker.
-            <strong> Off</strong> disables spellchecking. Only one runs at a time.
+        </CustomTile>
+
+        <SegmentedTile
+          icon={SpellCheck}
+          label="Spellcheck"
+          value={spellcheck}
+          onValueChange={(v: SpellcheckMode) => setSpellcheckMode(v)}
+          options={SPELLCHECK_OPTIONS}
+          hint="Custom uses DocuShark's dictionary and “Add to dictionary”; System uses your browser or OS checker. Only one runs at a time."
+        />
+      </TileGroup>
+
+      {/* ---------------------------------------------------------------- */}
+      <TileGroup title="Interface" icon={Rows3}>
+        <FillTile
+          icon={Maximize}
+          label="Interface size"
+          value={uiScalePercent}
+          onValueChange={(pct) => setUiScale(pct / 100)}
+          min={Math.round(UI_SCALE_MIN * 100)}
+          max={Math.round(UI_SCALE_MAX * 100)}
+          step={5}
+          hint="The canvas and your diagrams are not affected."
+        />
+
+        <FillTile
+          icon={Grid3x3}
+          label="Grid opacity"
+          value={gridOpacity}
+          onValueChange={setGridOpacity}
+          min={0}
+          max={100}
+          step={5}
+          hint="0 hides the grid entirely."
+        />
+
+        <SegmentedTile
+          icon={Rows3}
+          label="Density"
+          ariaLabel="Spacing density"
+          value={density}
+          onValueChange={(v: Density) => setDensity(v)}
+          options={DENSITY_OPTIONS}
+          hint="Compact fits more on screen; Spacious gives larger, easier targets."
+        />
+
+        <SegmentedTile
+          icon={Zap}
+          label="Motion"
+          ariaLabel="Interface animations"
+          value={motion}
+          onValueChange={(v: MotionPreference) => setMotion(v)}
+          options={MOTION_OPTIONS}
+          hint="System follows your device's accessibility setting."
+        />
+
+        <ToggleTile
+          icon={Contrast}
+          label="Glass chrome"
+          checked={glass}
+          onCheckedChange={setGlass}
+          hint="Translucent, blurred panels. Off is flat and opaque — lighter to render."
+        />
+
+        <MobilePreviewTile />
+        <TitleBarTile />
+      </TileGroup>
+
+      {/* Layout — the panel-arrangement editor. A full sub-panel of per-layout
+          dock dropdowns rather than a control, so it keeps its own rows inside
+          one tile-styled surface instead of being forced into the mosaic.
+          Converting it is a follow-up alongside the other Settings tabs. */}
+      <section className="tile-group">
+        <div className="tile-group__head">
+          <span className="tile-group__icon" aria-hidden="true">
+            <PanelsTopLeft size={15} strokeWidth={1.5} />
           </span>
+          <h4 className="tile-group__title">Layout</h4>
+          <span className="tile-group__rule" aria-hidden="true" />
         </div>
-      </div>
-
-      {/* Tables */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Tables</h4>
-        <div className="settings-row">
-          <span className="settings-label">Rounded tables</span>
-          <Switch
-            ariaLabel="Rounded tables"
-            checked={roundedTables}
-            onCheckedChange={setRoundedTables}
-          />
-          <span className="settings-hint">
-            Round the corners of tables in the writing editor. Turn off for square,
-            grid-style tables.
-          </span>
+        <div className="tile tile--embed">
+          <LayoutSettings embedded />
         </div>
-      </div>
+      </section>
 
-      {/* Motion */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Motion</h4>
-        <div className="settings-row">
-          <span className="settings-label">Interface animations</span>
-          <SegmentedControl
-            ariaLabel="Interface animations"
-            value={motion}
-            onValueChange={(v: MotionPreference) => setMotion(v)}
-            options={MOTION_OPTIONS}
-          />
-          <span className="settings-hint">
-            Reduce or turn off interface animations. "System" follows your device's
-            accessibility setting.
-          </span>
-        </div>
-      </div>
-
-      {/* Density */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Density</h4>
-        <div className="settings-row">
-          <span className="settings-label">Spacing</span>
-          <SegmentedControl
-            ariaLabel="Spacing density"
-            value={density}
-            onValueChange={(v: Density) => setDensity(v)}
-            options={DENSITY_OPTIONS}
-          />
-          <span className="settings-hint">
-            Tighten or loosen spacing throughout the app. Compact fits more on screen;
-            Spacious gives larger, easier targets.
-          </span>
-        </div>
-      </div>
-
-      {/* Interface size */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Interface size</h4>
-        <div className="settings-row">
-          <label className="settings-label" htmlFor="ui-scale">
-            Size
-          </label>
-          <div className="settings-slider-row">
-            <Slider
-              ariaLabel="Interface size"
-              value={uiScalePercent}
-              onValueChange={(pct) => setUiScale(pct / 100)}
-              min={Math.round(UI_SCALE_MIN * 100)}
-              max={Math.round(UI_SCALE_MAX * 100)}
-              step={5}
-            />
-            <span className="settings-slider-value">{uiScalePercent}%</span>
-          </div>
-          <span className="settings-hint">
-            Scale the whole interface up or down. The canvas and your diagrams are
-            not affected.
-          </span>
-        </div>
-      </div>
-
-      {/* Canvas */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Canvas</h4>
-        <div className="settings-row">
-          <label className="settings-label" htmlFor="grid-opacity">
-            Grid opacity
-          </label>
-          <div className="settings-slider-row">
-            <input
-              id="grid-opacity"
-              type="range"
-              className="styled-slider"
-              min={0}
-              max={100}
-              value={gridOpacity}
-              onChange={(e) => setGridOpacity(Number(e.target.value))}
-            />
-            <span className="settings-slider-value">{gridOpacity}%</span>
-          </div>
-          <span className="settings-hint">
-            Adjust how visible the canvas grid is (0 = hidden).
-          </span>
-        </div>
-      </div>
-
-      {/* Layout — the panel-arrangement editor, embedded as a section. */}
-      <LayoutSettings embedded />
-
-      {/* Title bar — desktop-only; renders nothing on the web app. */}
-      <TitleBarSection />
-
-      {/* Mobile preview — the experimental small-screen layout (JP-332). */}
-      <MobilePreviewSection />
-
-      {/* Reset */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Reset</h4>
-        <button type="button" className="settings-reset-btn" onClick={handleReset}>
-          Reset appearance to defaults
-        </button>
-      </div>
+      {/* ---------------------------------------------------------------- */}
+      <TileGroup title="Reset" icon={RotateCcw}>
+        <ActionTile
+          danger
+          icon={RotateCcw}
+          label="Reset appearance"
+          value="Back to defaults"
+          onClick={handleReset}
+          hint="Theme, motion, density, interface size and layout customization."
+        />
+      </TileGroup>
     </div>
   );
 }
@@ -424,7 +412,7 @@ export function AppearanceSettings() {
  * everywhere so an opted-out user (or a desktop user testing a narrow window)
  * has a discoverable, non-nagging way back in.
  */
-function MobilePreviewSection() {
+function MobilePreviewTile() {
   const accepted = useUIPreferencesStore((s) => s.mobilePreviewAccepted);
   const forceDesktop = useUIPreferencesStore((s) => s.forceDesktopSite);
   const setMobilePreviewAccepted = useUIPreferencesStore((s) => s.setMobilePreviewAccepted);
@@ -442,34 +430,22 @@ function MobilePreviewSection() {
   };
 
   return (
-    <div className="settings-group">
-      <h4 className="settings-group-title">Mobile preview</h4>
-      <div className="settings-row settings-row-switch">
-        <label className="settings-switch-label" htmlFor="docushark-mobile-preview">
-          <Switch
-            id="docushark-mobile-preview"
-            checked={enabled}
-            onCheckedChange={handleToggle}
-            ariaLabel="Use the mobile preview layout"
-          />
-          <span className="settings-switch-text">Use the mobile preview layout</span>
-        </label>
-        <span className="settings-hint">
-          An experimental, early-access layout for small touch screens. Only takes
-          effect on a touch device with a small screen; turn it off to always use the
-          desktop layout.
-        </span>
-      </div>
-    </div>
+    <ToggleTile
+      icon={Smartphone}
+      label="Mobile preview"
+      checked={enabled}
+      onCheckedChange={handleToggle}
+      hint="Experimental. Only takes effect on a touch device with a small screen."
+    />
   );
 }
 
 /**
  * DocuShark title bar opt-in. Gated to the desktop shell that owns a native
  * title bar — `windowControls.isSupported()` is false on the web app (and we
- * exclude macOS) — so the whole section is absent there (JP-107).
+ * exclude macOS) — so the tile is absent there (JP-107).
  */
-function TitleBarSection() {
+function TitleBarTile() {
   const customChrome = useUIPreferencesStore((s) => s.layout.customChrome);
   const setCustomChrome = useUIPreferencesStore((s) => s.setCustomChrome);
 
@@ -499,23 +475,12 @@ function TitleBarSection() {
   };
 
   return (
-    <div className="settings-group">
-      <h4 className="settings-group-title">Title bar</h4>
-      <div className="settings-row settings-row-switch">
-        <label className="settings-switch-label" htmlFor="docushark-title-bar">
-          <Switch
-            id="docushark-title-bar"
-            checked={customChrome}
-            onCheckedChange={handleToggle}
-            ariaLabel="Use DocuShark's title bar"
-          />
-          <span className="settings-switch-text">Use DocuShark's title bar</span>
-        </label>
-        <span className="settings-hint">
-          Replace your operating system's window title bar with DocuShark's own for a
-          more unified look. The app restarts to apply.
-        </span>
-      </div>
-    </div>
+    <ToggleTile
+      icon={AppWindow}
+      label="DocuShark title bar"
+      checked={customChrome}
+      onCheckedChange={handleToggle}
+      hint="Replaces your system window title bar. The app restarts to apply."
+    />
   );
 }

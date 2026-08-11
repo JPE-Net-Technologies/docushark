@@ -1,50 +1,52 @@
 /* Settings → Appearance.
  *
- * Reuses the shared `.settings-*` group/row/label/hint/slider classes defined
- * in GeneralSettings.css (co-loaded with the settings module graph). Only the
- * Appearance-specific additions live here. (The settings-menu rework — JP-211 —
- * is expected to consolidate these shared classes into one place.) */
+ * Built on the tile system (`../tiles/tiles.css`), which owns the mosaic, the
+ * tile chrome and the reflow. Only the Appearance-specific bits live here: the
+ * controls this panel hosts inside tiles (theme presets, prose backdrops) and
+ * the two surfaces that are sub-panels rather than controls. */
 
 .appearance-settings {
   display: flex;
   flex-direction: column;
+  gap: var(--space-5);
+  /* Establishes the query container for the tile container queries, so the
+     tiles reflow against the settings pane's width and not the window's. */
+  container-type: inline-size;
 }
 
-/* Switch row: label + thumb on one line, hint beneath (mirrors the checkbox
-   row pattern but for the Radix-based Switch). */
-.appearance-settings .settings-row-switch {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+/* --- Tiles that host an existing control ---------------------------------
+   `ColorField` and `LayoutSettings` render their own labels and internals, so
+   these tiles are containers: no head, no fixed row, content sets the height.
+   ------------------------------------------------------------------------- */
+.tile--field,
+.tile--embed {
+  justify-content: flex-start;
+  padding: var(--space-3);
 }
 
-.appearance-settings .settings-switch-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
+.tile__body--only {
+  margin-top: 0;
+  width: 100%;
 }
 
-.appearance-settings .settings-switch-text {
-  font-size: 14px;
-  color: var(--text-primary);
+/* The embedded panel spans the full pane — it is a section, not a mosaic cell. */
+.tile--embed {
+  grid-column: 1 / -1;
 }
 
-/* The embedded LayoutSettings drops its standalone top margin so it reads as a
-   section within the panel rather than a separate page. */
-.appearance-settings .layout-settings {
+.tile--embed .layout-settings {
   margin-top: 0;
 }
 
-.appearance-settings .layout-settings-header p {
+.tile--embed .layout-settings-header p {
   margin-top: 2px;
 }
 
-/* Theme builder — preset row, color-slot grid, per-base reset. */
+/* --- Theme presets (hosted in a tile) ------------------------------------- */
 .theme-preset-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .theme-preset {
@@ -52,11 +54,12 @@
   align-items: center;
   gap: 6px;
   padding: 5px 10px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 999px;
+  /* --radius-pill (999px), not --radius-full (50%) — a pill, not an ellipse. */
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 
@@ -79,37 +82,15 @@
 .theme-preset__dot {
   width: 12px;
   height: 12px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   box-shadow: 0 0 0 1px var(--border-color-input) inset;
 }
 
-.theme-slots {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin: 4px 0 10px;
-}
-
-.theme-reset-base {
-  padding: 5px 12px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.theme-reset-base:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Prose background presets — chip with a live gradient preview. */
+/* --- Prose backdrop presets (hosted in a tile) ---------------------------- */
 .prose-bg-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 .prose-bg-option {
@@ -118,11 +99,11 @@
   align-items: center;
   gap: 4px;
   padding: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
 }
 
@@ -142,8 +123,20 @@
 }
 
 .prose-bg-preview {
-  width: 64px;
-  height: 40px;
-  border-radius: 5px;
+  width: 56px;
+  height: 34px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 0 0 1px var(--border-color-input) inset;
+}
+
+/* --- ColorField inside a tile ---------------------------------------------
+   The field's own popover must escape the tile's `overflow: hidden`, so the
+   hosting tile opts out of clipping while a picker is open. */
+.tile--field {
+  overflow: visible;
+  contain: none;
+}
+
+.tile--field .color-field {
+  width: 100%;
 }
