@@ -104,14 +104,31 @@ interface TileBaseProps {
   /** Span two rows. */
   tall?: boolean;
   className?: string;
-  /** Native tooltip — where a row's hint text goes in the tile layout. */
+  /** Native tooltip — for detail that supports a choice already understood. */
   title?: string;
+  /**
+   * Visible help text inside the tile.
+   *
+   * Use this, not `title`, whenever the reader needs the text *to make* the
+   * choice rather than to confirm it — what three spellcheck modes actually do,
+   * when a setting takes effect at all. A tooltip is discoverable only by
+   * hovering, which rules it out on touch entirely, so anything load-bearing
+   * has to be on the tile. The hint lives INSIDE the tile: help floating beside
+   * a tile reads as belonging to the group, not the control.
+   */
+  hint?: string;
 }
 
 function footprint({ wide, tall, className = '' }: TileBaseProps): string {
   return ['tile', wide ? 'tile--w2' : '', tall ? 'tile--h2' : '', className]
     .filter(Boolean)
     .join(' ');
+}
+
+/** Visible in-tile help. Rendered last so it reads as a footnote to the control. */
+function TileHint({ hint }: { hint?: string | undefined }) {
+  if (hint == null) return null;
+  return <span className="tile__hint">{hint}</span>;
 }
 
 interface TileHeadProps {
@@ -191,6 +208,7 @@ export function ToggleTile({
       {...(base.title !== undefined ? { title: base.title } : {})}
     >
       <TileHead icon={icon} title={label} value={note ?? (checked ? onLabel : offLabel)} />
+      <TileHint hint={base.hint} />
     </button>
   );
 }
@@ -205,6 +223,13 @@ export interface SegmentedTileProps<T extends string> extends TileBaseProps {
   value: T;
   onValueChange: (value: T) => void;
   options: ReadonlyArray<SegmentedOption<T>>;
+  /**
+   * Accessible name for the group, when the visible title is too terse to stand
+   * alone. A tile title leans on its group header for context ("Base" under
+   * "Theme"), but that header is not programmatically associated — so a screen
+   * reader would just hear "Base". Defaults to `label`.
+   */
+  ariaLabel?: string;
 }
 
 /** Wraps the real `SegmentedControl`, so roving-tabindex + radiogroup semantics
@@ -215,6 +240,7 @@ export function SegmentedTile<T extends string>({
   value,
   onValueChange,
   options,
+  ariaLabel,
   ...base
 }: SegmentedTileProps<T>) {
   return (
@@ -222,12 +248,13 @@ export function SegmentedTile<T extends string>({
       <TileHead icon={icon} title={label} />
       <div className="tile__body">
         <SegmentedControl
-          ariaLabel={label}
+          ariaLabel={ariaLabel ?? label}
           value={value}
           onValueChange={onValueChange}
           options={options}
         />
       </div>
+      <TileHint hint={base.hint} />
     </div>
   );
 }
@@ -281,6 +308,7 @@ export function SliderTile({
           step={step}
         />
       </div>
+      <TileHint hint={base.hint} />
     </div>
   );
 }
@@ -396,7 +424,7 @@ export interface SwatchTileProps extends TileBaseProps {
   /** No explicit value set — the theme engine derives it. */
   derived?: boolean;
   /** Display value under the title (a hex, usually). */
-  value?: string;
+  value?: string | undefined;
   onClick?: () => void;
 }
 
@@ -487,7 +515,7 @@ export function PickerTile({
 export interface ActionTileProps extends TileBaseProps {
   icon: LucideIcon;
   label: string;
-  value?: string;
+  value?: string | undefined;
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
@@ -514,6 +542,7 @@ export function ActionTile({
       {...(base.title !== undefined ? { title: base.title } : {})}
     >
       <TileHead icon={icon} title={label} value={value} />
+      <TileHint hint={base.hint} />
     </button>
   );
 }
@@ -526,7 +555,7 @@ export interface StatusTileProps extends TileBaseProps {
   icon: LucideIcon;
   label: string;
   value: string;
-  meta?: string;
+  meta?: string | undefined;
 }
 
 export function StatusTile({ icon, label, value, meta, ...base }: StatusTileProps) {
@@ -540,30 +569,42 @@ export function StatusTile({ icon, label, value, meta, ...base }: StatusTileProp
         <span className="tile__metric">{value}</span>
         {meta != null && <span className="tile__value">{meta}</span>}
       </div>
+      <TileHint hint={base.hint} />
     </div>
   );
 }
 
-/** Escape hatch for a control with no matching tile type (a colour field, a
- *  bespoke row). Gets the tile chrome and footprint; owns its own body. */
+/**
+ * Escape hatch for a control with no matching tile type — a colour field, a
+ * bespoke preset row. Gets the tile chrome and mosaic footprint; owns its body.
+ *
+ * `label` is optional: some hosted controls (ColorField) already render their
+ * own label, hint and warning, and duplicating it in the tile head would say
+ * everything twice. Omitting it gives a container-only tile.
+ */
 export interface CustomTileProps extends TileBaseProps {
   icon?: LucideIcon;
   chip?: ReactNode;
-  label: string;
-  value?: string;
+  label?: string | undefined;
+  value?: string | undefined;
   children?: ReactNode;
 }
 
 export function CustomTile({ icon, chip, label, value, children, ...base }: CustomTileProps) {
   return (
     <div className={footprint(base)} {...(base.title !== undefined ? { title: base.title } : {})}>
-      <TileHead
-        {...(icon !== undefined ? { icon } : {})}
-        {...(chip !== undefined ? { chip } : {})}
-        title={label}
-        value={value}
-      />
-      {children != null && <div className="tile__body">{children}</div>}
+      {label != null && (
+        <TileHead
+          {...(icon !== undefined ? { icon } : {})}
+          {...(chip !== undefined ? { chip } : {})}
+          title={label}
+          value={value}
+        />
+      )}
+      {children != null && (
+        <div className={label != null ? 'tile__body' : 'tile__body tile__body--only'}>{children}</div>
+      )}
+      <TileHint hint={base.hint} />
     </div>
   );
 }

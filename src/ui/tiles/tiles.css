@@ -62,6 +62,18 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  /* Top-aligned, and uniformly so. Grid rows stretch every tile to the tallest
+     in the row, which makes any other choice ragged:
+       - `margin-top: auto` on the body (the first attempt) pushed the control
+         to the tile's bottom edge, opening a gap that grew with whatever else
+         shared the row — worst on Caret style, whose two-option control sits
+         beside taller neighbours.
+       - Centring the head+control group (the second attempt) then split the
+         difference: tiles carrying a hint top-aligned while tiles without one
+         centred, so heads in the same row started at different heights.
+     Every tile's head starting at the same y is what makes a mosaic read as a
+     grid; trailing space inside a stretched tile is invisible by comparison. */
+  justify-content: flex-start;
   gap: var(--space-1-5);
   padding: calc(var(--space-2) + var(--space-0-5)) var(--space-3);
   background: var(--glass-tile);
@@ -180,7 +192,6 @@ button.tile:disabled {
 }
 
 .tile__body {
-  margin-top: auto;
   min-width: 0;
 }
 
@@ -206,6 +217,20 @@ button.tile:disabled {
 
 .tile__body--status .tile__metric {
   margin-left: 0;
+}
+
+/* In-tile help. Sits inside the tile, below the control, so it reads as part of
+   that control rather than as commentary on the group. */
+.tile__hint {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.tile__hint strong {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .tile__badge {
@@ -243,7 +268,6 @@ button.tile:disabled {
    and the state word recolours.
    ------------------------------------------------------------------------- */
 .tile--toggle {
-  justify-content: center;
   isolation: isolate;
 }
 
@@ -311,10 +335,6 @@ button.tile:disabled {
 }
 
 /* --- 3. Slider tile ------------------------------------------------------- */
-.tile--picker {
-  justify-content: center;
-}
-
 .tile__dots {
   display: flex;
   gap: 4px;
@@ -406,10 +426,6 @@ button.tile:disabled {
 }
 
 /* --- 5. Swatch tile ------------------------------------------------------- */
-.tile--swatch {
-  justify-content: center;
-}
-
 /* Inset hairline so a near-white swatch still reads as a swatch on paper. */
 .tile--swatch .tile__chip {
   box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.28), var(--shadow-sm);
@@ -418,7 +434,6 @@ button.tile:disabled {
 
 /* --- 7. Action tile ------------------------------------------------------- */
 .tile--action {
-  justify-content: center;
   border: 1px dashed var(--border-color-input);
   background: transparent;
 }

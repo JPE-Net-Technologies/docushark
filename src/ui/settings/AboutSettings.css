@@ -1,23 +1,16 @@
-/* About settings tab (JP-327). Two-column key/value list for build identity. */
-
-.about-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
-  margin: 0;
+/* Settings → About. Build identity on the shared tile system (JP-253). */
+.about-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: 4px 0;
+  /* Query container for the tile container queries. */
+  container-type: inline-size;
 }
 
-.about-label {
-  color: var(--text-secondary, #6b7280);
-  font-size: 13px;
-}
-
-.about-value {
-  margin: 0;
-  font-size: 13px;
-  word-break: break-word;
-}
-
-.about-value-mono {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+/* Versions and SHAs are strings you compare character by character. */
+.about-mono .tile__metric {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  letter-spacing: 0;
 }

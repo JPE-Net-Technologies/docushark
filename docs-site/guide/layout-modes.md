@@ -36,6 +36,12 @@ Change layout any time — there are three ways:
 - The keyboard: <kbd>Cmd/Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>1</kbd>–<kbd>4</kbd>
 - The command palette (<kbd>Cmd/Ctrl</kbd> + <kbd>K</kbd>) → "Switch to … layout"
 
+The layout chip opens the **View menu**: the four layouts as preview tiles, with
+the active one marked, and below them a tile per panel to show or hide it. That
+panel row is the quickest way to bring back a panel you've hidden — the
+Navigator in particular starts hidden in every layout. The menu narrows and
+scrolls to fit small windows, so it stays usable at any size.
+
 Your layout is an **app-level** setting — a single active mode for the whole
 editor, not a per-document one. Customizations you make to one layout (say, moving
 the properties panel) stay scoped to that layout and don't disturb the others.

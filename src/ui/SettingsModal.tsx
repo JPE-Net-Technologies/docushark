@@ -11,15 +11,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import {
-  Settings,
-  Package,
-  Palette,
-  SwatchBook,
-  Info,
-  Maximize2,
-  Minimize2,
-} from 'lucide-react';
+import { Settings, Package, Palette, SwatchBook, Info } from 'lucide-react';
 import { GeneralSettings } from './settings/GeneralSettings';
 import { StyleProfileSettings } from './settings/StyleProfileSettings';
 import { BackupSettings } from './settings/BackupSettings';
@@ -62,8 +54,6 @@ export interface SettingsModalProps {
 
 export function SettingsModal({ isOpen, onClose, initialTab = 'general' }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const toggleFullscreen = useCallback(() => setIsFullscreen((v) => !v), []);
 
   // Reset to initial tab when modal opens
   useEffect(() => {
@@ -99,24 +89,16 @@ export function SettingsModal({ isOpen, onClose, initialTab = 'general' }: Setti
 
   return (
     <div className="settings-modal-overlay" onClick={handleOverlayClick}>
-      <div
-        className={`settings-modal${isFullscreen ? ' is-fullscreen' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="settings-modal-header">
           <h2>Settings</h2>
           <div className="settings-modal-header-actions">
-            <button
-              className="settings-modal-fullscreen"
-              onClick={toggleFullscreen}
-              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-              title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            >
-              {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-            </button>
-            <button className="settings-modal-close" onClick={onClose} aria-label="Close">
-              ×
+            <button className="settings-modal-close" onClick={onClose} aria-label="Close settings">
+              <span className="settings-modal-close__glyph" aria-hidden="true">
+                ×
+              </span>
+              Close
             </button>
           </div>
         </div>

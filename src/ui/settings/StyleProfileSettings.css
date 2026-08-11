@@ -1,6 +1,11 @@
 /* Style Profile Settings */
 .style-profile-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
   padding: 4px 0;
+  /* Query container for the tile container queries. */
+  container-type: inline-size;
 }
 
 .settings-description {

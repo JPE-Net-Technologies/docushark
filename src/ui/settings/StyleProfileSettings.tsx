@@ -1,12 +1,13 @@
 /**
- * Style Profile Settings component for the Settings modal.
+ * Style Profile Settings component for the Settings sheet.
  *
- * Contains settings for style profile behavior:
- * - Save icon style to profiles
- * - Save label style to profiles
+ * What gets captured when a new style profile is created from a shape.
+ * On the shared tile system (JP-253).
  */
 
+import { Info, Palette, Tag, Type } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
+import { StatusTile, TileGroup, ToggleTile } from '../tiles/Tile';
 import './StyleProfileSettings.css';
 
 export function StyleProfileSettings() {
@@ -17,55 +18,36 @@ export function StyleProfileSettings() {
 
   return (
     <div className="style-profile-settings">
-      <h3 className="settings-section-title">Style Profile Settings</h3>
+      <h3 className="settings-section-title">Style Profiles</h3>
 
       <p className="settings-description">
-        Configure what properties are saved when creating a new style profile from a shape.
+        What gets captured when you create a new style profile from a shape.
       </p>
 
-      {/* Save Options */}
-      <div className="settings-group">
-        <h4 className="settings-group-title">Properties to Include</h4>
+      <TileGroup title="Properties to include" icon={Palette}>
+        <ToggleTile
+          icon={Tag}
+          label="Icon style"
+          checked={saveIconStyleToProfile}
+          onCheckedChange={setSaveIconStyleToProfile}
+          hint="Icon ID, size and padding."
+        />
 
-        <div className="settings-row settings-row-checkbox">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={saveIconStyleToProfile}
-              onChange={(e) => setSaveIconStyleToProfile(e.target.checked)}
-            />
-            <span className="settings-checkbox-text">Save Icon Style to Profile</span>
-          </label>
-          <span className="settings-hint">
-            Include icon ID, size, and padding when saving a style profile
-          </span>
-        </div>
+        <ToggleTile
+          icon={Type}
+          label="Label style"
+          checked={saveLabelStyleToProfile}
+          onCheckedChange={setSaveLabelStyleToProfile}
+          hint="Label font size, color, background and offset."
+        />
 
-        <div className="settings-row settings-row-checkbox">
-          <label className="settings-checkbox-label">
-            <input
-              type="checkbox"
-              className="settings-checkbox"
-              checked={saveLabelStyleToProfile}
-              onChange={(e) => setSaveLabelStyleToProfile(e.target.checked)}
-            />
-            <span className="settings-checkbox-text">Save Label Style to Profile</span>
-          </label>
-          <span className="settings-hint">
-            Include label font size, color, background, and offset when saving a style profile
-          </span>
-        </div>
-      </div>
-
-      {/* Info */}
-      <div className="settings-info-box">
-        <div className="settings-info-icon">i</div>
-        <div className="settings-info-content">
-          <strong>Note:</strong> These settings affect new profiles only. Existing profiles
-          retain their saved properties regardless of these settings.
-        </div>
-      </div>
+        <StatusTile
+          icon={Info}
+          label="Scope"
+          value="New profiles only"
+          hint="Existing profiles keep the properties they were saved with, whatever these are set to now."
+        />
+      </TileGroup>
     </div>
   );
 }

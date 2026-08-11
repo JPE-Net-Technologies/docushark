@@ -1,6 +1,17 @@
-/* General Settings */
+/* General Settings.
+ *
+ * NOTE: this file also defines the shared `.settings-group` / `.settings-row` /
+ * `.settings-label` / `.settings-hint` classes that the not-yet-converted tabs
+ * (Backup & Restore, the embedded Layout editor) still rely on. Those stay
+ * until the last row-based surface is converted. */
 .general-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
   padding: 4px 0;
+  /* Query container for the tile container queries — tiles reflow against this
+     panel's width, not the window's. */
+  container-type: inline-size;
 }
 
 .settings-section-title {

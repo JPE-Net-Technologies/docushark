@@ -62,6 +62,16 @@ describe('tiles.css contract', () => {
     expect(bloom).not.toMatch(/transform:/);
   });
 
+  it('top-aligns tile content instead of centring or bottom-pushing it', () => {
+    // Grid rows stretch every tile to the tallest in the row, so anything but a
+    // uniform top alignment goes ragged: `margin-top: auto` pushed controls to
+    // the tile's bottom edge, and centring split heads to different heights
+    // depending on whether a tile carried a hint. Reported as "weird spacing
+    // anomalies", worst on Caret style.
+    expect(ruleBody('.tile {')).toMatch(/justify-content:\s*flex-start/);
+    expect(ruleBody('.tile__body {')).not.toMatch(/margin-top:\s*auto/);
+  });
+
   it('keeps the container queries below the rules they override', () => {
     // Container queries carry no specificity bump, so they win by source order
     // alone. Hoisting this block above the base rules silently breaks reflow.
