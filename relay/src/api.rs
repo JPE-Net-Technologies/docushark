@@ -2693,6 +2693,31 @@ pub(crate) fn ingest_url_ok(url: &reqwest::Url, allow: &[String]) -> bool {
     }
 }
 
+/// The `Authorization` value to forward to the blob source, if any.
+///
+/// An empty or whitespace-only value is not a credential, and forwarding it as a
+/// header is actively harmful rather than merely useless. A presigned URL carries
+/// its authorization in the query string, and S3 rejects a request that *also*
+/// presents an `Authorization` header:
+///
+/// ```text
+/// 400 InvalidArgument — Only one auth mechanism allowed; only the X-Amz-Algorithm
+/// query parameter, Signature query string parameter or the Authorization header
+/// should be specified
+/// ```
+///
+/// A caller with a presigned URL correctly sends no credential — but the wire
+/// field is a plain `String`, so "none" arrives as `""`, and this function's
+/// caller wrapped it in `Some(...)` regardless. Every ingest of a presigned URL
+/// therefore failed from the day it shipped (JP-493).
+///
+/// Non-empty values pass through untouched: sources that are *not* presigned
+/// genuinely need the header, so this must stay a blank filter and never become
+/// an unconditional drop.
+fn ingest_auth_header(authorization: Option<&str>) -> Option<&str> {
+    authorization.filter(|s| !s.trim().is_empty())
+}
+
 /// Identity of a blob persisted by the shared write core (JP-430 E3): the
 /// content hash, authoritative size, and the mime recorded in the index.
 pub(crate) struct StoredBlob {
@@ -2816,8 +2841,12 @@ pub(crate) async fn ingest_blob_from_url(
         return Err(BlobWriteError::UrlNotAllowed);
     }
 
+    // Captured before `url` is moved into the request, so the rejection log below
+    // can name the host without re-parsing.
+    let host_for_log = url.host_str().unwrap_or("?").to_string();
+
     let mut req = http.get(url);
-    if let Some(auth) = authorization {
+    if let Some(auth) = ingest_auth_header(authorization) {
         req = req.header(reqwest::header::AUTHORIZATION, auth);
     }
     let mut resp = match req.send().await {
@@ -2828,6 +2857,15 @@ pub(crate) async fn ingest_blob_from_url(
         }
     };
     if !resp.status().is_success() {
+        // Log parity with the transport-error arm above, which had it from the
+        // start. An upstream *rejection* left no trace at all: the 502 showed up
+        // in metrics with no matching line, so the natural read was "the proxy is
+        // broken" while S3 was in fact answering 400 every time (JP-493).
+        log::info!(
+            "ingest source rejected for ws {}: {host_for_log} returned {}",
+            ws.as_str(),
+            resp.status()
+        );
         return Err(BlobWriteError::Fetch(format!(
             "source returned {}",
             resp.status()
@@ -3012,6 +3050,23 @@ mod tests {
         assert!(!ingest_host_allowed("notexample.net", &allow)); // not a dot-boundary
         assert!(!ingest_host_allowed("", &allow));
         assert!(!ingest_host_allowed("api.example.com", &[])); // empty allowlist = nothing
+    }
+
+    #[test]
+    fn ingest_auth_header_treats_blank_as_absent() {
+        // The whole point: a blank credential must not become a header. Sending
+        // one to a presigned URL is a 400 from S3, not a no-op, so "harmless
+        // extra header" is exactly the wrong intuition here (JP-493).
+        assert_eq!(ingest_auth_header(None), None);
+        assert_eq!(ingest_auth_header(Some("")), None);
+        assert_eq!(ingest_auth_header(Some("   ")), None);
+        assert_eq!(ingest_auth_header(Some("\t\n")), None);
+
+        // ...and a real credential still goes through untouched, including its
+        // surrounding whitespace: this filters blank values, it does not trim
+        // values it keeps. Sources that are not presigned depend on this.
+        assert_eq!(ingest_auth_header(Some("Bearer abc")), Some("Bearer abc"));
+        assert_eq!(ingest_auth_header(Some(" Bearer abc ")), Some(" Bearer abc "));
     }
 
     #[test]
