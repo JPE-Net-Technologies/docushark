@@ -396,14 +396,14 @@ describe('Session Store', () => {
   describe('file viewing', () => {
     it('starts with no file being viewed', () => {
       const state = useSessionStore.getState();
-      expect(state.viewingFileShapeId).toBeNull();
+      expect(state.viewingFile).toBeNull();
       expect(state.isViewingFile()).toBe(false);
     });
 
     it('opens file viewer', () => {
       useSessionStore.getState().openFileViewer('file-shape-1');
       const state = useSessionStore.getState();
-      expect(state.viewingFileShapeId).toBe('file-shape-1');
+      expect(state.viewingFile).toEqual({ source: 'shape', shapeId: 'file-shape-1' });
       expect(state.isViewingFile()).toBe(true);
     });
 
@@ -411,16 +411,44 @@ describe('Session Store', () => {
       useSessionStore.getState().openFileViewer('file-shape-1');
       useSessionStore.getState().closeFileViewer();
       const state = useSessionStore.getState();
-      expect(state.viewingFileShapeId).toBeNull();
+      expect(state.viewingFile).toBeNull();
       expect(state.isViewingFile()).toBe(false);
+    });
+
+    it('opens a file that has no shape (a prose chip)', () => {
+      // The whole point of the union: prose describes its file inline because
+      // there is no shape to look up.
+      const descriptor = {
+        blobRef: 'a'.repeat(64),
+        fileName: 'notes.pdf',
+        mimeType: 'application/pdf',
+        fileSize: 20,
+        fileCategory: 'pdf' as const,
+      };
+      useSessionStore.getState().openFileViewerFor(descriptor);
+      expect(useSessionStore.getState().viewingFile).toEqual({ source: 'prose', descriptor });
+      expect(useSessionStore.getState().isViewingFile()).toBe(true);
+    });
+
+    it('a prose file closes the same way a shape does', () => {
+      useSessionStore.getState().openFileViewerFor({
+        blobRef: 'b'.repeat(64),
+        fileName: 'x.txt',
+        mimeType: 'text/plain',
+        fileSize: 1,
+        fileCategory: 'text',
+      });
+      useSessionStore.getState().closeFileViewer();
+      expect(useSessionStore.getState().viewingFile).toBeNull();
+      expect(useSessionStore.getState().isViewingFile()).toBe(false);
     });
 
     it('can switch between different files', () => {
       useSessionStore.getState().openFileViewer('file-1');
-      expect(useSessionStore.getState().viewingFileShapeId).toBe('file-1');
+      expect(useSessionStore.getState().viewingFile).toEqual({ source: 'shape', shapeId: 'file-1' });
 
       useSessionStore.getState().openFileViewer('file-2');
-      expect(useSessionStore.getState().viewingFileShapeId).toBe('file-2');
+      expect(useSessionStore.getState().viewingFile).toEqual({ source: 'shape', shapeId: 'file-2' });
     });
   });
 

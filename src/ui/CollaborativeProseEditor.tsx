@@ -32,6 +32,7 @@ import type { Doc as YDoc } from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AnyExtension } from '@tiptap/core';
 import { sharedProseExtensions } from './TiptapEditor';
+import { handleProseFileDrop } from '../tiptap/proseDropGuard';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore, usePageMirror } from '../store/richTextPagesStore';
@@ -120,6 +121,9 @@ export function CollaborativeProseEditor({
         attributes: { class: 'tiptap-prose' },
         // Paste a bare DOI → resolve + add to the library + insert a citation.
         handlePaste: (view, event) => handleCitationDoiPaste(view, event),
+        // Same file-drop guard as the non-collab editor — the browser default
+        // would navigate away and lose unsaved state (JP-495).
+        handleDrop: (view, event) => handleProseFileDrop(view, event as DragEvent),
       },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON();

@@ -51,6 +51,7 @@ import { Callout } from '../tiptap/CalloutExtension';
 import { CodeBlock } from '../tiptap/CodeBlockExtension';
 import { Figure, Figcaption } from '../tiptap/FigureExtension';
 import { Gallery } from '../tiptap/GalleryExtension';
+import { handleProseFileDrop } from '../tiptap/proseDropGuard';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
@@ -339,6 +340,9 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       },
       // Paste a bare DOI → resolve + add to the library + insert a citation.
       handlePaste: (view, event) => handleCitationDoiPaste(view, event),
+      // Swallow file drops — the browser's default is to navigate away to the
+      // dropped file, discarding unsaved editor state (JP-495).
+      handleDrop: (view, event) => handleProseFileDrop(view, event as DragEvent),
     },
   });
 

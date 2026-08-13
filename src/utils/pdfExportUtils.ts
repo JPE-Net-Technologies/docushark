@@ -18,6 +18,7 @@ import {
   getPageDimensions,
 } from '../types/PDFExport';
 import { blobStorage } from '../storage/BlobStorage';
+import { formatFileSize } from './byteSize';
 import { exportToPng, type ExportData } from './exportUtils';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape, type Shape, type ConnectorShape } from '../shapes/Shape';
@@ -1467,6 +1468,19 @@ export function extractSegments(node: JSONContent): TextSegment[] {
           color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
         });
       }
+    } else if (child.type === 'fileRef') {
+      // Inline file chip (JP-495). A PDF can't carry the attachment, but it must
+      // not silently drop the fact that one is referenced — a reader of the
+      // export would have no idea a file was ever there. Name + size is the
+      // honest static rendering, matching how the other inline atoms degrade.
+      const name = (child.attrs?.['fileName'] as string | undefined) || 'Attachment';
+      const rawSize = Number(child.attrs?.['fileSize'] ?? 0);
+      const size = Number.isFinite(rawSize) && rawSize > 0 ? ` (${formatFileSize(rawSize)})` : '';
+      segments.push({
+        text: `${name}${size}`,
+        bold: false, italic: true, underline: false, strike: false, code: false,
+        color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
+      });
     }
     // Skip other non-text inline nodes (mathInline handled separately at block level)
   }
@@ -2164,7 +2178,15 @@ function extractSegmentsDeep(node: JSONContent): TextSegment[] {
   // If this node has inline text (or inline citation / field) children directly, extract them
   if (
     node.content &&
-    node.content.some((c) => c.type === 'text' || c.type === 'citationInline' || c.type === 'fieldRef')
+    node.content.some(
+      (c) =>
+        c.type === 'text' ||
+        c.type === 'citationInline' ||
+        c.type === 'fieldRef' ||
+        // A paragraph holding ONLY a file chip still has content to render;
+        // without this it is treated as empty and skipped entirely.
+        c.type === 'fileRef',
+    )
   ) {
     return extractSegments(node);
   }

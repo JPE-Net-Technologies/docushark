@@ -25,7 +25,7 @@ import { formatFileSize } from '../utils/byteSize';
 import { downloadBlob } from '../utils/downloadUtils';
 import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { Icon } from './icons';
-import { replaceFileContents, reuploadMissingBlob } from '../services/FileReplaceService';
+import type { FileDescriptor } from './fileDescriptor';
 import { citePdf, citeDoi, citeMinimal, type CitePdfStatus } from '../services/citations/citePdf';
 import { useNotificationStore } from '../store/notificationStore';
 import './FileViewerModal.css';
@@ -47,7 +47,8 @@ export function useFileShape(shapeId: string): FileShape | null {
 }
 
 export interface FileViewerContentProps {
-  shapeId: string;
+  /** What to show. Hosts build this; see `fileDescriptor.ts`. */
+  descriptor: FileDescriptor;
   onClose: () => void;
   /** Host-owned immersive reading mode (PDF only). */
   immersive?: boolean | undefined;
@@ -62,7 +63,7 @@ export interface FileViewerContentProps {
 }
 
 export function FileViewerContent({
-  shapeId,
+  descriptor,
   onClose,
   immersive,
   onImmersiveChange,
@@ -70,7 +71,6 @@ export function FileViewerContent({
   headerExtras,
   headerPointerDown,
 }: FileViewerContentProps) {
-  const fileShape = useFileShape(shapeId);
 
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,8 +86,8 @@ export function FileViewerContent({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recoveryInputRef = useRef<HTMLInputElement>(null);
 
-  const blobRef = fileShape?.blobRef;
-  const fileName = fileShape?.fileName ?? '';
+  const blobRef = descriptor.blobRef;
+  const fileName = descriptor.fileName ?? '';
 
   // Load blob on mount. resolveBlobObjectUrl checks the shared object-URL cache,
   // then local IndexedDB, then downloads from the relay/R2 on a miss — so a file
@@ -157,8 +157,8 @@ export function FileViewerContent({
 
       setIsReplacing(true);
       try {
-        const result = await replaceFileContents(shapeId, file);
-        if (result.success) {
+        const replaced = await descriptor.onReplace?.(file);
+        if (replaced) {
           // Trigger reload. The old object URL is owned by the resolver cache
           // (content-addressed, reclaimed on doc switch) — don't revoke it here.
           // The new blobRef makes the load effect re-resolve the replacement.
@@ -174,7 +174,7 @@ export function FileViewerContent({
         }
       }
     },
-    [shapeId]
+    [descriptor]
   );
 
   // Recovery: re-upload missing blob
@@ -189,8 +189,8 @@ export function FileViewerContent({
 
       setIsReplacing(true);
       try {
-        const result = await reuploadMissingBlob(shapeId, file);
-        if (result.success) {
+        const recovered = await descriptor.onRecover?.(file);
+        if (recovered) {
           setIsMissingBlob(false);
           setError(null);
           setLoading(true);
@@ -202,7 +202,7 @@ export function FileViewerContent({
         }
       }
     },
-    [shapeId]
+    [descriptor]
   );
 
   // Cite this PDF: auto-detect the DOI, resolve, import. No DOI → popover.
@@ -272,12 +272,12 @@ export function FileViewerContent({
     }
   }, [blobRef]);
 
-  if (!fileShape) {
+  if (!descriptor) {
     return null;
   }
 
-  const displayName = fileShape.label || fileShape.fileName;
-  const FileIcon = getFileTypeLucideIcon(fileShape.fileCategory);
+  const displayName = descriptor.label || descriptor.fileName;
+  const FileIcon = getFileTypeLucideIcon(descriptor.fileCategory);
 
   return (
     <div className="file-viewer-content">
@@ -289,19 +289,19 @@ export function FileViewerContent({
       >
         <div className="file-viewer-header-info">
           <span className="file-viewer-icon"><Icon icon={FileIcon} size={18} /></span>
-          <span className="file-viewer-filename" title={fileShape.fileName}>
+          <span className="file-viewer-filename" title={descriptor.fileName}>
             {displayName}
           </span>
           <span className="file-viewer-meta">
-            {formatFileSize(fileShape.fileSize)}
+            {formatFileSize(descriptor.fileSize)}
           </span>
           <span className="file-viewer-meta file-viewer-mime">
-            {fileShape.mimeType}
+            {descriptor.mimeType}
           </span>
         </div>
         <div className="file-viewer-header-actions">
           {headerExtras}
-          {resolveViewerCategory(fileShape.fileCategory, fileShape.mimeType) === 'pdf' && (
+          {resolveViewerCategory(descriptor.fileCategory, descriptor.mimeType) === 'pdf' && (
             <button
               className="file-viewer-action-btn"
               onClick={handleCite}
@@ -320,6 +320,7 @@ export function FileViewerContent({
           >
             <Icon icon={Info} size={14} />
           </button>
+          {descriptor.onReplace && (
           <button
             className="file-viewer-action-btn"
             onClick={handleReplaceClick}
@@ -335,6 +336,7 @@ export function FileViewerContent({
               </>
             )}
           </button>
+          )}
           <button
             className="file-viewer-action-btn"
             onClick={handleDownload}
@@ -413,20 +415,20 @@ export function FileViewerContent({
         <div className="file-viewer-info" role="dialog" aria-label="File info">
           <dl className="file-viewer-info-grid">
             <dt>Name</dt>
-            <dd title={fileShape.fileName}>{fileShape.fileName}</dd>
+            <dd title={descriptor.fileName}>{descriptor.fileName}</dd>
             <dt>Size</dt>
-            <dd>{formatFileSize(fileShape.fileSize)}</dd>
+            <dd>{formatFileSize(descriptor.fileSize)}</dd>
             <dt>Type</dt>
-            <dd>{fileShape.mimeType}</dd>
-            {fileShape.preview?.pageCount !== undefined && (
+            <dd>{descriptor.mimeType}</dd>
+            {descriptor.preview?.pageCount !== undefined && (
               <>
                 <dt>Pages</dt>
-                <dd>{fileShape.preview.pageCount}</dd>
+                <dd>{descriptor.preview.pageCount}</dd>
               </>
             )}
             <dt>Checksum</dt>
             <dd className="file-viewer-info-hash">
-              <code title={fileShape.blobRef}>{fileShape.blobRef.slice(0, 12)}…</code>
+              <code title={descriptor.blobRef}>{descriptor.blobRef.slice(0, 12)}…</code>
               <button
                 className="file-viewer-info-copy"
                 onClick={handleCopyHash}
@@ -461,16 +463,19 @@ export function FileViewerContent({
             <span className="file-viewer-recovery-icon"><Icon icon={FolderOpen} size={28} /></span>
             <span className="file-viewer-recovery-title">File Not Found</span>
             <p className="file-viewer-recovery-message">
-              The file content is missing from local storage.
-              Re-upload the original file to restore it.
+              {descriptor.onRecover
+                ? 'The file content is missing from local storage. Re-upload the original file to restore it.'
+                : 'The file content is missing from local storage.'}
             </p>
-            <button
-              className="file-viewer-recovery-btn"
-              onClick={handleRecoveryClick}
-              disabled={isReplacing}
-            >
-              {isReplacing ? 'Uploading...' : 'Re-upload File'}
-            </button>
+            {descriptor.onRecover && (
+              <button
+                className="file-viewer-recovery-btn"
+                onClick={handleRecoveryClick}
+                disabled={isReplacing}
+              >
+                {isReplacing ? 'Uploading...' : 'Re-upload File'}
+              </button>
+            )}
           </div>
         )}
         {!loading && !error && blobUrl && (
@@ -482,7 +487,7 @@ export function FileViewerContent({
               </div>
             }
           >
-            {renderViewer(fileShape, blobUrl, immersive === true, onImmersiveChange)}
+            {renderViewer(descriptor, blobUrl, immersive === true, onImmersiveChange)}
           </Suspense>
         )}
       </div>
@@ -491,7 +496,7 @@ export function FileViewerContent({
 }
 
 function renderViewer(
-  shape: FileShape,
+  shape: FileDescriptor,
   blobUrl: string,
   immersive: boolean,
   onImmersiveChange: ((immersive: boolean) => void) | undefined,
@@ -504,7 +509,7 @@ function renderViewer(
         <PdfViewer
           blobUrl={blobUrl}
           fileName={shape.fileName}
-          shapeId={shape.id}
+          shapeId={shape.sourceId}
           blobHash={shape.blobRef}
           immersive={immersive}
           onImmersiveChange={onImmersiveChange}

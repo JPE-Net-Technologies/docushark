@@ -587,9 +587,9 @@
 .tiptap-editor .ProseMirror .file-ref {
   display: inline-flex;
   align-items: baseline;
-  gap: 0.35em;
+  gap: 0.3em;
   max-width: 100%;
-  padding: 0.05em 0.45em;
+  padding: 0.05em 0.2em 0.05em 0.45em;
   border: 1px solid var(--border-color);
   /* --radius-full is 50% (an ellipse on a non-square box) — a pill needs the
      999px token. See the radius-full-is-ellipse note. */
@@ -605,9 +605,12 @@
   background-color: var(--bg-tertiary);
 }
 
+.tiptap-editor .ProseMirror .file-ref:focus-visible {
+  outline: 2px solid var(--accent-color, currentColor);
+  outline-offset: 1px;
+}
+
 .tiptap-editor .ProseMirror .file-ref .file-ref-icon {
-  width: 1em;
-  height: 1em;
   flex: 0 0 auto;
   /* Nudge the icon onto the text baseline rather than the box baseline. */
   transform: translateY(0.15em);
@@ -615,9 +618,9 @@
 
 .tiptap-editor .ProseMirror .file-ref .file-ref-name {
   overflow: hidden;
+  /* The name is middle-truncated in JS so the extension survives; this is only
+     a backstop for a container narrower than the budget. */
   text-overflow: ellipsis;
-  /* Shrink the NAME, never the size badge — a truncated size reads as wrong
-     data, whereas a truncated filename reads as truncated. */
   min-width: 0;
 }
 
@@ -626,6 +629,55 @@
   color: var(--text-muted, var(--text-secondary));
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
+}
+
+/* Download rides along inside the chip: revealed on hover/focus so the common
+   case (get the file) doesn't require opening the viewer first. Space is
+   reserved either way, so revealing it never reflows the line. */
+.tiptap-editor .ProseMirror .file-ref .file-ref-download {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  transform: translateY(0.1em);
+}
+
+.tiptap-editor .ProseMirror .file-ref:hover .file-ref-download,
+.tiptap-editor .ProseMirror .file-ref:focus-visible .file-ref-download,
+.tiptap-editor .ProseMirror .file-ref .file-ref-download:focus-visible {
+  opacity: 0.75;
+}
+
+.tiptap-editor .ProseMirror .file-ref .file-ref-download:hover {
+  opacity: 1;
+  background: var(--bg-primary);
+}
+
+/* Unavailable: the bytes aren't here, so the chip must not look clickable in
+   the same way. Same vocabulary as `.field-ref-unset` — muted + dashed — so the
+   inline atoms read as one system. */
+.tiptap-editor .ProseMirror .file-ref.file-ref-missing {
+  color: var(--text-secondary, rgba(127, 127, 127, 0.9));
+  background-color: transparent;
+  border-style: dashed;
+}
+
+.tiptap-editor .ProseMirror .file-ref.file-ref-busy {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tiptap-editor .ProseMirror .file-ref,
+  .tiptap-editor .ProseMirror .file-ref .file-ref-download {
+    transition: background-color 0.12s ease, opacity 0.12s ease;
+  }
 }
 
 .tiptap-editor .ProseMirror .bibliography-block {

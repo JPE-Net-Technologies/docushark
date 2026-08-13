@@ -37,6 +37,7 @@ import { useActiveDocReadOnly } from '../store/documentRegistry';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { ImageUploadButton } from './ImageUploadButton';
+import { FileUploadButton } from './FileUploadButton';
 import { GalleryUploadButton } from './GalleryUploadButton';
 import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
@@ -525,6 +526,7 @@ export function DocumentEditorToolbar() {
             {/* Media */}
             <div className="document-editor-toolbar-group">
               <ImageUploadButton className="document-editor-toolbar-btn" />
+              <FileUploadButton className="document-editor-toolbar-btn" />
               <GalleryUploadButton className="document-editor-toolbar-btn" />
               <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule" aria-label="Horizontal rule">
                 <Minus {...ICON} />
