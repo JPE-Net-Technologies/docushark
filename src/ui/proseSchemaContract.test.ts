@@ -38,12 +38,15 @@ const RELAY_NODES = new Set<string>([
   'mathBlock', 'callout', 'figure', 'figcaption', 'gallery',
   // JP-432
   'taskList', 'taskItem', 'embeddedGroup',
+  // JP-495: the inline file chip.
+  'fileRef',
 ]);
 
 /** Relay-emitted nodes built childless — the client MUST treat these as atoms. */
 const RELAY_ATOMS = new Set<string>([
   'image', 'citationInline', 'fieldRef', 'mathInline', 'mathBlock',
   'horizontalRule', 'bibliography', 'hardBreak', 'embeddedGroup',
+  'fileRef',
 ]);
 
 /** Every inline mark the relay round-trips (prose_schema.rs MARKS + link). */
@@ -70,6 +73,9 @@ const RELAY_ATTRS: Record<string, Set<string>> = {
   codeBlock: new Set(['language', 'id']),
   image: new Set(['src', 'alt', 'title', 'width', 'height', 'float']),
   taskItem: new Set(['checked']),
+  // JP-495: `blobRef` holds the `blob://<hash>` URI form, not a bare hash, so
+  // the reference walk can find it inside the serialized HTML string.
+  fileRef: new Set(['blobRef', 'fileName', 'mimeType', 'fileSize']),
   embeddedGroup: new Set(['groupId', 'groupName']),
   callout: new Set(['variant']),
   gallery: new Set(['layout']),

@@ -581,6 +581,53 @@
   border: 1px dashed var(--border-color);
 }
 
+/* Inline file chip (JP-495): an attached file referenced from prose. Sized in
+   `em` so it tracks the surrounding text — a chip must sit on a line of body
+   copy and inside a table cell without changing the line height. */
+.tiptap-editor .ProseMirror .file-ref {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+  max-width: 100%;
+  padding: 0.05em 0.45em;
+  border: 1px solid var(--border-color);
+  /* --radius-full is 50% (an ellipse on a non-square box) — a pill needs the
+     999px token. See the radius-full-is-ellipse note. */
+  border-radius: var(--radius-pill, 999px);
+  background-color: var(--bg-secondary);
+  cursor: pointer;
+  /* The chip is one object: never break the name away from its icon. */
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.tiptap-editor .ProseMirror .file-ref:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.tiptap-editor .ProseMirror .file-ref .file-ref-icon {
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  /* Nudge the icon onto the text baseline rather than the box baseline. */
+  transform: translateY(0.15em);
+}
+
+.tiptap-editor .ProseMirror .file-ref .file-ref-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Shrink the NAME, never the size badge — a truncated size reads as wrong
+     data, whereas a truncated filename reads as truncated. */
+  min-width: 0;
+}
+
+.tiptap-editor .ProseMirror .file-ref .file-ref-size {
+  flex: 0 0 auto;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
 .tiptap-editor .ProseMirror .bibliography-block {
   margin: 1.5rem 0;
   padding: 1rem;

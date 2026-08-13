@@ -2592,6 +2592,75 @@ mod tests {
     }
 
     #[test]
+    fn jp495_file_ref_survives_the_flatten_round_trip() {
+        // The JP-432 failure mode is a node that PARSES but doesn't survive
+        // reserialize — it vanishes on the next flatten, taking the only
+        // reference to its blob with it. Byte-identical is the bar.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        let html = concat!(
+            r#"<p><span data-file-ref data-blob-ref="blob://"#,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            r#"" data-file-name="notes.pdf" data-mime-type="application/pdf" data-file-size="12345">notes.pdf</span></p>"#
+        );
+        handle.replace_prose("p1", html).unwrap();
+        assert_eq!(handle.prose_html("p1").as_deref(), Some(html));
+    }
+
+    #[test]
+    fn jp495_file_ref_keeps_its_blob_discoverable_by_the_reference_walk() {
+        // The point of the URI form (JP-494): a chip's blob must be visible to
+        // refcounting and the publish manifest. A bare hash in the attribute
+        // would be invisible, and nothing would fail loudly — the bytes would
+        // just be swept later.
+        let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        handle
+            .replace_prose(
+                "p1",
+                &format!(
+                    r#"<p><span data-file-ref data-blob-ref="blob://{hash}" data-file-name="a.zip">a.zip</span></p>"#
+                ),
+            )
+            .unwrap();
+        let mut body = empty_json_body(1);
+        handle.flatten_into(&mut body);
+        let refs = crate::api::collect_blob_references(&body);
+        assert!(refs.contains(&hash.to_string()), "chip blob not found by the walk: {refs:?}");
+    }
+
+    #[test]
+    fn jp495_file_ref_spacing_is_preserved_mid_sentence() {
+        // Inline atoms are whitespace-sensitive: missing the run-membership or
+        // whitespace rules shows up as a swallowed or doubled space around the
+        // chip, which no schema test would catch.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        let html = concat!(
+            r#"<p>see <span data-file-ref data-blob-ref="blob://"#,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            r#"" data-file-name="spec.pdf">spec.pdf</span> for details</p>"#
+        );
+        handle.replace_prose("p1", html).unwrap();
+        assert_eq!(handle.prose_html("p1").as_deref(), Some(html));
+    }
+
+    #[test]
+    fn jp495_file_ref_survives_inside_a_table_cell() {
+        // The reason the node is inline rather than block (user's call): a block
+        // node cannot live in a cell. This is the case that regressed for
+        // fieldRef when the atom was missing from the inline-run list.
+        let handle = DocHandle::hydrate(&empty_json_body(1), None, false);
+        let html = concat!(
+            // No `<tbody>`: the relay normalizes it away, so writing it here
+            // would test that normalization rather than the chip.
+            r#"<table><tr><td><p><span data-file-ref data-blob-ref="blob://"#,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            r#"" data-file-name="q3.xlsx">q3.xlsx</span></p></td></tr></table>"#
+        );
+        handle.replace_prose("p1", html).unwrap();
+        assert_eq!(handle.prose_html("p1").as_deref(), Some(html));
+    }
+
+    #[test]
     fn jp328_validate_prose_html_reports_a_diff_for_malformed_input() {
         // `validate_prose_html` is what the MCP set_prose/add_prose_page tools
         // call to surface the `fixes` diff to the author. Clean HTML reports no

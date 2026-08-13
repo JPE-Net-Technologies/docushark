@@ -528,7 +528,10 @@ fn is_inline_member(n: &HtmlNode) -> bool {
                 || tag == "br"
                 || matches!(
                     prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)),
-                    Some("fieldRef") | Some("citationInline") | Some("mathInline")
+                    Some("fieldRef")
+                        | Some("citationInline")
+                        | Some("mathInline")
+                        | Some("fileRef")
                 )
         }
     }
@@ -624,6 +627,33 @@ fn field_node(attrs: &[(String, String)]) -> PmNode {
         a.push(("label".to_string(), label.to_string()));
     }
     PmNode { node_type: "fieldRef".to_string(), attrs: a, children: vec![] }
+}
+
+/// Build a `fileRef` PM node from a `<span data-file-ref …>` element (JP-495).
+/// Caller guarantees `data-blob-ref` is non-empty. Only non-empty optional
+/// attributes are emitted, symmetric with the editor's `renderHTML`
+/// (`src/tiptap/FileRefExtension.ts`) — an attr the editor omits must not come
+/// back as an empty string, or a flatten would rewrite the node every time.
+///
+/// `blobRef` keeps its `blob://<hash>` URI form deliberately: the reference walk
+/// only recognizes that grammar inside a string, so storing a bare hash here
+/// would make the blob invisible to refcounting and the publish manifest
+/// (JP-494). It's an atom — no children.
+fn file_ref_node(attrs: &[(String, String)]) -> PmNode {
+    let mut a = vec![(
+        "blobRef".to_string(),
+        get_attr(attrs, "data-blob-ref").unwrap_or("").to_string(),
+    )];
+    for (data_attr, pm_attr) in [
+        ("data-file-name", "fileName"),
+        ("data-mime-type", "mimeType"),
+        ("data-file-size", "fileSize"),
+    ] {
+        if let Some(v) = get_attr(attrs, data_attr).filter(|s| !s.is_empty()) {
+            a.push((pm_attr.to_string(), v.to_string()));
+        }
+    }
+    PmNode { node_type: "fileRef".to_string(), attrs: a, children: vec![] }
 }
 
 /// Build a `mathInline` PM node from a `<span data-math-inline data-latex=…>`
@@ -912,6 +942,17 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // — a nameless field reference is useless, so fall through to
                     // the unwrap below and keep the text instead.
                     out.push(PmChild::Node(field_node(attrs)));
+                } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
+                    == Some("fileRef")
+                    && get_attr(attrs, "data-blob-ref")
+                        .filter(|s| !s.is_empty())
+                        .is_some()
+                {
+                    // Inline file atom (JP-495). Require a non-empty
+                    // `data-blob-ref` — a chip with no blob addresses nothing, so
+                    // fall through to the unwrap below and keep its text (the
+                    // filename) instead.
+                    out.push(PmChild::Node(file_ref_node(attrs)));
                 } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
                     == Some("mathInline")
                     && has_attr(attrs, "data-latex")
