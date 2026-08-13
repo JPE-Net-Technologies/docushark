@@ -5,10 +5,6 @@ import { TextEditor } from './TextEditor';
 import { ContextMenu } from './ContextMenu';
 import { ExportDialog } from './ExportDialog';
 import { SaveToLibraryDialog } from './SaveToLibraryDialog';
-import { FileViewerModal } from './FileViewerModal';
-import { FloatingFileViewer } from './FloatingFileViewer';
-import { resolveViewerMode } from './fileViewerMode';
-import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { CollaborativeCursors } from './CollaborativeCursors';
 import { SelectionHighlight } from './SelectionHighlight';
 import { Minimap } from './Minimap';
@@ -94,12 +90,6 @@ export function CanvasContainer({
 
   // Save to library dialog state
   const [saveToLibraryOpen, setSaveToLibraryOpen] = useState(false);
-
-  // File viewer state
-  const viewingFileShapeId = useSessionStore((state) => state.viewingFileShapeId);
-  const closeFileViewer = useSessionStore((state) => state.closeFileViewer);
-  const fileViewerMode = useSessionStore((state) => state.fileViewerMode);
-  const { mobileActive } = useMobileAdaptation();
 
   // Let non-canvas UI (file viewer "send page to canvas") import at the
   // viewport center while this canvas is mounted.
@@ -635,18 +625,6 @@ export function CanvasContainer({
         isOpen={saveToLibraryOpen}
         onClose={handleCloseSaveToLibrary}
       />
-      {viewingFileShapeId &&
-        (resolveViewerMode(fileViewerMode, mobileActive) === 'floating' ? (
-          <FloatingFileViewer
-            shapeId={viewingFileShapeId}
-            onClose={closeFileViewer}
-          />
-        ) : (
-          <FileViewerModal
-            shapeId={viewingFileShapeId}
-            onClose={closeFileViewer}
-          />
-        ))}
     </div>
   );
 }

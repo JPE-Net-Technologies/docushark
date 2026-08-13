@@ -19,21 +19,36 @@
  */
 
 import { Node, mergeAttributes } from '@tiptap/core';
+import { ReactNodeViewRenderer } from '@tiptap/react';
 
-import { detectFileCategory } from '../utils/fileUtils';
-import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
-import { formatFileSize } from '../utils/byteSize';
+import { FileRefChip } from '../ui/FileRefChip';
 
 export interface FileRefOptions {
   HTMLAttributes: Record<string, unknown>;
 }
 
-/** The `blob://` URI form the attribute must carry. */
-const BLOB_PREFIX = 'blob://';
+/**
+ * What a chip stores. `blobRef` is the **`blob://<hash>` URI form**, never a
+ * bare hash — the attribute lives inside an HTML string, and only that grammar
+ * is discoverable by the blob reference walk (JP-494). `fileSize` is a string
+ * because it arrives as an HTML attribute and the relay stores PM attrs as
+ * strings; parsing it here would make an editor-written node differ from a
+ * relay-written one on every flatten.
+ */
+export interface FileRefAttrs {
+  blobRef: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: string;
+}
 
-/** Strip the URI form down to the bare hash, for callers that resolve bytes. */
-export function fileRefHash(blobRef: string): string {
-  return blobRef.startsWith(BLOB_PREFIX) ? blobRef.slice(BLOB_PREFIX.length) : blobRef;
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    fileRef: {
+      /** Insert an inline file chip at the current selection. */
+      insertFileRef: (attrs: FileRefAttrs) => ReturnType;
+    };
+  }
 }
 
 /**
@@ -107,45 +122,23 @@ export const FileRef = Node.create<FileRefOptions>({
   },
 
   addNodeView() {
-    return ({ node }) => {
-      const fileName = (node.attrs['fileName'] as string) ?? '';
-      const mimeType = (node.attrs['mimeType'] as string) ?? '';
-      const rawSize = (node.attrs['fileSize'] as string) ?? '';
+    return ReactNodeViewRenderer(FileRefChip);
+  },
 
-      const dom = document.createElement('span');
-      dom.setAttribute('data-file-ref', '');
-      dom.className = 'file-ref';
-      dom.contentEditable = 'false';
-      dom.title = fileName;
-
-      // Derived, never persisted — see the module note.
-      const category = detectFileCategory(mimeType, fileName);
-      const Icon = getFileTypeLucideIcon(category);
-
-      // lucide-react components are React elements; the chip is plain DOM, so
-      // render the icon's SVG shell directly and let CSS size it. Keeping the
-      // node view DOM-only avoids mounting a React root per chip in a document
-      // that may hold many.
-      const iconEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      iconEl.setAttribute('class', 'file-ref-icon');
-      iconEl.setAttribute('aria-hidden', 'true');
-      iconEl.dataset['icon'] = (Icon as { displayName?: string }).displayName ?? category;
-      dom.appendChild(iconEl);
-
-      const label = document.createElement('span');
-      label.className = 'file-ref-name';
-      label.textContent = fileName || 'Attachment';
-      dom.appendChild(label);
-
-      const size = Number(rawSize);
-      if (Number.isFinite(size) && size > 0) {
-        const sizeEl = document.createElement('span');
-        sizeEl.className = 'file-ref-size';
-        sizeEl.textContent = formatFileSize(size);
-        dom.appendChild(sizeEl);
-      }
-
-      return { dom };
+  addCommands() {
+    return {
+      /**
+       * Insert a file chip at the selection. One transaction, so undo removes
+       * the chip in a single step.
+       */
+      insertFileRef:
+        (attrs: FileRefAttrs) =>
+        ({ commands }) => {
+          // `insertContent` leaves the caret AFTER the inserted node, which is
+          // what lets a writer keep typing mid-sentence — the whole reason this
+          // node is inline rather than a block.
+          return commands.insertContent({ type: this.name, attrs });
+        },
     };
   },
 });

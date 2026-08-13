@@ -9,21 +9,22 @@ import { PictureInPicture2 } from 'lucide-react';
 import { Icon } from './icons';
 import { useSessionStore } from '../store/sessionStore';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
-import { FileViewerContent, useFileShape } from './FileViewerContent';
+import { FileViewerContent } from './FileViewerContent';
+import type { FileDescriptor } from './fileDescriptor';
 import './FileViewerModal.css';
 
 export interface FileViewerModalProps {
-  shapeId: string;
+  descriptor: FileDescriptor;
   onClose: () => void;
 }
 
-export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
+export function FileViewerModal({ descriptor, onClose }: FileViewerModalProps) {
   // Immersive reading (PDF): the modal owns it because it's the modal's own
   // chrome (header, rounded frame) that collapses alongside the viewer's.
   const [immersive, setImmersive] = useState(false);
   const { mobileActive } = useMobileAdaptation();
   const setFileViewerMode = useSessionStore((s) => s.setFileViewerMode);
-  const fileShape = useFileShape(shapeId);
+
 
   // Escape: exit immersive first, close second. (The PDF reader's find bar
   // handles its own Escape and stops propagation before this window listener.)
@@ -49,7 +50,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
     [onClose]
   );
 
-  if (!fileShape) {
+  if (!descriptor) {
     return null;
   }
 
@@ -61,7 +62,7 @@ export function FileViewerModal({ shapeId, onClose }: FileViewerModalProps) {
     <div className={overlayClass} onClick={handleOverlayClick}>
       <div className="file-viewer-modal">
         <FileViewerContent
-          shapeId={shapeId}
+          descriptor={descriptor}
           onClose={onClose}
           immersive={immersive}
           onImmersiveChange={setImmersive}

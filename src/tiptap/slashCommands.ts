@@ -29,7 +29,7 @@ export interface SlashCommand {
 // ─── UI-flow seam (inserts whose UI lives in React) ──────────────────────────
 
 /** Inserts that open React UI rather than running a pure editor command. */
-export type SlashUiAction = 'image' | 'citation' | 'gallery' | 'field';
+export type SlashUiAction = 'image' | 'citation' | 'gallery' | 'field' | 'file';
 
 const uiHandlers = new Map<SlashUiAction, () => void>();
 
@@ -66,6 +66,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'table', title: 'Table', keywords: ['table', 'grid'], group: 'Insert', run: (e) => cmd.insertTable(e) },
   { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', run: (e) => cmd.setMathBlock(e, '') },
   { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', run: () => runUi('image') },
+  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', run: () => runUi('file') },
   { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', run: () => runUi('gallery') },
   { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', run: () => runUi('field') },
   { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', run: () => runUi('citation') },

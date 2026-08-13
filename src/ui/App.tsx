@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react'
 import './App.css';
 import './mobile/mobile.css';
 import { CanvasContainer } from './CanvasContainer';
+import { FileViewerHost } from './FileViewerHost';
 import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { NavigatorPanel } from './NavigatorPanel';
@@ -731,6 +732,11 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
       {/* Cloud sign-in / workspace management modal (portaled over any view) */}
       <CloudSignInHost />
       <AccessPanelHost />
+
+      {/* File viewer — app-level, not inside the canvas: a collapsed canvas is
+          `display: none`, and a prose chip is usually clicked with the canvas
+          hidden (Relaxed → Write). */}
+      <FileViewerHost />
     </div>
   );
 }

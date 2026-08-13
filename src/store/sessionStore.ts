@@ -3,6 +3,12 @@ import { useDocumentStore } from './documentStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import type { Shape } from '../shapes/Shape';
 import type { RelaxedFocus } from '../ui/layout/types';
+import type { FileDescriptor } from '../ui/fileDescriptor';
+
+/** What the file viewer is currently showing. */
+export type ViewedFile =
+  | { source: 'shape'; shapeId: string }
+  | { source: 'prose'; descriptor: FileDescriptor };
 
 /**
  * Core tool types that are always available.
@@ -125,8 +131,15 @@ export interface SessionState {
   hoveredId: string | null;
   /** ID of text shape currently being edited (null if not editing) */
   editingTextId: string | null;
-  /** ID of file shape currently being viewed in modal (null if not viewing) */
-  viewingFileShapeId: string | null;
+  /**
+   * The file currently open in the viewer, or null (JP-495).
+   *
+   * A discriminated union rather than a shape id: prose file chips have no
+   * shape, and a parallel `viewingProseFile` field would be a second source of
+   * truth for one exclusive piece of UI state. The canvas case stays an id so
+   * the viewer keeps tracking live edits to the shape.
+   */
+  viewingFile: ViewedFile | null;
   /**
    * How the file viewer hosts its content: full-screen modal or the floating
    * side panel. Sticky for the session — opening another file keeps the mode.
@@ -203,7 +216,10 @@ export interface SessionActions {
   isEditingText: () => boolean;
 
   // File viewing
+  /** Open a canvas file shape. */
   openFileViewer: (id: string) => void;
+  /** Open a file that isn't a shape — a prose chip describes itself. */
+  openFileViewerFor: (descriptor: FileDescriptor) => void;
   closeFileViewer: () => void;
   setFileViewerMode: (mode: 'modal' | 'floating') => void;
   isViewingFile: () => boolean;
@@ -294,7 +310,7 @@ const initialState: SessionState = {
   isInteracting: false,
   hoveredId: null,
   editingTextId: null,
-  viewingFileShapeId: null,
+  viewingFile: null,
   fileViewerMode: 'modal',
   snapSettings: { ...DEFAULT_SNAP_SETTINGS },
   snapGuides: {},
@@ -423,11 +439,15 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
 
   // File viewing
   openFileViewer: (id: string) => {
-    set({ viewingFileShapeId: id });
+    set({ viewingFile: { source: 'shape', shapeId: id } });
+  },
+
+  openFileViewerFor: (descriptor: FileDescriptor) => {
+    set({ viewingFile: { source: 'prose', descriptor } });
   },
 
   closeFileViewer: () => {
-    set({ viewingFileShapeId: null });
+    set({ viewingFile: null });
   },
 
   setFileViewerMode: (mode: 'modal' | 'floating') => {
@@ -435,7 +455,7 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
   },
 
   isViewingFile: (): boolean => {
-    return get().viewingFileShapeId !== null;
+    return get().viewingFile !== null;
   },
 
   // Snapping
