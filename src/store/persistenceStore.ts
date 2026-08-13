@@ -42,8 +42,7 @@ import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { isCollabContentDoc, ensureCollabSessionForDoc, useCollaborationStore } from '../collaboration';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
-import { collectBlobReferences } from '../storage/AssetBundler';
-import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
+import { collectBlobReferences, deriveBlobReferences } from '../storage/AssetBundler';
 import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
 import { VersionConflictError } from '../api/relayClient';
 import { resetFileThumbnailCaches } from '../shapes/FileShape';
@@ -903,10 +902,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           return;
         }
 
-        // Extract blob references from rich text content and shapes
-        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
-        const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
-        doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
+        // Recompute from live content (JP-494). Must DERIVE, not union in
+        // the old array, or a removed image/file could never release its blob.
+        doc.blobReferences = deriveBlobReferences(doc);
         const newBlobRefs = new Set(doc.blobReferences);
 
         // Track blob reference changes and update usage counts
@@ -968,10 +966,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           throw err;
         }
 
-        // Extract blob references from rich text content and shapes
-        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
-        const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
-        doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
+        // Recompute from live content (JP-494). Must DERIVE, not union in
+        // the old array, or a removed image/file could never release its blob.
+        doc.blobReferences = deriveBlobReferences(doc);
 
         // Save to localStorage
         saveDocumentToStorage(doc);
@@ -1266,10 +1263,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           throw err;
         }
 
-        // Extract blob references from rich text content and shapes
-        const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
-        const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
-        doc.blobReferences = [...richTextBlobs, ...shapeBlobs];
+        // Recompute from live content (JP-494). Must DERIVE, not union in
+        // the old array, or a removed image/file could never release its blob.
+        doc.blobReferences = deriveBlobReferences(doc);
 
         return JSON.stringify(doc, null, 2);
       },

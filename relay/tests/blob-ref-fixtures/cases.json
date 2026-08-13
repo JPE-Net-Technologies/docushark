@@ -1,0 +1,180 @@
+{
+  "comment": "Cross-language golden cases for blob-reference collection. See README.md.",
+  "cases": [
+    {
+      "name": "prose page HTML img src",
+      "why": "JP-494: RichTextPage.content is an HTML string, so blob:// is a SUBSTRING, not a standalone value. A walker that only matched whole strings missed every prose blob and the GC swept it.",
+      "doc": {
+        "richTextPages": {
+          "pages": {
+            "rp1": {
+              "id": "rp1",
+              "name": "Prose 1",
+              "content": "<p>hi</p><img src=\"blob://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" alt=\"x\">",
+              "order": 0
+            }
+          },
+          "pageOrder": ["rp1"],
+          "activePageId": "rp1"
+        }
+      },
+      "expected": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "name": "FileShape blobRef raw hash",
+      "why": "The other of the two reference shapes: a bare hash under a key literally named blobRef.",
+      "doc": {
+        "pages": {
+          "p1": {
+            "shapes": {
+              "s1": {
+                "type": "file",
+                "blobRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "fileName": "spec.pdf"
+              }
+            }
+          }
+        }
+      },
+      "expected": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+    },
+    {
+      "name": "legacy richTextContent Tiptap JSON",
+      "why": "Legacy prose stored Tiptap JSON, where attrs.src is a standalone string. Must keep working alongside the HTML path.",
+      "doc": {
+        "richTextContent": {
+          "content": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "image",
+                "attrs": {
+                  "src": "blob://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expected": ["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]
+    },
+    {
+      "name": "several refs in one string",
+      "why": "One HTML string may carry many images; the scan must not stop at the first.",
+      "doc": {
+        "richTextPages": {
+          "pages": {
+            "rp1": {
+              "content": "<img src=\"blob://dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"><img src=\"blob://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\">"
+            }
+          }
+        }
+      },
+      "expected": [
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      ]
+    },
+    {
+      "name": "hex run longer than 64 truncates to 64",
+      "why": "Both sides take the leading hex run capped at 64 chars, so trailing hex noise still yields a valid hash rather than being rejected.",
+      "doc": {
+        "richTextPages": {
+          "pages": {
+            "rp1": {
+              "content": "<img src=\"blob://ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffabcdef\">"
+            }
+          }
+        }
+      },
+      "expected": ["ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]
+    },
+    {
+      "name": "short hash is not a reference",
+      "why": "Under 64 hex characters is malformed and must be ignored on both sides.",
+      "doc": {
+        "richTextPages": {
+          "pages": { "rp1": { "content": "<img src=\"blob://abc123\">" } }
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "uppercase hash is rejected",
+      "why": "is_valid_blob_hash accepts lowercase only. Pinned because the hex SCAN accepts either case, so the two rules interact and could silently diverge.",
+      "doc": {
+        "richTextPages": {
+          "pages": {
+            "rp1": {
+              "content": "<img src=\"blob://AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\">"
+            }
+          }
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "nested shapes are reached",
+      "why": "Both walkers recurse the whole body, so a blob inside a grouped/nested shape still counts.",
+      "doc": {
+        "pages": {
+          "p1": {
+            "shapes": {
+              "g1": {
+                "type": "group",
+                "children": [
+                  {
+                    "type": "file",
+                    "blobRef": "1111111111111111111111111111111111111111111111111111111111111111"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "expected": ["1111111111111111111111111111111111111111111111111111111111111111"]
+    },
+    {
+      "name": "blobRef forwarded through an array",
+      "why": "The relay forwards parent_key into array elements; the client did not. Pinned so the two agree.",
+      "doc": {
+        "blobRef": ["2222222222222222222222222222222222222222222222222222222222222222"]
+      },
+      "expected": ["2222222222222222222222222222222222222222222222222222222222222222"]
+    },
+    {
+      "name": "prose blob and file shape together",
+      "why": "The end state JP-495 produces: a document holding both reference shapes at once.",
+      "doc": {
+        "pages": {
+          "p1": {
+            "shapes": {
+              "s1": {
+                "type": "file",
+                "blobRef": "3333333333333333333333333333333333333333333333333333333333333333"
+              }
+            }
+          }
+        },
+        "richTextPages": {
+          "pages": {
+            "rp1": {
+              "content": "<p><span data-file-ref data-blob-ref=\"blob://4444444444444444444444444444444444444444444444444444444444444444\">notes.pdf</span></p>"
+            }
+          }
+        }
+      },
+      "expected": [
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "4444444444444444444444444444444444444444444444444444444444444444"
+      ]
+    },
+    {
+      "name": "no references",
+      "why": "An empty document derives an empty set, not a crash.",
+      "doc": { "pages": { "p1": { "shapes": {} } } },
+      "expected": []
+    }
+  ]
+}
