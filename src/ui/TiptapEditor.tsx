@@ -51,6 +51,7 @@ import { Callout } from '../tiptap/CalloutExtension';
 import { CodeBlock } from '../tiptap/CodeBlockExtension';
 import { Figure, Figcaption } from '../tiptap/FigureExtension';
 import { Gallery } from '../tiptap/GalleryExtension';
+import type { EditorView } from '@tiptap/pm/view';
 import { handleProseFileDrop } from '../tiptap/proseDropGuard';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
@@ -272,6 +273,31 @@ export const sharedProseExtensions = [
 ];
 
 /**
+ * ProseMirror-level editor props shared by both prose editors — the `editorProps`
+ * twin of [`sharedProseExtensions`] (JP-496).
+ *
+ * `sharedProseExtensions` exists so the two editors' node and mark sets cannot
+ * drift. `editorProps` never got the same treatment: each editor declared its
+ * own `attributes` / `handlePaste` / `handleDrop`, and they were identical only
+ * because JP-495 happened to change both by hand. The next handler added to one
+ * would be silently absent from the other — and the collaborative editor, where
+ * a missed guard costs more, is the one more easily forgotten.
+ *
+ * These are the props with no per-editor variation. An editor needing extra
+ * behaviour spreads this and adds to it, rather than restating the common set.
+ */
+export const sharedProseEditorProps = {
+  attributes: {
+    class: 'tiptap-prose',
+  },
+  // Paste a bare DOI → resolve + add to the library + insert a citation.
+  handlePaste: (view: EditorView, event: ClipboardEvent) => handleCitationDoiPaste(view, event),
+  // Swallow file drops — the browser's default is to navigate away to the
+  // dropped file, discarding unsaved editor state (JP-495).
+  handleDrop: (view: EditorView, event: Event) => handleProseFileDrop(view, event as DragEvent),
+} as const;
+
+/**
  * The local (non-collaborative) editor's full extension set: StarterKit (with
  * its built-in history) plus the shared prose extensions. Also reused by
  * `generateJSON` for PDF export.
@@ -334,16 +360,7 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       const json = editor.getJSON();
       queueMicrotask(() => (silent ? setContentSilently(json) : setContent(json)));
     },
-    editorProps: {
-      attributes: {
-        class: 'tiptap-prose',
-      },
-      // Paste a bare DOI → resolve + add to the library + insert a citation.
-      handlePaste: (view, event) => handleCitationDoiPaste(view, event),
-      // Swallow file drops — the browser's default is to navigate away to the
-      // dropped file, discarding unsaved editor state (JP-495).
-      handleDrop: (view, event) => handleProseFileDrop(view, event as DragEvent),
-    },
+    editorProps: sharedProseEditorProps,
   });
 
   // Shared editor chrome: right-click formatting menu, spellcheck popover,
