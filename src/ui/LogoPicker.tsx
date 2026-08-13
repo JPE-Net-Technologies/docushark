@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { blobStorage } from '../storage/BlobStorage';
+import { assertUploadable } from '../storage/uploadLimits';
 import type { BlobMetadata } from '../storage/BlobTypes';
 import { formatFileSize } from '../utils/byteSize';
 import './LogoPicker.css';
@@ -89,6 +90,10 @@ export function LogoPicker({ isOpen, selectedId, onSelect, onClose }: LogoPicker
 
     setIsUploading(true);
     try {
+      // This path had neither a size ceiling nor a quota check, so a large
+      // image picked as a logo went straight into `computeHash`, which buffers
+      // the whole file (JP-496).
+      await assertUploadable(file);
       const blobId = await blobStorage.saveBlob(file, file.name);
 
       // Reload blobs

@@ -9,7 +9,7 @@ import type { Box } from '../math/Box';
 import type { FileShape, FileCategory } from '../shapes/Shape';
 import { DEFAULT_FILE_SHAPE } from '../shapes/Shape';
 import { blobStorage } from '../storage/BlobStorage';
-import { hasSpaceForBlob } from '../storage/StorageQuotaMonitor';
+import { uploadRejectionReason } from '../storage/uploadLimits';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useNotificationStore } from '../store/notificationStore';
@@ -78,10 +78,12 @@ export async function importFiles(
           continue;
         }
 
-        // Quota check
-        const hasSpace = await hasSpaceForBlob(file.size);
-        if (!hasSpace) {
-          errors.push({ fileName: sanitizedName, error: 'Storage quota exceeded' });
+        // Size ceiling + quota, the same gate every user-pick path uses
+        // (JP-496). The non-throwing form: a batch import reports one reason per
+        // file and keeps going.
+        const rejection = await uploadRejectionReason(file);
+        if (rejection !== null) {
+          errors.push({ fileName: sanitizedName, error: rejection });
           continue;
         }
 

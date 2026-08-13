@@ -6,23 +6,16 @@
  * needs. There is no processing step — an attachment is stored byte-for-byte,
  * unlike an image, which gets validated and downscaled.
  *
- * The quota check is the gate images get for free from `processImageForUpload`
- * (which enforces `MAX_FILE_SIZE`). A raw attachment has no such ceiling, so
- * without this a single large file could fill IndexedDB. `hasSpaceForBlob` is
- * the same gate the canvas import path uses (`FileImportService`) — quota-aware
- * rather than a fixed cap, so prose and canvas can't disagree about what fits.
+ * `assertUploadable` is the gate every user-pick path shares (JP-496): a size
+ * ceiling *and* a quota check. This path originally had only the quota half,
+ * which left the real hazard open — `BlobStorage.computeHash` buffers the whole
+ * file to hash it, so an attachment large enough to matter took the tab down
+ * rather than being refused.
  */
 
 import { blobStorage } from '../storage/BlobStorage';
-import { hasSpaceForBlob } from '../storage/StorageQuotaMonitor';
+import { assertUploadable } from '../storage/uploadLimits';
 import type { FileRefAttrs } from '../tiptap/FileRefExtension';
-
-export class ProseFileQuotaError extends Error {
-  constructor() {
-    super('Not enough local storage space for this file.');
-    this.name = 'ProseFileQuotaError';
-  }
-}
 
 /**
  * Store `file` and return the chip attributes for it.
@@ -34,9 +27,7 @@ export class ProseFileQuotaError extends Error {
  * none of which fail loudly (JP-494).
  */
 export async function uploadProseFile(file: File): Promise<FileRefAttrs> {
-  if (!(await hasSpaceForBlob(file.size))) {
-    throw new ProseFileQuotaError();
-  }
+  await assertUploadable(file);
 
   const blobId = await blobStorage.saveBlob(file, file.name);
 

@@ -8,6 +8,7 @@
  */
 
 import { blobStorage } from '../storage/BlobStorage';
+import { assertUploadable } from '../storage/uploadLimits';
 import { processImageForUpload } from '../utils/imageUtils';
 
 /** `accept` attribute for image file inputs — the formats we can process. */
@@ -29,6 +30,11 @@ export interface UploadedProseImage {
  * Throws if the file is invalid or storage fails (callers surface the error).
  */
 export async function uploadProseImage(file: File): Promise<UploadedProseImage> {
+  // `processImageForUpload` enforces its own, stricter `MAX_FILE_SIZE` (10 MiB)
+  // because a source image gets downscaled anyway. What it never did was check
+  // whether the result FITS — so an image upload could push storage past quota
+  // while a file upload could exhaust memory. Both paths now do both (JP-496).
+  await assertUploadable(file);
   const { blob, name, originalSize, processedSize, wasResized } = await processImageForUpload(file);
   const blobId = await blobStorage.saveBlob(blob, name);
   return { src: `blob://${blobId}`, alt: name, wasResized, originalSize, processedSize };
