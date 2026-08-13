@@ -272,10 +272,12 @@ export function FileViewerContent({
     }
   }, [blobRef]);
 
-  if (!descriptor) {
-    return null;
-  }
-
+  // No "missing file" guard here on purpose: `descriptor` is required, so this
+  // component always has something to render. The case it used to cover — the
+  // shape being deleted while its viewer is open — now belongs to
+  // `FileViewerHost`, which resolves the shape and renders nothing when the
+  // lookup comes back null. A truthiness check on a non-optional prop would read
+  // like a live safety net while being unreachable.
   const displayName = descriptor.label || descriptor.fileName;
   const FileIcon = getFileTypeLucideIcon(descriptor.fileCategory);
 
