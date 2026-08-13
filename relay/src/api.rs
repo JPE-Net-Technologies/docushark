@@ -78,14 +78,20 @@ pub(crate) fn blob_refs_from_doc(doc: &Value) -> HashSet<String> {
 
 /// **Derive** a document's referenced blob hashes by scanning its *content*
 /// (JP-278), independent of the top-level `blobReferences` array — which the
-/// relay's collab snapshot flatten never writes. Mirrors the editor's
-/// `collectBlobReferences` (`src/storage/AssetBundler.ts`): a `FileShape`'s raw
+/// relay's collab snapshot flatten never writes. Collects a `FileShape`'s raw
 /// hash under a `blobRef` key (across every page's shapes) plus any
 /// `blob://<hash>` embedded in a rich-text page's HTML `content`. Recursive over
 /// the whole body so it's robust to shape nesting. Returns a sorted,
 /// deduplicated list (deterministic JSON output). Derives purely from live
 /// content, so a stale `blobReferences` array never pollutes the result and a
 /// removed file-shape correctly drops its reference.
+///
+/// The client twin is `deriveBlobReferences` (`src/storage/AssetBundler.ts`).
+/// **Do not assert that parity in prose** — this comment used to claim the two
+/// mirrored each other while the client had no string scan at all, so it missed
+/// every prose blob and the GC swept them (JP-494). Both sides are now pinned
+/// to `relay/tests/blob-ref-fixtures/cases.json`; add a case there when
+/// changing either walker.
 pub(crate) fn collect_blob_references(doc: &Value) -> Vec<String> {
     let mut out = std::collections::BTreeSet::new();
     collect_blob_refs_walk(doc, None, &mut out);
@@ -3013,6 +3019,46 @@ async fn blob_ingest_from_url_handler(
         Json(json!({ "hash": stored.hash, "size": stored.size, "mimeType": stored.mime })),
     )
         .into_response()
+}
+
+/// Cross-language parity for blob-reference collection (JP-494).
+///
+/// Reads the same `relay/tests/blob-ref-fixtures/cases.json` the client suite
+/// (`src/storage/AssetBundler.fixtures.test.ts`) reads. The two walkers decide
+/// what the garbage collector keeps, and they had already drifted once — the
+/// client missed every `blob://` embedded in prose HTML while its doc comment
+/// claimed parity. A shared fixture is what makes that fail loudly.
+#[cfg(test)]
+mod blob_ref_fixture_tests {
+    use super::*;
+
+    #[derive(serde::Deserialize)]
+    struct Case {
+        name: String,
+        doc: Value,
+        expected: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Cases {
+        cases: Vec<Case>,
+    }
+
+    #[test]
+    fn matches_the_shared_fixtures() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/blob-ref-fixtures/cases.json");
+        let raw = std::fs::read_to_string(path).expect("read blob-ref fixtures");
+        let cases: Cases = serde_json::from_str(&raw).expect("parse blob-ref fixtures");
+        assert!(!cases.cases.is_empty(), "fixtures must not be empty");
+
+        for case in cases.cases {
+            let mut expected = case.expected.clone();
+            expected.sort();
+            // `collect_blob_references` already returns a sorted, deduplicated list.
+            let found = collect_blob_references(&case.doc);
+            assert_eq!(found, expected, "fixture case: {}", case.name);
+        }
+    }
 }
 
 #[cfg(test)]

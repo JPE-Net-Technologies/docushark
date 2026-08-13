@@ -38,7 +38,7 @@ Once a stable (non-`-beta`) release ships:
 - **Never lose data**: if a field is removed or renamed, migrate it to the new structure.
 - **Version tracking**: documents have a `version` field — bump it and add a migration in `/src/migrations/`.
 - **Test migrations**: every document format change needs tests with old-document fixtures.
-- **Blob references**: never orphan blobs — update `BlobGarbageCollector` if blob reference patterns change.
+- **Blob references**: never orphan blobs. There are exactly **two** reference shapes — a raw hash under a key literally named `blobRef`, or the `blob://<hash>` grammar **anywhere inside a string** (prose stores HTML, so its refs are substrings). Anything storing a blob must use one of them or the GC will sweep it. `deriveBlobReferences` / `collectBlobReferences` (`src/storage/AssetBundler.ts`) is the **only** client walker — don't write a second one; its relay twin is `collect_blob_references` (`relay/src/api.rs`), and both are pinned by `relay/tests/blob-ref-fixtures/`. Add a fixture case when reference patterns change (JP-494).
 - **Settings**: new settings have defaults that preserve existing behavior.
 - **Store changes**: new fields are optional with sensible defaults so partial in-memory state can be hydrated from older snapshots without crashing.
 

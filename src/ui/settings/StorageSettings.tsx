@@ -22,7 +22,7 @@ import { useIconLibraryStore, initializeIconLibrary } from '../../store/iconLibr
 import type { IconMetadata } from '../../storage/IconTypes';
 import { formatFileSize } from '../../utils/byteSize';
 import { usePersistenceStore, loadDocumentFromStorage } from '../../store/persistenceStore';
-import { extractRichTextBlobIds, extractShapeBlobIds } from '../../utils/richTextBlobExtractor';
+import { deriveBlobReferences } from '../../storage/AssetBundler';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { isRemoteDocument, type DocumentRecord } from '../../types/DocumentRegistry';
 import { SyncStatusBadge, type ExtendedSyncState } from '../SyncStatusBadge';
@@ -106,10 +106,7 @@ export function StorageSettings() {
       for (const docMeta of getDocumentList()) {
         const doc = loadDocumentFromStorage(docMeta.id);
         if (!doc) continue;
-        const ids = new Set([
-          ...extractRichTextBlobIds(doc.richTextContent),
-          ...extractShapeBlobIds(doc.pages ?? {}),
-        ]);
+        const ids = new Set(deriveBlobReferences(doc));
         for (const blobId of ids) {
           (owners[blobId] ??= []).push({ id: docMeta.id, name: docMeta.name });
         }
@@ -230,9 +227,7 @@ export function StorageSettings() {
         try {
           const doc = loadDocumentFromStorage(docMeta.id);
           if (doc) {
-            const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
-            const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
-            const allBlobIds = [...richTextBlobs, ...shapeBlobs];
+            const allBlobIds = deriveBlobReferences(doc);
             for (const blobId of allBlobIds) {
               if (usageCounts[blobId] !== undefined) {
                 usageCounts[blobId]++;

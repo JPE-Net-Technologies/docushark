@@ -19,7 +19,7 @@ import { useIconLibraryStore, initializeIconLibrary } from '../store/iconLibrary
 import type { IconMetadata } from '../storage/IconTypes';
 import { formatFileSize } from '../utils/byteSize';
 import { usePersistenceStore, loadDocumentFromStorage } from '../store/persistenceStore';
-import { extractRichTextBlobIds, extractShapeBlobIds } from '../utils/richTextBlobExtractor';
+import { deriveBlobReferences } from '../storage/AssetBundler';
 import './StorageManager.css';
 
 type TabId = 'images' | 'icons';
@@ -177,9 +177,7 @@ export function StorageManager({ onClose }: StorageManagerProps) {
         try {
           const doc = loadDocumentFromStorage(docMeta.id);
           if (doc) {
-            const richTextBlobs = extractRichTextBlobIds(doc.richTextContent);
-            const shapeBlobs = extractShapeBlobIds(doc.pages ?? {});
-            const allBlobIds = [...richTextBlobs, ...shapeBlobs];
+            const allBlobIds = deriveBlobReferences(doc);
             for (const blobId of allBlobIds) {
               if (usageCounts[blobId] !== undefined) {
                 usageCounts[blobId]++;
