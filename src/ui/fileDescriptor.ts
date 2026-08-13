@@ -68,6 +68,14 @@ export interface FileDescriptor {
   sourceId?: string | undefined;
   /** Display name override; falls back to `fileName`. */
   label?: string | undefined;
+  /**
+   * Deliberately narrower than `FileShape.preview`, which also carries
+   * `thumbnail` and `dimensions`: the viewer reads only the page count. Narrow
+   * the *value* too, at the boundary below — TypeScript's excess-property check
+   * does not fire on a non-literal, so passing the shape's wider object through
+   * would type-check while the descriptor's type quietly understated what it
+   * held. A future viewer that wants the thumbnail adds it here.
+   */
   preview?: { pageCount?: number | undefined } | undefined;
   /**
    * Swap the file's contents for `file`. Absent ⇒ the host has nowhere to write
@@ -83,7 +91,7 @@ export interface FileDescriptor {
 
 /**
  * Describe a canvas `FileShape`. Returns null for a shape that is absent or not
- * a file, matching the old `useFileShape` contract.
+ * a file.
  *
  * Capabilities are supplied by the caller because they need the services layer,
  * which this module deliberately does not depend on.
@@ -101,7 +109,9 @@ export function describeFileShape(
     fileCategory: shape.fileCategory,
     sourceId: shape.id,
     label: shape.label,
-    preview: shape.preview,
+    ...(shape.preview === undefined
+      ? {}
+      : { preview: { pageCount: shape.preview.pageCount } }),
     ...capabilities,
   };
 }

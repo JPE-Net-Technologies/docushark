@@ -14,7 +14,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { replaceFileContents, reuploadMissingBlob } from '../services/FileReplaceService';
 import { describeFileShape, type FileDescriptor } from './fileDescriptor';
 
-/** `null` when the shape is absent or isn't a file — same contract as `useFileShape`. */
+/** `null` when the shape is absent or isn't a file. */
 export function useFileShapeDescriptor(shapeId: string): FileDescriptor | null {
   const shape = useDocumentStore((state) => state.shapes[shapeId]);
 
