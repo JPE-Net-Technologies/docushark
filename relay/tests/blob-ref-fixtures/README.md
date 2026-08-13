@@ -27,9 +27,17 @@ them or it is invisible to GC:
 2. the `blob://<hash>` grammar **anywhere inside a string** (rich-text HTML
    embeds it in an `<img src>`).
 
-A hash is 64 **lowercase** hex characters. The scan accepts a hex run of either
-case but the validity check is lowercase-only, so an uppercase hash is
-rejected — a case pinned here because those two rules interact.
+A hash is 64 **lowercase** hex characters, and **both** shapes validate that:
+blob ids are content hashes on both sides (`BlobStorage.computeHash`,
+`BlobStore::compute_hash`), so a value that isn't one cannot name a stored blob
+and collecting it would only add an id nothing can match. The scan accepts a hex
+run of either case but the validity check is lowercase-only, so an uppercase
+hash is rejected — a case pinned here because those two rules interact.
+
+Because shape 1 validates a **bare** hash, a `blobRef` that carries the
+`blob://` prefix is picked up by the scan instead, and both sides still yield
+the bare hash. That is pinned too: the obvious implementation orders the two
+branches the other way and collects the prefixed string as an id.
 
 Over-matching is the safe direction: a stray `blob://` in a code block merely
 keeps a blob alive, whereas under-matching deletes bytes.

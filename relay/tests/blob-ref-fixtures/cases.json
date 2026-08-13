@@ -171,6 +171,51 @@
       ]
     },
     {
+      "name": "blobRef carrying the blob:// prefix",
+      "why": "The blobRef branch validates a BARE hash, so a prefixed value falls to the URI scan instead. Both sides must still yield the bare hash — not the prefixed string as an id.",
+      "doc": {
+        "pages": {
+          "p1": {
+            "shapes": {
+              "s1": {
+                "type": "file",
+                "blobRef": "blob://5555555555555555555555555555555555555555555555555555555555555555"
+              }
+            }
+          }
+        }
+      },
+      "expected": ["5555555555555555555555555555555555555555555555555555555555555555"]
+    },
+    {
+      "name": "a non-hash blobRef is not a reference",
+      "why": "Blob ids are SHA-256 hex (BlobStorage.computeHash), so a value that isn't one cannot name a stored blob. Collecting it would put an id in the set that no blob can ever match.",
+      "doc": {
+        "pages": {
+          "p1": { "shapes": { "s1": { "type": "file", "blobRef": "not-a-hash" } } }
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "an empty blobRef is not a reference",
+      "why": "A freshly created FileShape carries blobRef: '' before its upload completes.",
+      "doc": {
+        "pages": { "p1": { "shapes": { "s1": { "type": "file", "blobRef": "" } } } }
+      },
+      "expected": []
+    },
+    {
+      "name": "a whole-string blob:// with a malformed tail is ignored",
+      "why": "Same reasoning as the non-hash blobRef: the tail cannot name a stored blob. Pinned because the obvious implementation special-cases a string that STARTS WITH the prefix and would collect the junk tail.",
+      "doc": {
+        "richTextPages": {
+          "pages": { "rp1": { "content": "<img src=\"blob://legacy-id-123\">" } }
+        }
+      },
+      "expected": []
+    },
+    {
       "name": "no references",
       "why": "An empty document derives an empty set, not a crash.",
       "doc": { "pages": { "p1": { "shapes": {} } } },

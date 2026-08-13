@@ -159,15 +159,15 @@ export function findBlobReferences(obj: unknown, blobIds: Set<string>, parentKey
   if (obj === null || obj === undefined) return;
 
   if (typeof obj === 'string') {
-    // FileShape stores blobRef as a raw SHA-256 hash.
-    if (parentKey === 'blobRef' && obj.length > 0) {
+    // FileShape stores blobRef as a raw SHA-256 hash. Validated, not merely
+    // non-empty: an id that isn't a hash cannot name a stored blob (ids are
+    // SHA-256 hex, `BlobStorage.computeHash`), so collecting it would only
+    // put a value in the reference set that no blob can match.
+    if (parentKey === 'blobRef' && isValidBlobHash(obj)) {
       blobIds.add(obj);
-    } else if (obj.startsWith(BLOB_PREFIX) && !isValidBlobHash(obj.slice(BLOB_PREFIX.length))) {
-      // A whole-string `blob://…` whose tail isn't a well-formed hash. The URI
-      // scan below deliberately ignores it, but callers have always treated a
-      // standalone ref as authoritative, so keep honouring it.
-      blobIds.add(obj.slice(BLOB_PREFIX.length));
     }
+    // Everything else — including a `blobRef` that carries the `blob://`
+    // prefix, and a prose page's HTML — is found by the scan.
     collectBlobUrisInString(obj, blobIds);
     return;
   }
@@ -221,20 +221,16 @@ function replaceReferences(
   if (obj === null || obj === undefined) return obj;
 
   if (typeof obj === 'string') {
-    // FileShape blobRef: replace raw hash with data URL
-    if (parentKey === 'blobRef' && obj.length > 0) {
+    // FileShape blobRef: replace raw hash with data URL. The branch conditions
+    // must match `findBlobReferences` exactly — a reference that is found but
+    // not replaced means embed-mode bundling loads a blob it never substitutes
+    // and reports an asset count the document doesn't reflect.
+    if (parentKey === 'blobRef' && isValidBlobHash(obj)) {
       const replacement = replacements.get(obj);
       return replacement ?? obj;
     }
-    if (obj.startsWith(BLOB_PREFIX) && !isValidBlobHash(obj.slice(BLOB_PREFIX.length))) {
-      const replacement = replacements.get(obj.slice(BLOB_PREFIX.length));
-      return replacement ?? obj;
-    }
     // Embedded refs: a prose page's HTML carries `blob://<hash>` inside an
-    // `<img src>`, so substitute in place. This mirrors the URI scan in
-    // `findBlobReferences` — the two must stay symmetric, or embed-mode
-    // bundling would load a blob it never substitutes and report an asset
-    // count the document doesn't reflect.
+    // `<img src>`, so substitute in place. Also covers a prefixed `blobRef`.
     return replaceBlobUrisInString(obj, replacements);
   }
 
