@@ -44,6 +44,7 @@ import { MathInline, MathBlock } from '../tiptap/LatexExtension';
 import { CitationInline, Bibliography } from '../tiptap/CitationExtension';
 import { CitationSuggestion } from '../tiptap/CitationSuggestion';
 import { FieldRef } from '../tiptap/FieldExtension';
+import { FileRef } from '../tiptap/FileRefExtension';
 import { FieldSuggestion } from '../tiptap/FieldSuggestion';
 import { SlashMenu } from '../tiptap/SlashMenu';
 import { Callout } from '../tiptap/CalloutExtension';
@@ -241,6 +242,7 @@ export const sharedProseExtensions = [
   // so the headless schema + collab are unaffected. FieldSuggestion must follow
   // FieldRef (it inserts that node).
   FieldRef,
+  FileRef,
   FieldSuggestion,
   // `/`-trigger command palette. Inserts existing nodes (no nodes/marks of its
   // own), so the shared schema + collab are unaffected — like CitationSuggestion.

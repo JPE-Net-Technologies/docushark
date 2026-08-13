@@ -80,6 +80,10 @@ fn is_known_type(t: &str) -> bool {
             | "taskList"
             | "taskItem"
             | "embeddedGroup"
+            // JP-495: an attached file, inline. Unknown here means "unwrap to
+            // children", and an atom has none — so omitting it deletes the chip
+            // and the only reference to its blob.
+            | "fileRef"
     )
 }
 
@@ -100,6 +104,8 @@ fn is_atom(t: &str) -> bool {
             // JP-432: an embedded canvas group is an atom (`atom: true` in
             // `EmbeddedGroupExtension`) — childless, self-describing via `data-*`.
             | "embeddedGroup"
+            // JP-495: the file chip is `atom: true`, childless, self-describing.
+            | "fileRef"
     )
 }
 

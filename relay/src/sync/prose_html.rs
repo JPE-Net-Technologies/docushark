@@ -183,6 +183,7 @@ fn block_for<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> Block {
         "bibliography" => Block::Void(bibliography_html(el, txn)),
         "fieldRef" => Block::Void(field_html(el, txn)),
         "mathInline" => Block::Void(math_inline_html(el, txn)),
+        "fileRef" => Block::Void(file_ref_html(el, txn)),
         "mathBlock" => Block::Void(math_block_html(el, txn)),
         // Structural custom blocks (round-trip with the relay parser). `variant`/
         // `layout` are PM attr names → emitted as `data-variant`/`data-layout`.
@@ -449,6 +450,35 @@ fn field_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     }
     s.push('>');
     push_escaped(&mut s, &label);
+    s.push_str("</span>");
+    s
+}
+
+/// Serialize a `fileRef` element to `<span data-file-ref data-blob-ref=… …>`
+/// (JP-495). Childless. Optional attributes are emitted only when non-empty,
+/// matching the editor's `renderHTML`, so a flatten of an editor-written node is
+/// byte-identical rather than gaining empty attributes each pass.
+///
+/// The filename is also written as the span's **text content**, copying the
+/// `fieldRef` degradation contract: a consumer that doesn't understand the node
+/// unwraps it to something a reader can still use, rather than to nothing.
+fn file_ref_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
+    let mut s = String::from("<span data-file-ref");
+    if let Some(blob_ref) = str_attr(el, txn, "blobRef") {
+        let _ = write!(s, " data-blob-ref=\"{}\"", escape_attr(&blob_ref));
+    }
+    let file_name = str_attr(el, txn, "fileName").unwrap_or_default();
+    if !file_name.is_empty() {
+        let _ = write!(s, " data-file-name=\"{}\"", escape_attr(&file_name));
+    }
+    for (pm_attr, data_attr) in [("mimeType", "data-mime-type"), ("fileSize", "data-file-size")] {
+        let v = str_attr(el, txn, pm_attr).unwrap_or_default();
+        if !v.is_empty() {
+            let _ = write!(s, " {}=\"{}\"", data_attr, escape_attr(&v));
+        }
+    }
+    s.push('>');
+    push_escaped(&mut s, &file_name);
     s.push_str("</span>");
     s
 }
