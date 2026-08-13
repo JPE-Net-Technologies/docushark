@@ -59,6 +59,20 @@ export const MathInline = Node.create<MathOptions>({
     return {
       latex: {
         default: '',
+        // The stored form is `data-latex` — both this extension's own
+        // `renderHTML` and the relay's serializer write it there. Without an
+        // explicit `parseHTML`, Tiptap's default attribute parse looks for an
+        // attribute literally named `latex`, finds none, and substitutes the
+        // default: the node survived every HTML→PM parse with an EMPTY formula
+        // (JP-496, found by the cross-language corpus). Live collab was unaffected
+        // — the Y.Doc carries attrs directly — so this only bit the paths that
+        // re-parse stored HTML: PDF export, the mirror service, version-history
+        // preview, and any non-collaborative open.
+        parseHTML: (element) => element.getAttribute('data-latex') ?? '',
+        // Emitted explicitly as `data-latex` in `renderHTML`; without this the
+        // attribute merge ALSO writes a bare `latex="…"`, which is the shape
+        // that made the bug hard to see — the value looked present in the DOM.
+        renderHTML: () => ({}),
       },
     };
   },
@@ -152,6 +166,9 @@ export const MathBlock = Node.create<MathOptions>({
     return {
       latex: {
         default: '',
+        // See `MathInline` above — the block half had the identical defect.
+        parseHTML: (element) => element.getAttribute('data-latex') ?? '',
+        renderHTML: () => ({}),
       },
     };
   },

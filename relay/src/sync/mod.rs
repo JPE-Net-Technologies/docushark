@@ -32,6 +32,8 @@ mod protocol;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
+mod prose_fixture_tests;
+#[cfg(test)]
 mod roundtrip_tests;
 
 /// Apply an anchored, block-level prose edit to a page's HTML off the live path
