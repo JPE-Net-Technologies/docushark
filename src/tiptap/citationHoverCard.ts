@@ -16,6 +16,7 @@
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import { referencePreview } from '../services/citations/preview';
 import './citationHoverCard.css';
+import { sanitizeBibliographyHtml } from '../utils/sanitizeHtml';
 
 type FormatModule = typeof import('../services/citations/format');
 let formatModule: Promise<FormatModule> | null = null;
@@ -76,7 +77,7 @@ export function showCitationCard(anchor: HTMLElement, item: CSLItem, style: Cita
     .then((html) => {
       if (my !== token) return; // superseded by another hover / a hide
       if (html) {
-        el.innerHTML = `<div class="citation-card-entry">${html}</div>`;
+        el.innerHTML = sanitizeBibliographyHtml(`<div class="citation-card-entry">${html}</div>`);
         position(el, anchor); // re-measure: formatted entry may be taller
       }
     })
