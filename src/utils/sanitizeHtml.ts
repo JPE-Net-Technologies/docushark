@@ -44,15 +44,62 @@ const ALLOWED_TAGS = new Set([
 /**
  * Attributes worth keeping. `class` and `data-csl-entry-id` carry the CSL
  * layout hooks the stylesheet targets; `href` is allowed only after a scheme
- * check.
- *
- * `style` is deliberately absent. It looks harmless, but it is the attribute
- * that keeps finding new ways to be a sink, and no CSL style needs it here.
+ * check, and `style` only after a per-declaration filter (below).
  */
-const ALLOWED_ATTRS = new Set(['class', 'data-csl-entry-id', 'href']);
+const ALLOWED_ATTRS = new Set(['class', 'data-csl-entry-id', 'href', 'style']);
 
 /** Only these schemes may appear in an `href`. */
 const SAFE_HREF = /^(https?:|mailto:|#)/i;
+
+/**
+ * CSS properties citeproc's HTML formatter actually emits, and the only ones a
+ * bibliography needs.
+ *
+ * `style` was originally dropped outright here, which is the safe-looking
+ * choice and the wrong one: citeproc emits `style` for *real formatting*
+ * (`citeproc_commonjs.js` — `@font-variant/small-caps`,
+ * `@text-decoration/underline`, the `white-space:nowrap` wrapper around thin
+ * spaces). Stripping it silently degrades every CSL style that uses small-caps
+ * or underlining. APA — the default, and the one it is easiest to test with —
+ * uses none of them, so the loss would not have shown up in casual checking.
+ *
+ * The value filter is what makes keeping `style` safe: layout and paint
+ * properties never reach the DOM, so it cannot be used to position an overlay
+ * over the page or to smuggle a `url(…)`.
+ */
+const ALLOWED_CSS_PROPS = new Set([
+  'font-variant',
+  'font-style',
+  'font-weight',
+  'text-decoration',
+  'white-space',
+  'vertical-align',
+]);
+
+/**
+ * Values that must never survive, whatever property carries them: `url(` pulls
+ * a resource, and `expression(` is a legacy script vector. Scheme text is
+ * checked too, since a value can carry one without `url(`.
+ */
+const HOSTILE_CSS_VALUE = /url\s*\(|expression\s*\(|javascript:|vbscript:/i;
+
+/**
+ * Keep only the declarations a bibliography legitimately uses. Returns an empty
+ * string when nothing survives, which the caller treats as "drop the attribute".
+ */
+function filterStyle(value: string): string {
+  return value
+    .split(';')
+    .map((decl) => decl.trim())
+    .filter((decl) => {
+      const at = decl.indexOf(':');
+      if (at < 0) return false;
+      const prop = decl.slice(0, at).trim().toLowerCase();
+      const val = decl.slice(at + 1).trim();
+      return ALLOWED_CSS_PROPS.has(prop) && val.length > 0 && !HOSTILE_CSS_VALUE.test(val);
+    })
+    .join('; ');
+}
 
 /**
  * Strip `html` down to the bibliography subset.
@@ -111,6 +158,12 @@ function clean(parent: Element): void {
       }
       if (name === 'href' && !SAFE_HREF.test(attr.value.trim())) {
         el.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === 'style') {
+        const kept = filterStyle(attr.value);
+        if (kept) el.setAttribute('style', kept);
+        else el.removeAttribute(attr.name);
       }
     }
 

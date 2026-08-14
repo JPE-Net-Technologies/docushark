@@ -69,10 +69,22 @@ export const MathInline = Node.create<MathOptions>({
         // re-parse stored HTML: PDF export, the mirror service, version-history
         // preview, and any non-collaborative open.
         parseHTML: (element) => element.getAttribute('data-latex') ?? '',
-        // Emitted explicitly as `data-latex` in `renderHTML`; without this the
-        // attribute merge ALSO writes a bare `latex="…"`, which is the shape
-        // that made the bug hard to see — the value looked present in the DOM.
-        renderHTML: () => ({}),
+        // NOTE the attribute merge also writes a bare `latex="…"` alongside the
+        // `data-latex` that `renderHTML` emits. That redundancy is deliberate
+        // and load-bearing until every client is post-JP-496 (2026-08-14).
+        //
+        // A client built BEFORE this fix parses the attribute literally named
+        // `latex`. Suppressing it here — which the first version of this fix did
+        // — means such a client reads an empty formula from a document a newer
+        // client saved, and because the prose projection writes its render back,
+        // it PERSISTS the loss. Observed: a document's stored HTML went from
+        // `data-latex="E = mc^2"` to `data-latex=""` purely by being opened once
+        // under a build that could not parse it.
+        //
+        // The mixed-version window is real — a PWA whose service-worker shell is
+        // still the previous build, opening a page another device just saved.
+        // Safe to drop the redundancy once no pre-JP-496 client can still be in
+        // the wild; the relay ignores unknown attrs either way.
       },
     };
   },
@@ -166,9 +178,9 @@ export const MathBlock = Node.create<MathOptions>({
     return {
       latex: {
         default: '',
-        // See `MathInline` above — the block half had the identical defect.
+        // See `MathInline` above — the block half had the identical defect, and
+        // keeps the same bare-`latex` compatibility redundancy.
         parseHTML: (element) => element.getAttribute('data-latex') ?? '',
-        renderHTML: () => ({}),
       },
     };
   },
