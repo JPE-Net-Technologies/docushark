@@ -38,8 +38,18 @@ describe('uploadRejectionReason', () => {
   });
 
   it('rejects a file over the ceiling, naming the real limit', async () => {
-    const reason = await uploadRejectionReason({ size: MAX_UPLOAD_BYTES + 1 });
+    const reason = await uploadRejectionReason({ size: MAX_UPLOAD_BYTES * 4 });
+    expect(reason).toContain('600.0 MB');
     expect(reason).toContain('150.0 MB');
+  });
+
+  it('does not claim a barely-oversized file is exactly the limit', async () => {
+    // At limit+1 byte both numbers format to the same string, and
+    // "This file is 150.0 MB, over the 150.0 MB limit" reads as a bug rather
+    // than a rule. Found in live browser testing — the original assertion used
+    // `toContain('150.0 MB')`, which the contradictory message satisfied.
+    const reason = await uploadRejectionReason({ size: MAX_UPLOAD_BYTES + 1 });
+    expect(reason).toBe('This file is just over the 150.0 MB limit for a single attachment.');
   });
 
   it('accepts a file exactly at the ceiling', async () => {

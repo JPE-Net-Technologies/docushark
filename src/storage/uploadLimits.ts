@@ -68,10 +68,15 @@ export class UploadRejectedError extends Error {
  */
 export async function uploadRejectionReason(file: { size: number }): Promise<string | null> {
   if (file.size > MAX_UPLOAD_BYTES) {
-    return (
-      `This file is ${formatFileSize(file.size)}, over the ` +
-      `${formatFileSize(MAX_UPLOAD_BYTES)} limit for a single attachment.`
-    );
+    const limit = formatFileSize(MAX_UPLOAD_BYTES);
+    const actual = formatFileSize(file.size);
+    // A file barely over the limit formats to the SAME string as the limit, and
+    // "This file is 150.0 MB, over the 150.0 MB limit" reads as a bug rather
+    // than a rule. Found in live testing at exactly limit+1 byte; the unit test
+    // used round numbers and never saw it.
+    return actual === limit
+      ? `This file is just over the ${limit} limit for a single attachment.`
+      : `This file is ${actual}, over the ${limit} limit for a single attachment.`;
   }
   // `hasSpaceForBlob` raises its own notification on failure — it is the
   // established quota gate, and duplicating its message here would double up.
