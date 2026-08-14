@@ -95,8 +95,16 @@ function clean(parent: Element): void {
 
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
-      // Every `on*` handler goes, allowlist or not — this is the check that
-      // makes an allowed `<div onclick=…>` inert.
+      // Every `on*` handler goes, checked BEFORE the allowlist and independent
+      // of it. The allowlist alone would already drop these, but the allowlist
+      // is the line someone edits when they need one more attribute — and
+      // "add the attribute you need" is a much easier mistake to make than
+      // "delete the handler check". Two independent reasons for a handler to
+      // die is the right number.
+      if (name.startsWith('on')) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
       if (!ALLOWED_ATTRS.has(name)) {
         el.removeAttribute(attr.name);
         continue;
