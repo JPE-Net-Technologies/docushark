@@ -78,14 +78,20 @@ pub(crate) fn blob_refs_from_doc(doc: &Value) -> HashSet<String> {
 
 /// **Derive** a document's referenced blob hashes by scanning its *content*
 /// (JP-278), independent of the top-level `blobReferences` array — which the
-/// relay's collab snapshot flatten never writes. Mirrors the editor's
-/// `collectBlobReferences` (`src/storage/AssetBundler.ts`): a `FileShape`'s raw
+/// relay's collab snapshot flatten never writes. Collects a `FileShape`'s raw
 /// hash under a `blobRef` key (across every page's shapes) plus any
 /// `blob://<hash>` embedded in a rich-text page's HTML `content`. Recursive over
 /// the whole body so it's robust to shape nesting. Returns a sorted,
 /// deduplicated list (deterministic JSON output). Derives purely from live
 /// content, so a stale `blobReferences` array never pollutes the result and a
 /// removed file-shape correctly drops its reference.
+///
+/// The client twin is `deriveBlobReferences` (`src/storage/AssetBundler.ts`).
+/// **Do not assert that parity in prose** — this comment used to claim the two
+/// mirrored each other while the client had no string scan at all, so it missed
+/// every prose blob and the GC swept them (JP-494). Both sides are now pinned
+/// to `relay/tests/blob-ref-fixtures/cases.json`; add a case there when
+/// changing either walker.
 pub(crate) fn collect_blob_references(doc: &Value) -> Vec<String> {
     let mut out = std::collections::BTreeSet::new();
     collect_blob_refs_walk(doc, None, &mut out);
@@ -169,6 +175,80 @@ fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], max: usize) -> bool {
 /// structural guard at mint time.
 pub(crate) fn is_valid_blob_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Fallback stored type for anything unrecognized or unsafe to render.
+const DEFAULT_BLOB_MIME: &str = "application/octet-stream";
+
+/// Types a browser will execute as script if it renders them at the top level.
+/// Stored as `application/octet-stream` instead, so the recorded type can never
+/// itself become the vector.
+///
+/// SVG is deliberately **not** here: it is a legitimate image the editor renders
+/// through `<img>` (which cannot run its script), and rewriting it would break
+/// icon rendering. Keeping it accurate at rest means a consumer that serves
+/// blobs to a browser must still decide inline-vs-download for itself.
+const SCRIPT_CAPABLE_MIMES: &[&str] = &[
+    "text/html",
+    "application/xhtml+xml",
+    "application/xhtml",
+    "text/xml",
+    "application/xml",
+    "application/xslt+xml",
+    "text/javascript",
+    "application/javascript",
+    "application/x-javascript",
+    "application/ecmascript",
+    "text/ecmascript",
+];
+
+/// Is `s` a well-formed `type/subtype` made only of RFC 9110 token characters?
+///
+/// A recorded type is echoed back as a `Content-Type` header, so a value
+/// carrying CR/LF (or any other non-token byte) must never reach storage —
+/// that is response-splitting, not a cosmetic problem.
+fn is_wellformed_mime(s: &str) -> bool {
+    fn is_token(part: &str) -> bool {
+        !part.is_empty()
+            && part.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
+            })
+    }
+    let mut parts = s.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(ty), Some(sub), None) => is_token(ty) && is_token(sub),
+        _ => false,
+    }
+}
+
+/// Normalize a client-supplied MIME type before it is persisted (JP-474).
+///
+/// The type is attacker-controlled at upload and is later echoed when the bytes
+/// are served, so it is normalized once at the storage boundary rather than
+/// trusted at each read:
+///
+/// - parameters are dropped and the type is lowercased, so one stored form
+///   corresponds to one type;
+/// - anything malformed — empty, missing a subtype, or carrying a byte outside
+///   the RFC 9110 token set (CR/LF included) — becomes the default;
+/// - script-capable types become the default, so a stored blob cannot claim to
+///   be a document a browser would execute.
+///
+/// Defense-in-depth, not the whole defense: a consumer that serves these bytes
+/// to a browser still owes `nosniff` and an explicit inline-vs-download choice,
+/// since a *correctly* typed SVG is still script-capable when navigated to.
+pub(crate) fn normalize_stored_mime(mime: &str) -> String {
+    let base = mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    if !is_wellformed_mime(&base) || SCRIPT_CAPABLE_MIMES.contains(&base.as_str()) {
+        return DEFAULT_BLOB_MIME.to_string();
+    }
+    base
 }
 
 /// JP-370 (C1): may this caller read the bytes of `hash`? When private-doc
@@ -807,8 +887,10 @@ async fn blob_upload_url_handler(
         }
     }
 
-    let mime = req.mime_type.as_deref().unwrap_or("application/octet-stream");
-    let mint = s3.presign_put(&ws, &hash, mime);
+    // JP-474: normalize before signing — this value becomes the R2 object's
+    // stored content-type, and the bytes never pass back through the relay.
+    let mime = normalize_stored_mime(req.mime_type.as_deref().unwrap_or(""));
+    let mint = s3.presign_put(&ws, &hash, &mime);
     let headers_obj: serde_json::Map<String, Value> = mint
         .headers
         .iter()
@@ -900,10 +982,11 @@ async fn blob_finalize_handler(
         }
     }
 
-    let mime = req.mime_type.as_deref().unwrap_or("application/octet-stream");
+    // JP-474: normalize at the storage boundary, not at each read.
+    let mime = normalize_stored_mime(req.mime_type.as_deref().unwrap_or(""));
     match state
         .blob_store()
-        .record_finalized_blob(&ws, &hash, size, mime, &claims.sub)
+        .record_finalized_blob(&ws, &hash, size, &mime, &claims.sub)
     {
         Ok(meta) => (
             StatusCode::OK,
@@ -2767,6 +2850,11 @@ pub(crate) async fn store_blob_bytes(
     body: &[u8],
     mime: &str,
 ) -> Result<StoredBlob, BlobWriteError> {
+    // JP-474: the one write core, so normalizing here covers proxy upload, URL
+    // ingest, and the MCP `add_file` preflight together. Ingest is the case that
+    // matters most — the type comes from a remote server's `Content-Type`, not
+    // from a client we authenticated.
+    let mime = &normalize_stored_mime(mime);
     let hash = BlobStore::compute_hash(body);
     let (size, hash) = if let Some(s3) = s3 {
         if blob_store.exists(ws, &hash) {
@@ -3015,6 +3103,46 @@ async fn blob_ingest_from_url_handler(
         .into_response()
 }
 
+/// Cross-language parity for blob-reference collection (JP-494).
+///
+/// Reads the same `relay/tests/blob-ref-fixtures/cases.json` the client suite
+/// (`src/storage/AssetBundler.fixtures.test.ts`) reads. The two walkers decide
+/// what the garbage collector keeps, and they had already drifted once — the
+/// client missed every `blob://` embedded in prose HTML while its doc comment
+/// claimed parity. A shared fixture is what makes that fail loudly.
+#[cfg(test)]
+mod blob_ref_fixture_tests {
+    use super::*;
+
+    #[derive(serde::Deserialize)]
+    struct Case {
+        name: String,
+        doc: Value,
+        expected: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Cases {
+        cases: Vec<Case>,
+    }
+
+    #[test]
+    fn matches_the_shared_fixtures() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/blob-ref-fixtures/cases.json");
+        let raw = std::fs::read_to_string(path).expect("read blob-ref fixtures");
+        let cases: Cases = serde_json::from_str(&raw).expect("parse blob-ref fixtures");
+        assert!(!cases.cases.is_empty(), "fixtures must not be empty");
+
+        for case in cases.cases {
+            let mut expected = case.expected.clone();
+            expected.sort();
+            // `collect_blob_references` already returns a sorted, deduplicated list.
+            let found = collect_blob_references(&case.doc);
+            assert_eq!(found, expected, "fixture case: {}", case.name);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3033,6 +3161,68 @@ mod tests {
         assert!(!is_valid_blob_hash(&"A".repeat(64))); // uppercase not allowed
         assert!(!is_valid_blob_hash(&"g".repeat(64))); // non-hex
         assert!(!is_valid_blob_hash("")); // empty
+    }
+
+    #[test]
+    fn stored_mime_normalization_disarms_script_capable_types() {
+        // The finding: a blob uploaded as text/html executes on the app origin
+        // when navigated to. It must never be persisted with that type.
+        assert_eq!(normalize_stored_mime("text/html"), "application/octet-stream");
+        assert_eq!(
+            normalize_stored_mime("TEXT/HTML; charset=utf-8"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            normalize_stored_mime("application/xhtml+xml"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            normalize_stored_mime("application/javascript"),
+            "application/octet-stream"
+        );
+        // XML can script via XSLT.
+        assert_eq!(normalize_stored_mime("text/xml"), "application/octet-stream");
+    }
+
+    #[test]
+    fn stored_mime_normalization_preserves_legitimate_types() {
+        // Over-rewriting would break viewer dispatch, which keys off the mime.
+        assert_eq!(normalize_stored_mime("image/png"), "image/png");
+        assert_eq!(normalize_stored_mime("application/pdf"), "application/pdf");
+        assert_eq!(
+            normalize_stored_mime("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        // Parameters are dropped and case is folded so one type has one form.
+        assert_eq!(normalize_stored_mime("Image/PNG; charset=binary"), "image/png");
+        assert_eq!(normalize_stored_mime("  image/webp  "), "image/webp");
+        // SVG stays accurate at rest; serving it safely is the consumer's job.
+        assert_eq!(normalize_stored_mime("image/svg+xml"), "image/svg+xml");
+    }
+
+    #[test]
+    fn stored_mime_normalization_rejects_header_injection_and_junk() {
+        // A recorded type is echoed as a Content-Type header, so CR/LF must not
+        // survive — that is response splitting, not a cosmetic issue.
+        assert_eq!(
+            normalize_stored_mime("image/png\r\nX-Injected: 1"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            normalize_stored_mime("image/png\nSet-Cookie: a=b"),
+            "application/octet-stream"
+        );
+        assert_eq!(normalize_stored_mime(""), "application/octet-stream");
+        assert_eq!(normalize_stored_mime("   "), "application/octet-stream");
+        assert_eq!(normalize_stored_mime("notamime"), "application/octet-stream");
+        assert_eq!(normalize_stored_mime("a/b/c"), "application/octet-stream");
+        assert_eq!(normalize_stored_mime("image/"), "application/octet-stream");
+        assert_eq!(normalize_stored_mime("/png"), "application/octet-stream");
+        // A quoted/spaced subtype is not a token.
+        assert_eq!(
+            normalize_stored_mime("image/\"png\""),
+            "application/octet-stream"
+        );
     }
 
     #[test]

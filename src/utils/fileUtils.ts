@@ -207,3 +207,31 @@ export function sanitizeFileName(name: string): string {
 
   return sanitized || 'Untitled';
 }
+
+/**
+ * Shorten a filename for a tight display slot, keeping the **extension**.
+ *
+ * Plain CSS ellipsis truncates the tail, which throws away the single most
+ * informative part of a filename — `quarterly-report-final-v3.pdf` becomes
+ * `quarterly-repo…`, and the reader can no longer tell a PDF from a ZIP. This
+ * truncates the stem instead: `quarterly-report-final-….pdf`.
+ *
+ * Uses the same "is that really an extension" heuristic as `sanitizeFileName`
+ * (a dot that isn't leading, within 10 chars of the end) so the two agree about
+ * what a filename's parts are.
+ */
+export function truncateFileNameForDisplay(name: string, maxLength = 28): string {
+  if (name.length <= maxLength) return name;
+
+  const dot = name.lastIndexOf('.');
+  const hasExt = dot > 0 && name.length - dot <= 10;
+  const ext = hasExt ? name.slice(dot) : '';
+
+  // No room for a stem worth reading — fall back to a tail cut rather than
+  // returning something that is almost entirely extension.
+  if (ext.length + 2 >= maxLength) return `${name.slice(0, maxLength - 1)}…`;
+
+  const stem = hasExt ? name.slice(0, dot) : name;
+  const keep = maxLength - ext.length - 1; // -1 for the ellipsis
+  return `${stem.slice(0, keep)}…${ext}`;
+}

@@ -80,13 +80,23 @@ fn is_known_type(t: &str) -> bool {
             | "taskList"
             | "taskItem"
             | "embeddedGroup"
+            // JP-495: an attached file, inline. Unknown here means "unwrap to
+            // children", and an atom has none — so omitting it deletes the chip
+            // and the only reference to its blob.
+            | "fileRef"
     )
 }
 
 /// Leaf/atom node types: the client treats these as atoms, so they must carry
 /// **no** children. A child here is the exact shape that crashes NodeView
 /// reconciliation.
-fn is_atom(t: &str) -> bool {
+///
+/// `pub(super)` so the fixture corpus ([`super::prose_fixture_tests`]) can
+/// assert the invariant this list enforces. It has to: an atom that keeps its
+/// children still serializes to byte-identical HTML — the serializer re-emits
+/// the text child either way — so an omission here is invisible to any
+/// round-trip check and only shows up as a client crash (JP-496).
+pub(super) fn is_atom(t: &str) -> bool {
     matches!(
         t,
         "image"
@@ -100,6 +110,8 @@ fn is_atom(t: &str) -> bool {
             // JP-432: an embedded canvas group is an atom (`atom: true` in
             // `EmbeddedGroupExtension`) — childless, self-describing via `data-*`.
             | "embeddedGroup"
+            // JP-495: the file chip is `atom: true`, childless, self-describing.
+            | "fileRef"
     )
 }
 

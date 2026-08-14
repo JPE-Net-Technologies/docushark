@@ -8,6 +8,7 @@ import { Images } from 'lucide-react';
 import { Icon } from './icons';
 import { useTiptapEditor } from './TiptapEditorContext';
 import { blobStorage } from '../storage/BlobStorage';
+import { assertUploadable } from '../storage/uploadLimits';
 import { processImageForUpload } from '../utils/imageUtils';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import type { GalleryImage } from '../tiptap/GalleryExtension';
@@ -28,6 +29,10 @@ export function GalleryUploadButton({ className }: GalleryUploadButtonProps) {
       const images: GalleryImage[] = [];
       for (const file of Array.from(files)) {
         try {
+          // Ceiling + quota before anything reads the file (JP-496). A gallery
+          // takes several files at once, so it is the easiest way to walk past
+          // a storage limit a single upload would have respected.
+          await assertUploadable(file);
           const { blob, name } = await processImageForUpload(file);
           const blobId = await blobStorage.saveBlob(blob, name);
           images.push({ src: `blob://${blobId}`, alt: name });

@@ -93,28 +93,90 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mimeType });
 }
 
+/** A content-addressed blob hash: exactly 64 lowercase hex characters. */
+const BLOB_HASH_RE = /^[0-9a-f]{64}$/;
+
+/** Longest leading run of hex characters (either case), for the URI scan. */
+const LEADING_HEX_RE = /^[0-9a-fA-F]*/;
+
 /**
- * Recursively find and replace blob:// references in an object.
- * Also detects FileShape blobRef fields (raw hashes without blob:// prefix).
- * Returns the modified object and a set of blob IDs found.
+ * Is `hash` a well-formed blob hash?
+ *
+ * Port of `is_valid_blob_hash` (`relay/src/api.rs`) — note it accepts
+ * **lowercase only**, so an uppercase hash is deliberately rejected on both
+ * sides. Kept in lockstep by `relay/tests/blob-ref-fixtures/`.
  */
-function findBlobReferences(obj: unknown, blobIds: Set<string>, parentKey?: string): void {
+function isValidBlobHash(hash: string): boolean {
+  return BLOB_HASH_RE.test(hash);
+}
+
+/**
+ * Collect every well-formed `blob://<hash>` reference embedded **anywhere in a
+ * string** — a prose page's `content` is an HTML string, so its `<img src>`
+ * refs are substrings, not standalone values. One string may carry several.
+ *
+ * Port of `collect_blob_uris_in_str` (`relay/src/api.rs`), including its
+ * "longest hex run, capped at 64" rule: a longer run still yields its first 64
+ * characters. Kept in lockstep by `relay/tests/blob-ref-fixtures/`.
+ */
+function collectBlobUrisInString(s: string, blobIds: Set<string>): void {
+  // Cheap reject before allocating: this runs on every string in the document
+  // on every save, and the overwhelming majority contain no blob reference.
+  if (!s.includes(BLOB_PREFIX)) return;
+
+  const segments = s.split(BLOB_PREFIX);
+  for (let i = 1; i < segments.length; i++) {
+    const hash = (LEADING_HEX_RE.exec(segments[i]!)?.[0] ?? '').slice(0, 64);
+    if (isValidBlobHash(hash)) {
+      blobIds.add(hash);
+    }
+  }
+}
+
+/**
+ * Recursively collect every blob reference in an object.
+ *
+ * Two — and only two — reference shapes exist, so anything storing a blob must
+ * use one of them or it is invisible here (and to the relay, and to the GC):
+ *
+ * 1. a raw SHA-256 hash under a key literally named `blobRef` (`FileShape`), or
+ * 2. the `blob://<hash>` URI grammar **anywhere inside a string** (rich-text
+ *    HTML, which embeds it in an `<img src>`).
+ *
+ * Shape 2 is why this walks *into* strings rather than only matching whole
+ * ones: `RichTextPage.content` is HTML, so a `blob://` ref is a substring. A
+ * walker that only matched whole strings missed every prose-page blob and the
+ * GC swept it as an orphan (JP-494).
+ *
+ * Over-matching is the safe direction — a `blob://` inside a code block merely
+ * keeps a blob alive, whereas under-matching deletes bytes.
+ *
+ * This is the **only** blob walker on the client; it is held byte-for-byte
+ * equivalent to the relay's `collect_blob_references` (`relay/src/api.rs`) by
+ * the shared fixtures in `relay/tests/blob-ref-fixtures/`.
+ */
+export function findBlobReferences(obj: unknown, blobIds: Set<string>, parentKey?: string): void {
   if (obj === null || obj === undefined) return;
 
   if (typeof obj === 'string') {
-    if (obj.startsWith(BLOB_PREFIX)) {
-      const blobId = obj.slice(BLOB_PREFIX.length);
-      blobIds.add(blobId);
-    } else if (parentKey === 'blobRef' && obj.length > 0) {
-      // FileShape stores blobRef as a raw SHA-256 hash
+    // FileShape stores blobRef as a raw SHA-256 hash. Validated, not merely
+    // non-empty: an id that isn't a hash cannot name a stored blob (ids are
+    // SHA-256 hex, `BlobStorage.computeHash`), so collecting it would only
+    // put a value in the reference set that no blob can match.
+    if (parentKey === 'blobRef' && isValidBlobHash(obj)) {
       blobIds.add(obj);
     }
+    // Everything else — including a `blobRef` that carries the `blob://`
+    // prefix, and a prose page's HTML — is found by the scan.
+    collectBlobUrisInString(obj, blobIds);
     return;
   }
 
   if (Array.isArray(obj)) {
     for (const item of obj) {
-      findBlobReferences(item, blobIds);
+      // `parentKey` is forwarded through arrays so `{ blobRef: [...] }` is seen,
+      // matching the relay walker.
+      findBlobReferences(item, blobIds, parentKey);
     }
     return;
   }
@@ -124,6 +186,27 @@ function findBlobReferences(obj: unknown, blobIds: Set<string>, parentKey?: stri
       findBlobReferences(value, blobIds, key);
     }
   }
+}
+
+/**
+ * Substitute every embedded `blob://<hash>` in a string with its replacement.
+ * The scanning counterpart is `collectBlobUrisInString` — keep them in step.
+ */
+function replaceBlobUrisInString(s: string, replacements: Map<string, string>): string {
+  if (!s.includes(BLOB_PREFIX)) return s;
+
+  const segments = s.split(BLOB_PREFIX);
+  let out = segments[0] ?? '';
+  for (let i = 1; i < segments.length; i++) {
+    const segment = segments[i]!;
+    const hash = (LEADING_HEX_RE.exec(segment)?.[0] ?? '').slice(0, 64);
+    const replacement = isValidBlobHash(hash) ? replacements.get(hash) : undefined;
+    out +=
+      replacement === undefined
+        ? BLOB_PREFIX + segment
+        : replacement + segment.slice(hash.length);
+  }
+  return out;
 }
 
 /**
@@ -138,17 +221,17 @@ function replaceReferences(
   if (obj === null || obj === undefined) return obj;
 
   if (typeof obj === 'string') {
-    if (obj.startsWith(BLOB_PREFIX)) {
-      const blobId = obj.slice(BLOB_PREFIX.length);
-      const replacement = replacements.get(blobId);
-      return replacement ?? obj;
-    }
-    // FileShape blobRef: replace raw hash with data URL
-    if (parentKey === 'blobRef' && obj.length > 0) {
+    // FileShape blobRef: replace raw hash with data URL. The branch conditions
+    // must match `findBlobReferences` exactly — a reference that is found but
+    // not replaced means embed-mode bundling loads a blob it never substitutes
+    // and reports an asset count the document doesn't reflect.
+    if (parentKey === 'blobRef' && isValidBlobHash(obj)) {
       const replacement = replacements.get(obj);
       return replacement ?? obj;
     }
-    return obj;
+    // Embedded refs: a prose page's HTML carries `blob://<hash>` inside an
+    // `<img src>`, so substitute in place. Also covers a prefixed `blobRef`.
+    return replaceBlobUrisInString(obj, replacements);
   }
 
   if (Array.isArray(obj)) {
@@ -382,17 +465,39 @@ export function hasBlobReferences(document: DiagramDocument): boolean {
 }
 
 /**
- * Collect every blob hash a document references, walking the whole tree.
+ * **Derive** a document's blob references from its live content alone,
+ * ignoring the stored `blobReferences` array.
  *
- * This is the canonical extractor: it catches both rich-text image `src`
- * (`blob://<hash>`) and `FileShape.blobRef` (raw hash, no prefix), then
- * unions in the document's explicit `blobReferences` GC list. Use it to
- * build the upload set on save and the download set on load — it sees
- * strictly more than `hasBlobReferences` (which misses raw `blobRef`s).
+ * Use this when *recomputing* the array (a save) or a usage count: unioning in
+ * the previous value would mean a reference can only ever be added, so deleting
+ * a file shape or a prose image would never release its blob.
+ *
+ * Counterpart of the relay's `collect_blob_references` (`relay/src/api.rs`),
+ * which derives purely from content for exactly the same reason.
  */
-export function collectBlobReferences(document: DiagramDocument): string[] {
+export function deriveBlobReferences(document: DiagramDocument): string[] {
   const blobIds = new Set<string>();
   findBlobReferences(document, blobIds);
+  return Array.from(blobIds);
+}
+
+/**
+ * Collect every blob hash a document references: the derived set **unioned**
+ * with the document's stored `blobReferences` list.
+ *
+ * This is the canonical extractor for *retention* decisions — it never
+ * under-counts, so it is the right input for an upload set on save, a download
+ * set on load, or anything deciding what to keep. It sees strictly more than
+ * `hasBlobReferences` (which misses raw `blobRef`s).
+ *
+ * To recompute what a document *currently* references, use
+ * `deriveBlobReferences` instead — the union here cannot shrink.
+ *
+ * Mirrors the relay's `save_blob_refs` (`relay/src/api.rs`), which takes the
+ * same union for the same reason.
+ */
+export function collectBlobReferences(document: DiagramDocument): string[] {
+  const blobIds = new Set<string>(deriveBlobReferences(document));
 
   if (document.blobReferences) {
     for (const id of document.blobReferences) {

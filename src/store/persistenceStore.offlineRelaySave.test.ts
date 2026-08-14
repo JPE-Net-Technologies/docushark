@@ -91,6 +91,11 @@ describe('saveDocumentPdfSettings — offline relay edit durability (JP-106)', (
   });
 
   it('pins collected blob references onto the cached + queued snapshot (JP-127)', () => {
+    // NB: the blobRef must be a real SHA-256 shape (64 lowercase hex). Blob ids
+    // are content hashes on both the client (`BlobStorage.computeHash`) and the
+    // relay, and the reference walk validates that shape (JP-494) — a made-up id
+    // like `hash-abc` was never a value the system could produce.
+    //
     // The data-loss case: a doc references a blob (FileShape.blobRef) but its
     // GC list (`blobReferences`) is empty/stale. Pre-fix the offline-queued
     // snapshot kept that empty list, so on reconnect the replay saved a
@@ -102,7 +107,7 @@ describe('saveDocumentPdfSettings — offline relay edit durability (JP-106)', (
     });
     const doc = makeRelayDoc('relay-doc-asset');
     doc.pages = {
-      p1: { id: 'p1', name: 'P1', shapes: { s1: { id: 's1', type: 'file', blobRef: 'hash-abc' } } },
+      p1: { id: 'p1', name: 'P1', shapes: { s1: { id: 's1', type: 'file', blobRef: 'abc0000000000000000000000000000000000000000000000000000000000000' } } },
     } as unknown as DiagramDocument['pages'];
     doc.pageOrder = ['p1'];
     doc.activePageId = 'p1';
@@ -114,10 +119,10 @@ describe('saveDocumentPdfSettings — offline relay edit durability (JP-106)', (
     expect(ok).toBe(true);
     expect(syncManagerMock.queueSave).toHaveBeenCalledTimes(1);
     const queuedCalls = syncManagerMock.queueSave.mock.calls as unknown as Array<[DiagramDocument, string]>;
-    expect(queuedCalls[0]?.[0]?.blobReferences).toContain('hash-abc');
+    expect(queuedCalls[0]?.[0]?.blobReferences).toContain('abc0000000000000000000000000000000000000000000000000000000000000');
     // The cached snapshot carries them too (same reconciled doc).
     const cachedCalls = cacheMock.put.mock.calls as unknown as Array<[DiagramDocument, string]>;
-    expect(cachedCalls[0]?.[0]?.blobReferences).toContain('hash-abc');
+    expect(cachedCalls[0]?.[0]?.blobReferences).toContain('abc0000000000000000000000000000000000000000000000000000000000000');
   });
 
   it('queues on a COLD BOOT before any connection (authenticated=false) — JP-106 follow-up', () => {
@@ -373,7 +378,7 @@ describe('reattachAwaitingRelayDocument — no clobber of unsynced edits (JP-106
     localNewer.modifiedAt = 5000;
     localNewer.blobReferences = [];
     localNewer.pages = {
-      p1: { id: 'p1', name: 'P1', shapes: { s1: { id: 's1', type: 'file', blobRef: 'hash-keep' } } },
+      p1: { id: 'p1', name: 'P1', shapes: { s1: { id: 's1', type: 'file', blobRef: 'deadbeef00000000000000000000000000000000000000000000000000000000' } } },
     } as unknown as DiagramDocument['pages'];
     saveDocumentToStorage(localNewer);
 
@@ -401,7 +406,7 @@ describe('reattachAwaitingRelayDocument — no clobber of unsynced edits (JP-106
     expect(queued[0]?.[0]?.id).toBe('doc-newer');
     expect(queued[0]?.[0]?.modifiedAt).toBe(5000);
     // The queued snapshot carries the pinned blob ref so the replay can't orphan it.
-    expect(queued[0]?.[0]?.blobReferences).toContain('hash-keep');
+    expect(queued[0]?.[0]?.blobReferences).toContain('deadbeef00000000000000000000000000000000000000000000000000000000');
     expect(usePersistenceStore.getState().isAwaitingRelayLoad).toBe(false);
   });
 

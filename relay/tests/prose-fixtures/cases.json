@@ -1,0 +1,511 @@
+{
+  "atomsWhy": "Node types both sides must treat as childless atoms. Declared HERE, in a language-neutral file, rather than read from either implementation's own list — a test that asks `is_atom` which nodes to check will silently skip a node deleted from `is_atom`, which is a guard that asserts nothing. An atom that keeps children serializes to byte-identical HTML (the text child is re-emitted from an attribute either way), so no round-trip assertion can see the defect; it surfaces only as a client NodeView crash, after which y-prosemirror deletes the node.",
+  "atoms": [
+    "image",
+    "citationInline",
+    "fieldRef",
+    "mathInline",
+    "mathBlock",
+    "horizontalRule",
+    "bibliography",
+    "hardBreak",
+    "embeddedGroup",
+    "fileRef"
+  ],
+  "cases": [
+    {
+      "name": "citation_inline_with_every_attr",
+      "why": "citationInline is a CUSTOM_PROSE_NODES entry. Losing it from any of the six enumeration sites unwraps the span to its text on the next reserialize, so the citation stops being a citation and the bibliography stops counting it.",
+      "html": "<p>see <span data-citation data-ref-id=\"knuth1997\" data-locator=\"p. 42\" data-label=\"(Knuth, 1997)\">(Knuth, 1997)</span> here</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "label": "(Knuth, 1997)",
+            "locator": "p. 42",
+            "refId": "knuth1997"
+          },
+          "type": "citationInline"
+        }
+      ]
+    },
+    {
+      "name": "bibliography_with_escaped_entries_and_scope",
+      "why": "bibliography is a CUSTOM_PROSE_NODES entry whose payload is HTML inside an attribute. It is the case where escaping and round-tripping interact: an under-escaped `bibHtml` would re-parse as markup, and JP-432 already lost `scope=all` once, silently reverting a reader's show-all-references bibliography to cited-only.",
+      "html": "<div data-bibliography data-bib-html=\"&lt;div class=&quot;csl-entry&quot;&gt;Knuth, D.&lt;/div&gt;\" data-scope=\"all\"></div>",
+      "nodes": [
+        {
+          "attrs": {
+            "bibHtml": "<div class=\"csl-entry\">Knuth, D.</div>",
+            "scope": "all"
+          },
+          "type": "bibliography"
+        }
+      ]
+    },
+    {
+      "name": "field_ref_named_and_resolved",
+      "why": "fieldRef is a CUSTOM_PROSE_NODES entry. Its cached `label` is also its text child, so a node that survives parse but not serialize degrades to bare text that looks correct until the field's value changes and the stale text stays.",
+      "html": "<p>The <span data-field data-name=\"Company\" data-label=\"Acme Inc.\">Acme Inc.</span> ships</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "label": "Acme Inc.",
+            "name": "Company"
+          },
+          "type": "fieldRef"
+        }
+      ]
+    },
+    {
+      "name": "math_inline_mid_sentence",
+      "why": "mathInline is a CUSTOM_PROSE_NODES entry and a childless inline atom — the exact shape that vanishes when `is_atom` does not know it (an atom has no children to unwrap to, so an unknown-type unwrap deletes it outright).",
+      "html": "<p>where <span data-math-inline data-latex=\"x^2\"></span> holds</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "latex": "x^2"
+          },
+          "type": "mathInline"
+        }
+      ]
+    },
+    {
+      "name": "math_block_alone",
+      "why": "mathBlock is a CUSTOM_PROSE_NODES entry and the block half of the math pair — a childless BLOCK atom. Block and inline atoms take different arms in both the parser and the serializer, so one can be wired while the other is not.",
+      "html": "<div data-math-block data-latex=\"E = mc^2\"></div>",
+      "nodes": [
+        {
+          "attrs": {
+            "latex": "E = mc^2"
+          },
+          "type": "mathBlock"
+        }
+      ]
+    },
+    {
+      "name": "file_ref_with_every_attr",
+      "why": "fileRef is a CUSTOM_PROSE_NODES entry (JP-495) and the node whose omission from `prose_validate::is_known_type` deleted it outright — the defect that motivated this corpus. Its blobRef must survive verbatim in `blob://<hash>` URI form or the blob becomes invisible to GC (JP-494) and the bytes are swept.",
+      "html": "<p><span data-file-ref data-blob-ref=\"blob://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" data-file-name=\"notes.pdf\" data-mime-type=\"application/pdf\" data-file-size=\"12345\">notes.pdf</span></p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "blobRef": "blob://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "fileName": "notes.pdf",
+            "fileSize": "12345",
+            "mimeType": "application/pdf"
+          },
+          "type": "fileRef"
+        }
+      ]
+    },
+    {
+      "name": "inline_atom_between_two_text_runs",
+      "why": "Whitespace around an inline atom is the failure no schema test can see: getting run-membership wrong swallows the space before the chip or doubles the one after it, and the document still validates. JP-495 hit this.",
+      "html": "<p>see <span data-file-ref data-blob-ref=\"blob://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\" data-file-name=\"spec.pdf\">spec.pdf</span> for details</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "blobRef": "blob://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "fileName": "spec.pdf"
+          },
+          "type": "fileRef"
+        }
+      ]
+    },
+    {
+      "name": "inline_atom_alone_in_a_table_cell",
+      "why": "A table cell wraps its content in a paragraph, so an inline atom here sits at the deepest nesting the schema allows. Run-membership bugs surface here first, and a cell is where imported attachments actually land.",
+      "html": "<table><tr><td><p><span data-file-ref data-blob-ref=\"blob://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\" data-file-name=\"row.csv\">row.csv</span></p></td></tr></table>",
+      "nodes": [
+        {
+          "type": "table"
+        },
+        {
+          "type": "tableRow"
+        },
+        {
+          "type": "tableCell"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "blobRef": "blob://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "fileName": "row.csv"
+          },
+          "type": "fileRef"
+        }
+      ]
+    },
+    {
+      "name": "inline_atom_is_a_paragraphs_only_child",
+      "why": "A paragraph whose only child is an atom holds no text, so any 'skip the empty paragraph' shortcut drops the atom with it. Found in the PDF export path, where exactly that shortcut existed.",
+      "html": "<p><span data-math-inline data-latex=\"\\alpha\"></span></p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "latex": "\\alpha"
+          },
+          "type": "mathInline"
+        }
+      ]
+    },
+    {
+      "name": "task_list_checked_and_unchecked",
+      "why": "JP-432: task lists were aliased to bullet lists, silently losing every checkbox state. The stored form carries no checkbox chrome — that is render-only — so this also pins that the chrome never leaks back into storage.",
+      "html": "<ul data-type=\"taskList\"><li data-type=\"taskItem\" data-checked=\"true\"><p>done</p></li><li data-type=\"taskItem\" data-checked=\"false\"><p>todo</p></li></ul>",
+      "nodes": [
+        {
+          "type": "taskList"
+        },
+        {
+          "attrs": {
+            "checked": "true"
+          },
+          "type": "taskItem"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "checked": "false"
+          },
+          "type": "taskItem"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "nested_bullet_list",
+      "why": "Nesting is where a lenient close-tag scan goes wrong: a mis-scoped list either flattens a level (losing hierarchy) or swallows the sibling that follows it.",
+      "html": "<ul><li><p>one</p><ul><li><p>nested</p></li></ul></li></ul>",
+      "nodes": [
+        {
+          "type": "bulletList"
+        },
+        {
+          "type": "listItem"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "bulletList"
+        },
+        {
+          "type": "listItem"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "callout_with_variant",
+      "why": "JP-432 unwrap regression: callout / figure / gallery were silently unwrapped to their children, so a warning callout became an anonymous paragraph. `data-variant` is the attr that carries the user's choice.",
+      "html": "<div data-callout data-variant=\"warning\"><p>heads up</p></div>",
+      "nodes": [
+        {
+          "attrs": {
+            "variant": "warning"
+          },
+          "type": "callout"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "figure_with_caption",
+      "why": "figure/figcaption is a two-node structure where the caption is a separate schema node. Wiring the wrapper without the caption drops the caption text into the figure's inline content, or out of the document entirely.",
+      "html": "<figure><img src=\"blob://dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\" alt=\"diagram\"><figcaption>Fig 1</figcaption></figure>",
+      "nodes": [
+        {
+          "type": "figure"
+        },
+        {
+          "attrs": {
+            "alt": "diagram",
+            "src": "blob://dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          "type": "image"
+        },
+        {
+          "type": "figcaption"
+        }
+      ]
+    },
+    {
+      "name": "gallery_of_two_images",
+      "why": "JP-428: the first version-history E2E lost a gallery and everything after it. The inner `.gallery-items` div is render-only chrome that both sides must handle without treating it as content.",
+      "html": "<div data-gallery data-layout=\"row\"><div class=\"gallery-items\"><img src=\"blob://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"><img src=\"blob://ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\"></div></div>",
+      "nodes": [
+        {
+          "attrs": {
+            "layout": "row"
+          },
+          "type": "gallery"
+        },
+        {
+          "attrs": {
+            "src": "blob://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "type": "image"
+        },
+        {
+          "attrs": {
+            "src": "blob://ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          "type": "image"
+        }
+      ]
+    },
+    {
+      "name": "table_with_spans_and_colwidth",
+      "why": "JP-432 Pillar D, and a live silent-loss: a merged cell serialized as a lone `<td>` with no colspan, so the next sanitize padded a phantom cell into the merge and the table went ragged. `colwidth` is stored as a native array and rendered as a comma string, so it is the attr most likely to drift between the two encoders.",
+      "html": "<table><tr><th colspan=\"2\" colwidth=\"100,120\"><p>Wide</p></th><th><p>C</p></th></tr><tr><td rowspan=\"2\"><p>tall</p></td><td><p>b</p></td><td><p>c</p></td></tr><tr><td><p>d</p></td><td><p>e</p></td></tr></table>",
+      "nodes": [
+        {
+          "type": "table"
+        },
+        {
+          "type": "tableRow"
+        },
+        {
+          "attrs": {
+            "colspan": "2",
+            "colwidth": "100,120"
+          },
+          "type": "tableHeader"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "tableHeader"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "tableRow"
+        },
+        {
+          "attrs": {
+            "rowspan": "2"
+          },
+          "type": "tableCell"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "tableCell"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "tableCell"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "tableRow"
+        },
+        {
+          "type": "tableCell"
+        },
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "tableCell"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "stacked_marks_on_one_run",
+      "why": "MARK_ATTRS parity. Marks nest in a fixed outer-to-inner order so both directions are deterministic; a different order on either side makes the round-trip non-idempotent and the stored HTML churns on every save.",
+      "html": "<p><strong><em><u>all three</u></em></strong> and <mark style=\"background-color: #ff0\">hi</mark> and <span style=\"color: rgb(200, 0, 0)\">warn</span></p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "embedded_group_between_siblings",
+      "why": "JP-432: embeddedGroup had no relay handler at all, so the node was deleted on read. The surrounding paragraphs are the canary — a node that fails to parse must never take the content after it with it.",
+      "html": "<p>before</p><div data-type=\"embedded-group\" data-group-id=\"grp-1\" data-group-name=\"Arch\"></div><p>after</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "groupId": "grp-1",
+            "groupName": "Arch"
+          },
+          "type": "embeddedGroup"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "code_block_with_language",
+      "why": "JP-432: codeBlock dropped its language on every round-trip, so a syntax-highlighted block reverted to plain on the next save. The language lives in a class, not an attribute, which is why it was missed.",
+      "html": "<pre><code class=\"language-rust\">fn main() {}</code></pre>",
+      "nodes": [
+        {
+          "attrs": {
+            "language": "rust"
+          },
+          "type": "codeBlock"
+        }
+      ]
+    },
+    {
+      "name": "block_alignment_on_heading_and_paragraph",
+      "why": "BLOCK_ATTRS style-encoded attrs: `textAlign` is written into `style`, not a plain attribute, so it needs the merge/split logic on both legs. A half-wired row loses the user's alignment silently.",
+      "html": "<h2 style=\"text-align: center\">Title</h2><p style=\"text-align: right\">body</p>",
+      "nodes": [
+        {
+          "attrs": {
+            "level": "2",
+            "textAlign": "center"
+          },
+          "type": "heading"
+        },
+        {
+          "attrs": {
+            "textAlign": "right"
+          },
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "durable_block_ids",
+      "why": "JP-432 Pillar C. Block ids are the anchors every MCP surgical edit addresses; an id that does not survive the round-trip turns the next anchored edit into a no-op or a write to the wrong block.",
+      "html": "<h2 id=\"blk-aaaa\">t</h2><p id=\"blk-bbbb\">x</p><pre id=\"blk-cccc\"><code class=\"language-rust\">let c;</code></pre>",
+      "nodes": [
+        {
+          "attrs": {
+            "id": "blk-aaaa",
+            "level": "2"
+          },
+          "type": "heading"
+        },
+        {
+          "attrs": {
+            "id": "blk-bbbb"
+          },
+          "type": "paragraph"
+        },
+        {
+          "attrs": {
+            "id": "blk-cccc",
+            "language": "rust"
+          },
+          "type": "codeBlock"
+        }
+      ]
+    },
+    {
+      "name": "ordered_list_type_and_start",
+      "why": "Two attrs on one node where one is style-ish and one is numeric. `start` is stored as a number and rendered as a string, the same typed-attr hazard as heading level.",
+      "html": "<ol start=\"3\" type=\"a\"><li><p>c</p></li></ol>",
+      "nodes": [
+        {
+          "attrs": {
+            "start": "3",
+            "type": "a"
+          },
+          "type": "orderedList"
+        },
+        {
+          "type": "listItem"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "hard_break_and_horizontal_rule",
+      "why": "The two void atoms. They carry no attributes and no text, so nothing about them is visible in a diff except their presence — a serializer that forgets one drops a line break or a section divider with no other symptom. `hardBreak` is inline and `horizontalRule` is a block, so they take different arms on both legs.",
+      "html": "<p>line one<br>line two</p><hr><p>after</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "hardBreak"
+        },
+        {
+          "type": "horizontalRule"
+        },
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "link_mark_with_href",
+      "why": "`link` is the one mark handled outside the MARKS table because it carries an href. The editor re-applies class/rel at render, so this also pins that the relay stores href alone and does not start emitting the render-only attrs.",
+      "html": "<p>see <a href=\"https://example.com\">the docs</a></p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "image_with_sizing_and_float",
+      "why": "JP-319: dropping width/height/data-float reset every image to inline on each MCP edit. `data-float` <-> `float` is an HTML<->PM name translation, the kind that is easy to wire in one direction only.",
+      "html": "<img src=\"blob://1111111111111111111111111111111111111111111111111111111111111111\" alt=\"logo\" width=\"300\" height=\"120\" data-float=\"left\">",
+      "nodes": [
+        {
+          "attrs": {
+            "alt": "logo",
+            "float": "left",
+            "height": "120",
+            "src": "blob://1111111111111111111111111111111111111111111111111111111111111111",
+            "width": "300"
+          },
+          "type": "image"
+        }
+      ]
+    }
+  ]
+}

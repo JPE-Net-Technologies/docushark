@@ -219,6 +219,15 @@ pub const CUSTOM_PROSE_NODES: &[(&str, &str, &str)] = &[
     // field atoms so a flatten doesn't unwrap them. Mirrors `LatexExtension.ts`.
     ("mathInline", "span", "data-math-inline"),
     ("mathBlock", "div", "data-math-block"),
+    // An attached file, inline (JP-495): `<span data-file-ref data-blob-ref
+    // data-file-name data-mime-type data-file-size>`. Inline rather than block
+    // so it composes inside a table cell and mid-sentence, which is what import
+    // fidelity needs. The blob is addressed in **`blob://<hash>` URI form** —
+    // the attribute lives inside an HTML string, so the bare-hash `blobRef`
+    // shape can never be seen there, and only the URI grammar is discoverable
+    // by the reference walk (JP-494), the publish manifest, and the MCP file
+    // tools. Mirrors `src/tiptap/FileRefExtension.ts`.
+    ("fileRef", "span", "data-file-ref"),
 ];
 
 /// PM node type for an HTML element that matches a custom prose-helper node:

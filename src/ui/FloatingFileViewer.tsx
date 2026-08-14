@@ -20,11 +20,12 @@ import {
   resolveViewerPanelBounds,
   type PanelBounds,
 } from './floatingPosition';
-import { FileViewerContent, useFileShape } from './FileViewerContent';
+import { FileViewerContent } from './FileViewerContent';
+import type { FileDescriptor } from './fileDescriptor';
 import './FloatingFileViewer.css';
 
 export interface FloatingFileViewerProps {
-  shapeId: string;
+  descriptor: FileDescriptor;
   onClose: () => void;
 }
 
@@ -40,8 +41,8 @@ function viewportSize() {
   return { w: window.innerWidth, h: window.innerHeight };
 }
 
-export function FloatingFileViewer({ shapeId, onClose }: FloatingFileViewerProps) {
-  const fileShape = useFileShape(shapeId);
+export function FloatingFileViewer({ descriptor, onClose }: FloatingFileViewerProps) {
+
   const setFileViewerMode = useSessionStore((s) => s.setFileViewerMode);
   const storedBounds = useUIPreferencesStore((s) => s.floatingViewerBounds);
   const setStoredBounds = useUIPreferencesStore((s) => s.setFloatingViewerBounds);
@@ -124,7 +125,7 @@ export function FloatingFileViewer({ shapeId, onClose }: FloatingFileViewerProps
     [onClose],
   );
 
-  if (!fileShape) {
+  if (!descriptor) {
     return null;
   }
 
@@ -138,11 +139,11 @@ export function FloatingFileViewer({ shapeId, onClose }: FloatingFileViewerProps
         height: `${bounds.h}px`,
       }}
       role="complementary"
-      aria-label={`File viewer: ${fileShape.fileName}`}
+      aria-label={`File viewer: ${descriptor.fileName}`}
       onKeyDown={handleKeyDown}
     >
       <FileViewerContent
-        shapeId={shapeId}
+        descriptor={descriptor}
         onClose={onClose}
         headerPointerDown={(e) => beginGesture(e, 'move')}
         headerExtras={

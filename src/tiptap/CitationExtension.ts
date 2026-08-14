@@ -28,6 +28,7 @@ import { useReferenceStore } from '../store/referenceStore';
 import { referencePreview } from '../services/citations/preview';
 import { scheduleProjectionWriteBack } from './proseProjection';
 import { showCitationCard, hideCitationCard } from './citationHoverCard';
+import { sanitizeBibliographyHtml } from '../utils/sanitizeHtml';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -177,7 +178,11 @@ export const CitationInline = Node.create<CitationOptions>({
           .then(({ formatCitation }) => formatCitation([item], style, 'html'))
           .then((html) => {
             if (token !== renderToken) return; // a newer render superseded this
-            dom.innerHTML = html || escapeHtml(inlineFallback(item));
+            // Same rule as the bibliography: the formatter escapes reference
+            // metadata, but "the formatter is trusted" is a property that has to
+            // be re-verified on every dependency bump, and one rule for every
+            // innerHTML write is cheaper to keep true than four exceptions.
+            dom.innerHTML = sanitizeBibliographyHtml(html || escapeHtml(inlineFallback(item)));
             writeBackLabel(dom.textContent ?? '');
           })
           .catch((err) => {
@@ -370,7 +375,15 @@ export const Bibliography = Node.create<CitationOptions>({
       content.className = 'bibliography-content';
       // Paint the cached bibliography HTML immediately (JP-89 5.5) so it shows on
       // reload without waiting on the async format chunk (offline-safe).
-      if (node.attrs['bibHtml']) content.innerHTML = node.attrs['bibHtml'] as string;
+      // Sanitized, not trusted: this value comes from the DOCUMENT, and a
+      // document can be written by a collaborator, an MCP agent, or an import.
+      // The relay stores the attribute escaped so the HTML round-trip is safe,
+      // but the parse hands back raw markup — and raw markup reaching innerHTML
+      // is stored XSS that fires for every viewer, guests of a published doc
+      // included (JP-496).
+      if (node.attrs['bibHtml']) {
+        content.innerHTML = sanitizeBibliographyHtml(node.attrs['bibHtml'] as string);
+      }
 
       let scope = (node.attrs['scope'] as 'cited' | 'all') ?? 'cited';
 
@@ -454,7 +467,11 @@ export const Bibliography = Node.create<CitationOptions>({
               ? 'No citations in this document yet.'
               : 'No references yet.';
           const empty = `<p class="bibliography-empty">${msg}</p>`;
-          content.innerHTML = empty;
+          // A constant string, so this one is provably safe — routed through
+          // the sanitizer anyway so the rule stays absolute. "Every innerHTML
+          // write here is sanitized" is far cheaper to keep true than a set of
+          // individually-justified exceptions, and the guard below enforces it.
+          content.innerHTML = sanitizeBibliographyHtml(empty);
           writeBackContent(empty);
           return;
         }
@@ -465,7 +482,7 @@ export const Bibliography = Node.create<CitationOptions>({
             if (token !== renderToken) return;
             // citeproc returned nothing (logged in format.ts) → degrade to the
             // plain preview list rather than a blank box.
-            content.innerHTML = html || plainBibliography(items);
+            content.innerHTML = sanitizeBibliographyHtml(html || plainBibliography(items));
             writeBackContent(content.innerHTML);
           })
           .catch((err) => {
@@ -474,7 +491,7 @@ export const Bibliography = Node.create<CitationOptions>({
             // dynamic import). Degrade to the dependency-free list so the refs
             // still show; the real error is in the console for diagnosis.
             console.error('[citations] bibliography render failed:', err);
-            content.innerHTML = plainBibliography(items);
+            content.innerHTML = sanitizeBibliographyHtml(plainBibliography(items));
             writeBackContent(content.innerHTML);
           });
       };
