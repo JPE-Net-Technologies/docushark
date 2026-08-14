@@ -6,10 +6,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { useDocumentStore } from '../store/documentStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { resolveBlobObjectUrl } from '../storage/blobResolver';
-import { isFile, type FileShape } from '../shapes/Shape';
 import {
   Copy,
   Download,
@@ -38,13 +36,6 @@ const AudioViewer = lazy(() => import('./viewers/AudioViewer'));
 const VideoViewer = lazy(() => import('./viewers/VideoViewer'));
 const TextViewer = lazy(() => import('./viewers/TextViewer'));
 const GenericFileViewer = lazy(() => import('./viewers/GenericFileViewer'));
-
-/** Resolve a shape id to its FileShape, or null when absent/not a file. */
-export function useFileShape(shapeId: string): FileShape | null {
-  const shapes = useDocumentStore((state) => state.shapes);
-  const shape = shapes[shapeId];
-  return shape && isFile(shape) ? shape : null;
-}
 
 export interface FileViewerContentProps {
   /** What to show. Hosts build this; see `fileDescriptor.ts`. */

@@ -90,7 +90,13 @@ fn is_known_type(t: &str) -> bool {
 /// Leaf/atom node types: the client treats these as atoms, so they must carry
 /// **no** children. A child here is the exact shape that crashes NodeView
 /// reconciliation.
-fn is_atom(t: &str) -> bool {
+///
+/// `pub(super)` so the fixture corpus ([`super::prose_fixture_tests`]) can
+/// assert the invariant this list enforces. It has to: an atom that keeps its
+/// children still serializes to byte-identical HTML — the serializer re-emits
+/// the text child either way — so an omission here is invisible to any
+/// round-trip check and only shows up as a client crash (JP-496).
+pub(super) fn is_atom(t: &str) -> bool {
     matches!(
         t,
         "image"

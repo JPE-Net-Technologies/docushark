@@ -31,9 +31,7 @@ import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import type { Doc as YDoc } from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AnyExtension } from '@tiptap/core';
-import { sharedProseExtensions } from './TiptapEditor';
-import { handleProseFileDrop } from '../tiptap/proseDropGuard';
-import { handleCitationDoiPaste } from '../tiptap/citationPaste';
+import { sharedProseExtensions, sharedProseEditorProps } from './TiptapEditor';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore, usePageMirror } from '../store/richTextPagesStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
@@ -117,14 +115,7 @@ export function CollaborativeProseEditor({
       // No initial `content`: the relay is the sole prose seeder (JP-284), so the
       // editor adopts the bound fragment. Passing content would inject a second
       // prose lineage that merges into the fragment and duplicates content.
-      editorProps: {
-        attributes: { class: 'tiptap-prose' },
-        // Paste a bare DOI → resolve + add to the library + insert a citation.
-        handlePaste: (view, event) => handleCitationDoiPaste(view, event),
-        // Same file-drop guard as the non-collab editor — the browser default
-        // would navigate away and lose unsaved state (JP-495).
-        handleDrop: (view, event) => handleProseFileDrop(view, event as DragEvent),
-      },
+      editorProps: sharedProseEditorProps,
       onUpdate: ({ editor }) => {
         const json = editor.getJSON();
         const html = editor.getHTML();

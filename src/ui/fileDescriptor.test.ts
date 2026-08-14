@@ -103,3 +103,23 @@ describe('describeFileShape', () => {
     expect(typeof capable?.onRecover).toBe('function');
   });
 });
+
+describe('preview narrowing', () => {
+  it('carries the page count and drops the wider preview fields', () => {
+    // JP-496: the descriptor's `preview` type is narrower than the shape's on
+    // purpose (the viewer reads only `pageCount`). Passing the shape's object
+    // straight through type-checks — the excess-property check does not fire on
+    // a non-literal — so the type would understate what the value held. Narrow
+    // the value at the boundary and the two agree.
+    const d = describeFileShape(
+      fileShape({
+        preview: { pageCount: 12, thumbnail: 'data:image/jpeg;base64,zz', dimensions: { width: 800, height: 600 } },
+      } as Partial<FileShape>),
+    );
+    expect(d?.preview).toEqual({ pageCount: 12 });
+  });
+
+  it('omits preview entirely when the shape has none', () => {
+    expect(describeFileShape(fileShape())).not.toHaveProperty('preview');
+  });
+});

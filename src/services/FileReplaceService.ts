@@ -7,7 +7,7 @@ import type { FileShape, FileCategory } from '../shapes/Shape';
 import { isFile } from '../shapes/Shape';
 import { blobStorage } from '../storage/BlobStorage';
 import { evictBlob } from '../storage/blobResolver';
-import { hasSpaceForBlob } from '../storage/StorageQuotaMonitor';
+import { uploadRejectionReason } from '../storage/uploadLimits';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useNotificationStore } from '../store/notificationStore';
@@ -65,10 +65,10 @@ export async function replaceFileContents(
     return { success: false, error: validationError };
   }
 
-  // Check storage quota
-  const hasSpace = await hasSpaceForBlob(newFile.size);
-  if (!hasSpace) {
-    return { success: false, error: 'Storage quota exceeded' };
+  // Size ceiling + quota, the same gate every user-pick path uses (JP-496).
+  const rejection = await uploadRejectionReason(newFile);
+  if (rejection !== null) {
+    return { success: false, error: rejection };
   }
 
   try {
