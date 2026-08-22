@@ -164,6 +164,8 @@ icons directly — build those with `add_shape(s)`.
 | Tool | Purpose |
 | -- | -- |
 | `add_reference` | Add reference(s) to the document's library. Supply **either** `doi` (resolved via doi.org to CSL-JSON) **or** `items` (raw CSL-JSON object(s)). Dedups by DOI then id; returns the ids added + how many were skipped. |
+| `update_reference` | Repair an existing entry. `id` + `item` (CSL-JSON); fields **merge** by default (an explicit `null` clears one), `replace: true` swaps the whole item. The `id` is the library key and cannot change — renaming it would orphan every citation pointing at it. Fails on an unknown id. |
+| `delete_reference` | Remove an entry from the library and the bibliography. **Refuses while the reference is still cited inline**, naming the page/block sites and the count; `force: true` deletes anyway and leaves those citations unresolved. |
 
 This populates the **library** only — it doesn't yet insert an inline citation
 or bibliography into the prose (do that in the editor). The library is stored as
