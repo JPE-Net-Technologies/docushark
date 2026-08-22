@@ -228,6 +228,78 @@ pub fn add_references_in_place(doc: &mut Value, incoming: &[Value]) -> Result<Ad
     })
 }
 
+/// Replace or merge one existing CSL item in the doc's JSON library (the cold
+/// path). Returns the resulting item.
+///
+/// `merge` decides which of the two repairs a caller wanted. Merging patches
+/// named fields and leaves the rest — the common case, "this entry is missing
+/// its author". Replacing swaps the whole item, for when the original was
+/// wrong rather than incomplete. Neither touches `itemOrder`: the id is
+/// unchanged, so its display position is unchanged.
+///
+/// Refuses an unknown id rather than creating one. `add_reference` is how a
+/// reference comes into existence, and silently upserting here would turn a
+/// typo'd id into a second stranded entry — the exact failure this tool exists
+/// to end.
+pub fn update_reference_in_place(
+    doc: &mut Value,
+    id: &str,
+    patch: &Value,
+    merge: bool,
+) -> Result<Value, String> {
+    let refs = references_mut(doc)?;
+    let items = refs.get_mut("items").and_then(Value::as_object_mut).unwrap();
+    let current = items
+        .get(id)
+        .cloned()
+        .ok_or_else(|| format!("No reference '{}' in this document's library", id))?;
+
+    let patch_obj = patch
+        .as_object()
+        .ok_or("'item' must be a CSL-JSON object")?;
+
+    let merged = if merge {
+        let mut out = current.as_object().cloned().unwrap_or_default();
+        for (k, v) in patch_obj {
+            // An explicit null clears a field; anything else sets it. Without
+            // this there is no way to *remove* wrong metadata, only to overwrite
+            // it with something else.
+            if v.is_null() {
+                out.remove(k);
+            } else {
+                out.insert(k.clone(), v.clone());
+            }
+        }
+        Value::Object(out)
+    } else {
+        patch.clone()
+    };
+
+    // The id is the library key, so it is not the patch's to change. Renaming
+    // one would orphan every inline citation pointing at it.
+    let mut normalized = normalize_item(merged, id)
+        .ok_or("the updated reference is not a CSL-JSON object")?;
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.insert("id".into(), json!(id));
+    }
+
+    items.insert(id.to_string(), normalized.clone());
+    Ok(normalized)
+}
+
+/// Remove one reference from the doc's JSON library and from `itemOrder` (the
+/// cold path). Returns whether it was there. Idempotent, so a replay under
+/// `mutate_with_retry` is safe.
+pub fn delete_reference_in_place(doc: &mut Value, id: &str) -> Result<bool, String> {
+    let refs = references_mut(doc)?;
+    let items = refs.get_mut("items").and_then(Value::as_object_mut).unwrap();
+    let existed = items.remove(id).is_some();
+
+    let order = refs.get_mut("itemOrder").and_then(Value::as_array_mut).unwrap();
+    order.retain(|v| v.as_str() != Some(id));
+    Ok(existed)
+}
+
 /// Build the `list_references` result payload from raw library parts (items map,
 /// display order, optional style). Shared by the cold JSON and resident live
 /// read paths.

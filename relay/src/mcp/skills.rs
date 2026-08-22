@@ -45,11 +45,26 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   scholarly content, cite real sources this way — don't hand-type a "References"
   list.** The formatted bibliography (`<div data-bibliography>`) is generated in
   the editor from the library, so you don't emit it yourself.
+- `data-label` is a CACHE, not the source of truth. A connected editor recomputes
+  it from the library entry in the active citation style and writes the result
+  back over whatever you wrote. So a citation that renders as the title instead
+  of "(Author, Year)" means the LIBRARY ENTRY is missing an author — repair it
+  with `update_reference` (fields merge; an explicit null clears one). Rewriting
+  the label alone will be overwritten the next time an editor opens the page.
+  `delete_reference` removes an entry, and refuses while it is still cited unless
+  you pass `force`.
 - Fields: define a reusable value with `set_fields`, then reference it as `{{name}}`
   (Markdown). If the doc won't be opened in an editor before you hand it off (e.g.
   export), bake the value into the stored HTML directly with
   `<span data-field data-name="name" data-label="value">value</span>` (format:"html")
   so it isn't blank.
+- Character entities: with format:"markdown" (the default) and format:"html",
+  named entities (`&mdash;`, `&le;`, `&aacute;`) and numeric ones (`&#275;`,
+  `&#x2014;`) both decode to the character. Literal Unicode is always safe too.
+  A literal ampersand in HTML must still be written `&amp;` — including inside a
+  URL, where `?a=1&sect;b` is read as a section sign exactly as a browser would
+  read it. After any format:"html" write, reading the page back is a cheap way to
+  confirm you got what you meant.
 - Every <img> needs a real src (a blob:, https:, or data: URL). A src-less image
   is dropped — it would crash the editor.
 - Tables must be rectangular *counting spans*: a <table> of <tr> rows whose

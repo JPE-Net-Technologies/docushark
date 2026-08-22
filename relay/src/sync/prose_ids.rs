@@ -44,6 +44,53 @@ pub fn collect_block_ids(html: &str) -> Vec<String> {
     out
 }
 
+/// Every inline citation in `html`, as `(refId, blockId)` pairs in document
+/// order — the census `delete_reference` uses to decide whether removing a
+/// library entry would strand citations, and to say *where* if it would.
+///
+/// The `blockId` is the id of the nearest enclosing id-bearing block, or empty
+/// when that block carries none (ids are fill-on-write, so older content has
+/// gaps). Duplicates are kept: a reference cited three times reports three
+/// times, which is the number a caller wants when weighing a `force` delete.
+///
+/// Reads the document model rather than scanning the HTML for `data-ref-id`.
+/// That is not fastidiousness — a bibliography's `data-bib-html` attribute
+/// carries *escaped* markup that can itself contain citation spans, and a text
+/// scan would count those as live citations and refuse a delete that is
+/// actually safe.
+pub fn collect_citations(html: &str) -> Vec<(String, String)> {
+    fn walk(node: &PmNode, block_id: &str, out: &mut Vec<(String, String)>) {
+        // An id-bearing block relabels its subtree; anything else inherits.
+        let here = if TEXT_LEAVES.contains(&node.node_type.as_str()) {
+            node.attrs
+                .iter()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.as_str())
+                .unwrap_or("")
+        } else {
+            block_id
+        };
+        for c in &node.children {
+            if let PmChild::Node(n) = c {
+                if n.node_type == "citationInline" {
+                    if let Some((_, ref_id)) = n.attrs.iter().find(|(k, _)| k == "refId") {
+                        if !ref_id.is_empty() {
+                            out.push((ref_id.clone(), here.to_string()));
+                        }
+                    }
+                }
+                walk(n, here, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for b in &prose_parse::html_to_blocks(html) {
+        walk(b, "", &mut out);
+    }
+    out
+}
+
+
 /// Fill-only-if-absent: assign `mint()` to every id-bearing block whose id is
 /// missing, empty, collides with `taken` (ids already on the page outside this
 /// content), or duplicates an earlier block in this content — the first

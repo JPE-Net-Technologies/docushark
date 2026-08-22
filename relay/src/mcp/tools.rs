@@ -920,7 +920,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_add_reference",
             description:
-                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The formatted bibliography (<div data-bibliography>) is generated in the editor from the library. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
+                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The data-label is a CACHE, not the source of truth: a connected editor recomputes it from the library entry in the active citation style and writes the result back, so a label that renders wrong means the LIBRARY ENTRY is wrong — most often a missing author, which makes the formatter fall back to a title-first form. Repair it with update_reference; rewriting the label alone will be overwritten. The formatted bibliography (<div data-bibliography>) is generated in the editor from the library. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -933,6 +933,37 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     }
                 },
                 "required": ["docId"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_update_reference",
+            description:
+                "Repair an existing reference in a document's library. Supply 'id' (the library key) and 'item' (CSL-JSON). By default the fields you supply are MERGED into the existing entry, and an explicit null clears a field; pass replace:true to swap the whole item instead. The 'id' cannot be changed here — renaming it would orphan every inline citation pointing at it. Fails if 'id' is not already in the library; use add_reference to create one. This is the tool for an inline citation that renders with the wrong text: the inline data-label is a cache the editor recomputes from the library, so fixing the entry here is what changes what readers see. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "id": {"type": "string", "description": "Id of the reference to repair, as returned by add_reference or list_references."},
+                    "item": {"type": "object", "description": "CSL-JSON fields to merge into the entry (or the whole replacement item when replace:true). An explicit null clears a field."},
+                    "replace": {"type": "boolean", "description": "Replace the whole item instead of merging the supplied fields. Default false."}
+                },
+                "required": ["docId", "id", "item"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDescriptor {
+            name: "docushark_delete_reference",
+            description:
+                "Remove a reference from a document's library, and from the bibliography generated off it. REFUSES by default when the reference is still cited inline, naming where (page id and block id) and how many, so the blast radius is visible before you act; pass force:true to delete anyway, which leaves those inline citations unresolved. To repair a wrong entry rather than remove it, use update_reference. Refuses local (renderer-owned) documents.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "docId": {"type": "string"},
+                    "id": {"type": "string", "description": "Id of the reference to remove."},
+                    "force": {"type": "boolean", "description": "Delete even though the reference is still cited inline, leaving those citations unresolved. Default false."}
+                },
+                "required": ["docId", "id"],
                 "additionalProperties": false
             }),
         },
@@ -1146,6 +1177,8 @@ pub fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> Result<ToolOutco
         "docushark_reorder_prose_pages" => reorder_prose_pages(ctx, args),
         "docushark_list_references" => list_references(ctx, args),
         "docushark_add_reference" => add_reference(ctx, args),
+        "docushark_update_reference" => update_reference(ctx, args),
+        "docushark_delete_reference" => delete_reference(ctx, args),
         "docushark_list_fields" => list_fields(ctx, args),
         "docushark_set_fields" => set_fields(ctx, args),
         "docushark_get_skills" => get_skills(args),
@@ -4528,6 +4561,180 @@ fn add_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String>
         result.as_object_mut().unwrap().insert("warning".into(), json!(w));
     }
 
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: Some(parsed.doc_id.clone()),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct UpdateReferenceArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    id: String,
+    item: Value,
+    #[serde(default)]
+    replace: bool,
+}
+
+/// Repair one existing library entry. Mirrors `add_reference`'s resident /
+/// cold split, and reuses `insert_references` on the live path — it is a
+/// per-item LWW `set` that leaves `referenceOrder` alone for an id already
+/// present, which is exactly an update.
+///
+/// Both paths run the same `update_reference_in_place` merge, the resident one
+/// against a shim document built from the live library, so "merge" can only
+/// ever mean one thing. Two implementations of a merge rule is how the field
+/// set and the order list drift apart (JP-337).
+fn update_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: UpdateReferenceArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let live = handle.references_json();
+        let mut shim = json!({ "references": { "items": live, "itemOrder": [] } });
+        let updated = super::citations::update_reference_in_place(
+            &mut shim,
+            &parsed.id,
+            &parsed.item,
+            !parsed.replace,
+        )?;
+        let framed = handle.insert_references(&[(parsed.id.clone(), updated.clone())]);
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({ "id": parsed.id, "item": updated }),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    let lock = {
+        let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
+        lock_warning(&doc)
+    };
+    let updated = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let item = super::citations::update_reference_in_place(
+            doc,
+            &parsed.id,
+            &parsed.item,
+            !parsed.replace,
+        )?;
+        stamp_doc_modified(doc, now_ms());
+        Ok(item)
+    })?;
+
+    let mut result = json!({ "id": parsed.id, "item": updated });
+    if let Some(w) = lock {
+        result.as_object_mut().unwrap().insert("warning".into(), json!(w));
+    }
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: Some(parsed.doc_id.clone()),
+        change_detail: None,
+    })
+}
+
+#[derive(Deserialize)]
+struct DeleteReferenceArgs {
+    #[serde(rename = "docId")]
+    doc_id: DocId,
+    id: String,
+    #[serde(default)]
+    force: bool,
+}
+
+/// How many inline citations point at `ref_id`, and where.
+///
+/// Reads through `resolve_prose_pages`, so a resident document is censused
+/// against the live Y.Doc content a connected editor is actually looking at,
+/// not a stale snapshot — otherwise the refusal would clear a delete on the
+/// strength of prose that has since gained a citation.
+fn citation_sites(ctx: &ToolContext, doc_id: &DocId, doc: &Value, ref_id: &str) -> Vec<String> {
+    resolve_prose_pages(ctx, doc_id, doc)
+        .iter()
+        .flat_map(|(page_id, _name, _order, content)| {
+            crate::sync::collect_citations(content)
+                .into_iter()
+                .filter(|(rid, _)| rid == ref_id)
+                .map(|(_, block_id)| {
+                    if block_id.is_empty() {
+                        format!("page {}", page_id)
+                    } else {
+                        format!("page {} block {}", page_id, block_id)
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Remove a library entry, refusing by default while it is still cited.
+///
+/// The refusal is the point of the tool. Deleting a cited reference is not
+/// wrong — sometimes it is exactly what a caller means — but doing it blind
+/// leaves inline citations pointing at nothing, and an agent has no way to see
+/// that from `list_references`. So the default answer names the sites and the
+/// count, and `force` is the caller saying they read it.
+fn delete_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
+    let parsed: DeleteReferenceArgs =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+
+    reject_if_local(ctx, &parsed.doc_id)?;
+
+    let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
+    let sites = citation_sites(ctx, &parsed.doc_id, &doc, &parsed.id);
+    if !sites.is_empty() && !parsed.force {
+        // Cap the enumeration: a reference cited fifty times makes the point in
+        // the first few, and the count carries the rest.
+        let shown: Vec<&str> = sites.iter().take(5).map(String::as_str).collect();
+        let more = sites.len().saturating_sub(shown.len());
+        return Err(format!(
+            "Reference '{}' is still cited in {} place(s): {}{}. Deleting it would leave those \
+             citations unresolved. Remove the citations first, or pass force:true to delete anyway.",
+            parsed.id,
+            sites.len(),
+            shown.join(", "),
+            if more > 0 { format!(", and {} more", more) } else { String::new() },
+        ));
+    }
+
+    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
+        let existed = handle.references_json().contains_key(&parsed.id);
+        if !existed {
+            return Err(format!("No reference '{}' in this document's library", parsed.id));
+        }
+        let framed = handle.delete_references(std::slice::from_ref(&parsed.id));
+        ctx.broadcast_update(&parsed.doc_id, framed);
+        return Ok(ToolOutcome {
+            result: json!({ "id": parsed.id, "deleted": true, "orphanedCitations": sites.len() }),
+            changed_doc_id: None,
+            change_detail: None,
+        });
+    }
+
+    let lock = {
+        let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
+        lock_warning(&doc)
+    };
+    let existed = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
+        let existed = super::citations::delete_reference_in_place(doc, &parsed.id)?;
+        if existed {
+            stamp_doc_modified(doc, now_ms());
+        }
+        Ok(existed)
+    })?;
+    if !existed {
+        return Err(format!("No reference '{}' in this document's library", parsed.id));
+    }
+
+    let mut result =
+        json!({ "id": parsed.id, "deleted": true, "orphanedCitations": sites.len() });
+    if let Some(w) = lock {
+        result.as_object_mut().unwrap().insert("warning".into(), json!(w));
+    }
     Ok(ToolOutcome {
         result,
         changed_doc_id: Some(parsed.doc_id.clone()),
@@ -8263,6 +8470,224 @@ mod tests {
         assert_eq!(listed.result["references"][0]["id"], json!("smith2020"));
         assert_eq!(listed.result["source"], json!("relay"));
         assert!(listed.changed_doc_id.is_none(), "a read must not nudge a reload");
+    }
+
+    #[test]
+    fn update_reference_merges_fields_by_default() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [
+                {"id": "reamer2024", "type": "book", "title": "A Title"},
+            ]}),
+        )
+        .unwrap();
+
+        // The reported case: an entry with no author, so the formatter falls
+        // back to a title-first label. Adding the author is the durable fix.
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_update_reference",
+            &json!({"docId": "doc1", "id": "reamer2024",
+                    "item": {"author": [{"family": "Reamer"}]}}),
+        )
+        .unwrap();
+        assert_eq!(out.result["item"]["author"][0]["family"], json!("Reamer"));
+        // Merge, so untouched fields survive.
+        assert_eq!(out.result["item"]["title"], json!("A Title"));
+        assert_eq!(out.result["item"]["type"], json!("book"));
+
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+        let stored = f.relay.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(stored["references"]["items"]["reamer2024"]["title"], json!("A Title"));
+        // An update is not an add: the order must not grow a second entry.
+        assert_eq!(stored["references"]["itemOrder"], json!(["reamer2024"]));
+    }
+
+    #[test]
+    fn update_reference_replaces_whole_item_when_asked() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [
+                {"id": "x", "type": "book", "title": "Wrong", "publisher": "Nobody"},
+            ]}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_update_reference",
+            &json!({"docId": "doc1", "id": "x", "replace": true,
+                    "item": {"type": "article-journal", "title": "Right"}}),
+        )
+        .unwrap();
+        assert_eq!(out.result["item"]["title"], json!("Right"));
+        assert!(
+            out.result["item"].get("publisher").is_none(),
+            "replace drops fields the new item omits: {:?}",
+            out.result["item"]
+        );
+        // The id is the library key, so it survives a replace that omits it.
+        assert_eq!(out.result["item"]["id"], json!("x"));
+    }
+
+    #[test]
+    fn update_reference_null_clears_a_field_and_unknown_id_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [{"id": "x", "title": "T", "publisher": "P"}]}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_update_reference",
+            &json!({"docId": "doc1", "id": "x", "item": {"publisher": null}}),
+        )
+        .unwrap();
+        assert!(out.result["item"].get("publisher").is_none(), "explicit null clears");
+        assert_eq!(out.result["item"]["title"], json!("T"));
+
+        // Creating by typo is exactly the stranding this tool exists to end.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_update_reference",
+            &json!({"docId": "doc1", "id": "nope", "item": {"title": "T"}}),
+        )
+        .unwrap_err();
+        assert!(err.contains("No reference 'nope'"), "{err}");
+    }
+
+    #[test]
+    fn delete_reference_refuses_while_cited_then_force_deletes() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [{"id": "knuth1997", "title": "TAOCP"}]}),
+        )
+        .unwrap();
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "format": "html", "content":
+                r#"<p>see <span data-citation data-ref-id="knuth1997" data-label="(Knuth, 1997)">(Knuth, 1997)</span></p>"#}),
+        )
+        .unwrap();
+
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "knuth1997"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("still cited in 1 place"), "{err}");
+        assert!(err.contains("force"), "the refusal must say how to override: {err}");
+
+        // Still there — a refusal must not half-delete.
+        let listed =
+            dispatch(&f.ctx(true), "docushark_list_references", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(listed.result["count"], json!(1));
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "knuth1997", "force": true}),
+        )
+        .unwrap();
+        assert_eq!(out.result["deleted"], json!(true));
+        assert_eq!(out.result["orphanedCitations"], json!(1));
+
+        let listed =
+            dispatch(&f.ctx(true), "docushark_list_references", &json!({"docId": "doc1"})).unwrap();
+        assert_eq!(listed.result["count"], json!(0));
+        let ws = WorkspaceId::single_tenant();
+        let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+        let stored = f.relay.get_document(&ws, &doc_id).unwrap();
+        assert_eq!(stored["references"]["itemOrder"], json!([]), "order must drop the id too");
+    }
+
+    #[test]
+    fn delete_reference_uncited_succeeds_without_force() {
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [{"id": "unused", "title": "T"}]}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "unused"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["orphanedCitations"], json!(0));
+
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "unused"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("No reference 'unused'"), "{err}");
+    }
+
+    #[test]
+    fn a_bibliographys_escaped_markup_is_not_a_citation() {
+        // `data-bib-html` carries ESCAPED markup that can itself contain
+        // citation spans. A text scan for `data-ref-id` would count those and
+        // refuse a delete that is actually safe, which is why the census reads
+        // the document model instead.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [{"id": "ghost", "title": "T"}]}),
+        )
+        .unwrap();
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "format": "html", "content":
+                r#"<p>body</p><div data-bibliography data-bib-html="&lt;span data-citation data-ref-id=&quot;ghost&quot;&gt;x&lt;/span&gt;"></div>"#}),
+        )
+        .unwrap();
+
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "ghost"}),
+        )
+        .unwrap();
+        assert_eq!(out.result["orphanedCitations"], json!(0), "escaped markup is not a citation");
     }
 
     #[test]
