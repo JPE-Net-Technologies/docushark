@@ -96,6 +96,16 @@ toml = "0.8"
 # heavier CommonMark stack, matching the small-dep-tree stance above.
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 
+# HTML character-entity decoding for the `format:"html"` prose path (JP-497).
+# The hand-rolled table this replaced knew six names, so every other named
+# entity (`&mdash;`, `&le;`, `&aacute;`) survived as literal text and was
+# re-escaped on serialize. htmlize carries the WHATWG named-entity table and,
+# critically, distinguishes general from ATTRIBUTE context — attribute values
+# must not expand a semicolon-less entity followed by `=` or an alphanumeric,
+# which is what keeps `?a=1&sect=2` a query string rather than a section sign.
+# Pure-Rust and table-only, matching the small-dep-tree stance above.
+htmlize = { version = "1.1", default-features = false, features = ["unescape"] }
+
 # Per-workspace token-bucket rate limiting (Phase 21.3)
 governor = "0.7"
 
