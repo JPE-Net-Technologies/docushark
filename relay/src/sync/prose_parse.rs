@@ -329,13 +329,13 @@ fn parse_attrs(s: &str) -> Vec<(String, String)> {
                 if i < b.len() {
                     i += 1; // closing quote
                 }
-                decode_entities(v)
+                decode_attr_entities(v)
             } else {
                 let vstart = i;
                 while i < b.len() && !b[i].is_ascii_whitespace() {
                     i += 1;
                 }
-                decode_entities(&s[vstart..i])
+                decode_attr_entities(&s[vstart..i])
             };
             attrs.push((name, value));
         } else {
@@ -345,52 +345,49 @@ fn parse_attrs(s: &str) -> Vec<(String, String)> {
     attrs
 }
 
+/// Decode character references in **text** content (WHATWG general context).
+///
+/// This replaced a hand-rolled table that knew six names — `amp`, `lt`, `gt`,
+/// `quot`, `apos`/`#39`, `nbsp` — plus numeric refs (JP-497). Every other named
+/// entity fell through to a literal `&`, which the serializer then re-escaped to
+/// `&amp;`, so `&mdash;` was stored as `&amp;mdash;` and shown to the reader as
+/// the visible string `&mdash;`. Nothing reported it: the write returned a clean
+/// `{"ok": true}`, and the corruption was only findable by reading the page back.
+///
+/// It landed almost entirely on agents. A model writing HTML reaches for
+/// `&mdash;` and `&aacute;` by reflex because HTML corpora are full of them,
+/// while a human typing in the editor produces literal Unicode and never meets
+/// this path at all.
+///
+/// The markdown path was always correct — pulldown-cmark decodes the full
+/// CommonMark entity set — so `format:"markdown"`, the default, hid the bug.
+/// Two decoders for one contract with nothing asserting they agree is the shape
+/// of JP-468/472/473; `markdown_and_html_paths_agree_on_entities` is the guard.
 fn decode_entities(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        rest = &rest[amp..];
-        let Some(semi) = rest.find(';') else {
-            out.push('&');
-            rest = &rest[1..];
-            continue;
-        };
-        let entity = &rest[1..semi];
-        let decoded = match entity {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" | "#39" => Some('\''),
-            "nbsp" => Some('\u{00a0}'),
-            _ => entity
-                .strip_prefix('#')
-                .and_then(|n| {
-                    if let Some(hex) = n.strip_prefix(['x', 'X']) {
-                        u32::from_str_radix(hex, 16).ok()
-                    } else {
-                        n.parse::<u32>().ok()
-                    }
-                })
-                .and_then(char::from_u32),
-        };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[semi + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
+    htmlize::unescape(s).into_owned()
+}
+
+/// Decode character references in an **attribute value** (WHATWG attribute
+/// context).
+///
+/// Deliberately not [`decode_entities`]. In attribute context a semicolon-less
+/// named entity followed by `=` or an alphanumeric is *not* expanded, which is
+/// what keeps `href="…?a=1&sect=2"` a query string instead of turning `&sect`
+/// into a section sign. Decoding attributes with general-context rules would
+/// silently corrupt URLs — see
+/// `attribute_context_preserves_legacy_url_query_strings`.
+///
+/// With the semicolon present it *is* an entity, in attributes too, exactly as a
+/// browser would treat it; that is why a literal ampersand must be written
+/// `&amp;` in HTML.
+fn decode_attr_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
     }
-    out.push_str(rest);
-    out
+    htmlize::unescape_attribute(s).into_owned()
 }
 
 // ---- HTML tree ------------------------------------------------------------
@@ -1529,4 +1526,114 @@ mod tests {
             assert_no_newline(n);
         }
     }
+
+    // ---- HTML5 named character entities (JP-497) ----
+    //
+    // `format:"html"` decoded only six names plus numeric refs, so every other
+    // named entity survived as literal text and was then re-escaped on
+    // serialize (`&mdash;` stored as `&amp;mdash;`). Agents reach for named
+    // entities by reflex because HTML corpora are full of them, so the failure
+    // landed hardest on the MCP surface.
+
+    /// Concatenated text of a block's direct text children.
+    fn text_of(blocks: &[PmNode]) -> String {
+        blocks
+            .iter()
+            .flat_map(|b| b.children.iter())
+            .filter_map(|c| match c {
+                PmChild::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn named_entities_decode_in_text() {
+        for (src, want) in [
+            ("&mdash;", "\u{2014}"),
+            ("&ndash;", "\u{2013}"),
+            ("&le;", "\u{2264}"),
+            ("&sect;", "\u{00a7}"),
+            ("&aacute;", "\u{00e1}"),
+            ("&copy;", "\u{00a9}"),
+            ("&hellip;", "\u{2026}"),
+            ("&rsquo;", "\u{2019}"),
+        ] {
+            let b = html_to_blocks(&format!("<p>{src}</p>"));
+            assert_eq!(text_of(&b), want, "named entity {src} must decode");
+        }
+    }
+
+    #[test]
+    fn numeric_and_predefined_entities_keep_decoding() {
+        // These already worked; pin them so the swap to a spec decoder can't
+        // regress the half that was correct.
+        for (src, want) in [
+            ("&#275;", "\u{0113}"),
+            ("&#x2014;", "\u{2014}"),
+            ("&amp;", "&"),
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&quot;", "\""),
+            ("&apos;", "'"),
+            ("&nbsp;", "\u{00a0}"),
+        ] {
+            let b = html_to_blocks(&format!("<p>{src}</p>"));
+            assert_eq!(text_of(&b), want, "entity {src} must still decode");
+        }
+    }
+
+    #[test]
+    fn named_entities_decode_in_attribute_values() {
+        // The same decoder serves attribute values, so `data-label`, `alt`,
+        // `data-file-name` and `data-bib-html` corrupted identically. Not part
+        // of the original report — found by probe.
+        let b = html_to_blocks(
+            r#"<p><span data-citation data-ref-id="r" data-label="(A &mdash; B)">x</span></p>"#,
+        );
+        let PmChild::Node(c) = &b[0].children[0] else { panic!("expected citation node") };
+        assert_eq!(attr(c, "label"), Some("(A \u{2014} B)"));
+    }
+
+    #[test]
+    fn attribute_context_preserves_legacy_url_query_strings() {
+        // WHATWG's attribute rule: a semicolon-less named entity followed by
+        // `=` or an alphanumeric is NOT expanded. That is what keeps `&sect=2`
+        // a query parameter instead of a section sign. This guards the choice
+        // of attribute-context decoding — using general-context decoding for
+        // attributes would silently corrupt hrefs.
+        let b = html_to_blocks(r#"<p><a href="https://x.test/?a=1&sect=2">go</a></p>"#);
+        let PmChild::Text { marks, .. } = &b[0].children[0] else { panic!("expected text") };
+        assert_eq!(marks[0].href.as_deref(), Some("https://x.test/?a=1&sect=2"));
+    }
+
+    #[test]
+    fn attribute_entity_with_semicolon_does_decode() {
+        // The other direction, and deliberate: with the semicolon it IS an
+        // entity, in attributes too. A browser does the same, which is why a
+        // literal ampersand in HTML must be written `&amp;`.
+        let b = html_to_blocks(r#"<p><a href="https://x.test/?a=1&sect;b">go</a></p>"#);
+        let PmChild::Text { marks, .. } = &b[0].children[0] else { panic!("expected text") };
+        assert_eq!(marks[0].href.as_deref(), Some("https://x.test/?a=1\u{00a7}b"));
+    }
+
+    #[test]
+    fn markdown_and_html_paths_agree_on_entities() {
+        // The durable half. Two entity decoders — pulldown-cmark's on the
+        // markdown path and ours on the html path — with nothing asserting they
+        // agree is precisely how the second-renderer defects (JP-468/472/473)
+        // happened. pulldown-cmark was already correct here, which is why the
+        // default format hid this bug for so long.
+        for src in ["a &mdash; b", "x &le; y", "caf&eacute;", "&#275; and &copy;"] {
+            let via_markdown =
+                html_to_blocks(&crate::mcp::tools::markdown_to_html_for_tests(src));
+            let via_html = html_to_blocks(&format!("<p>{src}</p>"));
+            assert_eq!(
+                text_of(&via_markdown),
+                text_of(&via_html),
+                "markdown and html paths disagree on {src}"
+            );
+        }
+    }
+
 }

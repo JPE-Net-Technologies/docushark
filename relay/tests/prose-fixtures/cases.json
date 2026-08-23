@@ -506,6 +506,43 @@
           "type": "image"
         }
       ]
+    },
+    {
+      "name": "unicode_punctuation_round_trips_in_text",
+      "why": "The canonical stored form of a named entity is the decoded character, so these are the bytes that must survive a round trip on BOTH sides once JP-497 made the html path decode `&mdash;`/`&le;`/`&sect;` at all. This case cannot catch the decode bug itself (a non-canonical input is by definition not a fixed point, which is what the Rust unit tests in prose_parse cover) — it guards the other half: that neither implementation re-escapes or mangles the decoded character afterwards.",
+      "html": "<p>Ranges 1–10 — see §2 for the café ≤ limit.</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        }
+      ]
+    },
+    {
+      "name": "unicode_in_attribute_value_round_trips",
+      "why": "Attribute values run through the same entity decoder as text (JP-497 found the corruption reached `data-label`, `alt`, `data-file-name` and `data-bib-html`, which the original report had not covered). A decoded character living in an attribute must survive both the relay's escape_attr and the client's parseHTML — the attrs are compared cross-language here, so a side that re-escapes or drops it fails loudly.",
+      "html": "<p>see <span data-citation data-ref-id=\"reamer2024\" data-label=\"(Reamer, 2024) §4\">(Reamer, 2024) §4</span> here</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "citationInline",
+          "attrs": {
+            "label": "(Reamer, 2024) §4",
+            "refId": "reamer2024"
+          }
+        }
+      ]
+    },
+    {
+      "name": "ampersand_stays_escaped_in_canonical_form",
+      "why": "The counterpart to decoding: `&` is one of the four characters the serializer must escape, so its canonical stored form is `&amp;` and a round trip must not decode-then-emit a bare ampersand. Without this, a decoder swap could quietly start emitting raw `&` and produce stored HTML that reparses differently on the next load.",
+      "html": "<p>Fish &amp; chips &lt;yes&gt;</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        }
+      ]
     }
   ]
 }
