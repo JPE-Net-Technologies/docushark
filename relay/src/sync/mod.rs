@@ -42,7 +42,7 @@ pub use prose_block::replace_block_in_html;
 pub use prose_block::{
     delete_block_in_html, insert_block_in_html, move_block_in_html, InsertSide, TargetSpec,
 };
-pub use prose_ids::{collect_block_ids, fill_block_ids};
+pub use prose_ids::{collect_block_ids, collect_citations, fill_block_ids};
 pub use prose_table::{
     edit_table_in_html, table_grid_in_html, GridView, Side as TableSide, TableEditOutcome,
     TableOp, TableSel,
@@ -230,9 +230,7 @@ impl DocHandle {
             dirty: AtomicBool::new(poison_healed || stale_overlay),
         };
         if stale_overlay {
-            eprintln!("CHK: overlay start");
             handle.overlay_stale_json(doc_json);
-            eprintln!("CHK: overlay done");
             // Heal AFTER the overlay: a JSON body persisted doubled (the
             // JP-338 signature) would re-double a clean binary through the
             // trim diff; healing last leaves a single body either way.
@@ -555,7 +553,6 @@ impl DocHandle {
     /// only the changed window ON the existing lineage — which is the whole
     /// point: no fresh client id ever touches a page that has history.
     fn overlay_stale_json(&self, doc_json: &Value) {
-        eprintln!("CHK: o.meta");
         // ---- metadata: title / updatedAt / tags (compare-first, churn-free) ----
         {
             let metadata = self.doc.get_or_insert_map("metadata");
@@ -597,7 +594,6 @@ impl DocHandle {
             let _ = cur_updated; // updatedAt travels with the title write above
         }
 
-        eprintln!("CHK: o.shapes");
         // ---- shapes, per canvas page (container: doc_json["pages"]) ----
         if let Some(pages) = doc_json.get("pages").and_then(Value::as_object) {
             for (pid, page) in pages {
@@ -652,7 +648,6 @@ impl DocHandle {
             }
         }
 
-        eprintln!("CHK: o.refs");
         // ---- reference library (container: doc_json["references"]) ----
         if let Some(lib) = doc_json.get("references").and_then(Value::as_object) {
             let json_items = lib
@@ -736,7 +731,6 @@ impl DocHandle {
             }
         }
 
-        eprintln!("CHK: o.rtp");
         // ---- page lists + prose content (container: doc_json["richTextPages"]) ----
         if let Some(rtp) = doc_json.get("richTextPages").and_then(Value::as_object) {
             let json_pages = rtp
@@ -796,7 +790,6 @@ impl DocHandle {
             }
         }
 
-        eprintln!("CHK: o.canvas");
         // ---- canvas page list metadata (container: doc_json["pages"]) ----
         if let Some(pages) = doc_json.get("pages").and_then(Value::as_object) {
             let live_meta = self.named_map_json("canvasPages");

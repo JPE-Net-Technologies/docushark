@@ -1089,6 +1089,8 @@ mod tests {
         assert!(names.contains(&"docushark_list_references"));
         assert!(names.contains(&"docushark_resolve_doi"));
         assert!(names.contains(&"docushark_add_reference"));
+        assert!(names.contains(&"docushark_update_reference"));
+        assert!(names.contains(&"docushark_delete_reference"));
         assert!(names.contains(&"docushark_list_fields"));
         assert!(names.contains(&"docushark_set_fields"));
         assert!(names.contains(&"docushark_get_skills"));
@@ -1100,7 +1102,7 @@ mod tests {
         assert!(names.contains(&"docushark_get_file"));
         assert!(names.contains(&"docushark_add_file"));
         assert!(names.contains(&"docushark_get_storage"));
-        assert_eq!(tools.len(), 43);
+        assert_eq!(tools.len(), 45);
     }
 
     // ---- JP-430 E3: add_file over the full transport (preflight + dispatch) ----

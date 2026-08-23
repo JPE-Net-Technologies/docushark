@@ -48,8 +48,10 @@ the source connected from your account's Integrations page.
 
 To add one, click **+** on the prose tab bar and choose **New page from
 Notion…**, then search for the page you want and pick it. The content —
-headings, lists, tables, images — is imported as a read-only page, and the tab
-carries the source's icon so you can spot mirrored pages at a glance.
+headings, lists, tables, images, and file attachments — is imported as a
+read-only page, and the tab carries the source's icon so you can spot mirrored
+pages at a glance. Attachments come across as files you can open from the page,
+not just as their names.
 
 Mirrored pages behave differently from normal pages:
 
