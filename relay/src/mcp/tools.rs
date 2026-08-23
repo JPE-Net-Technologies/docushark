@@ -4685,6 +4685,28 @@ fn delete_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
     reject_if_local(ctx, &parsed.doc_id)?;
 
     let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
+
+    // Existence BEFORE the citation census, and the order is load-bearing.
+    // `force` leaves the inline citations in place by design, so after one the
+    // prose still cites an id the library no longer holds. Censusing first made
+    // a second delete answer "still cited — pass force:true" about a reference
+    // that was already gone: true about the prose, actively misleading about the
+    // library, and it points the caller at a flag that only reveals the real
+    // answer after the fact. Found by E2E, not by the unit tests, because those
+    // deleted an UNCITED reference twice.
+    let resident = resident_handle(ctx, &parsed.doc_id);
+    let exists = match &resident {
+        Some(handle) => handle.references_json().contains_key(&parsed.id),
+        None => doc
+            .get("references")
+            .and_then(|r| r.get("items"))
+            .and_then(|items| items.get(&parsed.id))
+            .is_some(),
+    };
+    if !exists {
+        return Err(format!("No reference '{}' in this document's library", parsed.id));
+    }
+
     let sites = citation_sites(ctx, &parsed.doc_id, &doc, &parsed.id);
     if !sites.is_empty() && !parsed.force {
         // Cap the enumeration: a reference cited fifty times makes the point in
@@ -4701,11 +4723,7 @@ fn delete_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         ));
     }
 
-    if let Some(handle) = resident_handle(ctx, &parsed.doc_id) {
-        let existed = handle.references_json().contains_key(&parsed.id);
-        if !existed {
-            return Err(format!("No reference '{}' in this document's library", parsed.id));
-        }
+    if let Some(handle) = resident {
         let framed = handle.delete_references(std::slice::from_ref(&parsed.id));
         ctx.broadcast_update(&parsed.doc_id, framed);
         return Ok(ToolOutcome {
@@ -4719,6 +4737,8 @@ fn delete_reference(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, Stri
         let (doc, _) = fetch_doc(ctx, &parsed.doc_id)?;
         lock_warning(&doc)
     };
+    // Re-checked inside the retry: the existence probe above raced a concurrent
+    // delete if anything did, and `mutate_with_retry` may replay this closure.
     let existed = mutate_with_retry(ctx, &parsed.doc_id, |doc| {
         let existed = super::citations::delete_reference_in_place(doc, &parsed.id)?;
         if existed {
@@ -8650,6 +8670,56 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("No reference 'unused'"), "{err}");
+    }
+
+    #[test]
+    fn a_forced_delete_does_not_make_the_next_one_lie() {
+        // Regression, found by E2E rather than by the tests above: `force`
+        // leaves the inline citation in place, so the prose still cites an id
+        // the library no longer holds. When the census ran before the existence
+        // check, a second delete answered "still cited — pass force:true" about
+        // a reference that was already gone. The unit tests missed it because
+        // they deleted an UNCITED reference twice.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        dispatch(
+            &f.ctx(true),
+            "docushark_add_reference",
+            &json!({"docId": "doc1", "items": [{"id": "r1", "title": "T"}]}),
+        )
+        .unwrap();
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": page_id, "format": "html", "content":
+                r#"<p>see <span data-citation data-ref-id="r1" data-label="(X)">(X)</span></p>"#}),
+        )
+        .unwrap();
+
+        dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "r1", "force": true}),
+        )
+        .unwrap();
+
+        // The citation is still in the prose — that is what `force` means — but
+        // the reference is gone, and THAT is what the caller asked about.
+        let err = dispatch(
+            &f.ctx(true),
+            "docushark_delete_reference",
+            &json!({"docId": "doc1", "id": "r1"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("No reference 'r1'"), "{err}");
+        assert!(!err.contains("still cited"), "must not claim a deleted ref is cited: {err}");
     }
 
     #[test]
