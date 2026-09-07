@@ -137,6 +137,9 @@ pub fn init() -> Option<SentryGuard> {
         },
     ));
 
+    // Callers must install their logger BEFORE calling this, or this line —
+    // the only runtime evidence that reporting is on — goes nowhere. See the
+    // ordering note in main.rs.
     log::info!(
         "sentry error reporting enabled (release {}, environment {})",
         release_name(),
