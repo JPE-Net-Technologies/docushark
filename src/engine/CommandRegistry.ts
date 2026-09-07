@@ -5,6 +5,10 @@
  * for display, keyboard shortcut hints, and execution.
  */
 
+import type { ReactNode } from 'react';
+import type { LucideIcon } from 'lucide-react';
+import { FileDown, FileInput, History, StickyNote } from 'lucide-react';
+
 import { useSessionStore, deleteSelected, getSelectedShapes } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
@@ -12,7 +16,8 @@ import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { isGroup, type RectangleShape } from '../shapes/Shape';
 import { useWhiteboardStore } from '../store/whiteboardStore';
-import { isActiveDocReadOnly } from '../store/documentRegistry';
+import { isActiveDocReadOnly, getActiveDocumentRecord } from '../store/documentRegistry';
+import { relaySessionUsable } from '../store/connectionStore';
 import { opener } from '../platform/opener';
 import { Vec2 } from '../math/Vec2';
 import { nanoid } from 'nanoid';
@@ -28,6 +33,64 @@ import { LAYOUT_LABELS, LAYOUT_PRESETS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
 import { navigateActivePage } from './pageNavigation';
+
+/**
+ * A place a command can be offered to the user.
+ *
+ * There is deliberately no `'shortcut'` surface: whether a command has a key
+ * binding is already answered by `keys`, and a second way to say it would drift
+ * from the first.
+ */
+export type ActionSurface = 'palette' | 'tools';
+
+/**
+ * Extra commands contributed by feature areas, keyed by source id.
+ *
+ * The registry is engine-level and must not import feature stores — integrations
+ * know about entitlement and connected providers, and the engine should not.
+ * A feature registers a source at module init and returns whatever is currently
+ * available; `buildCommands()` already runs fresh on every read, so a source is
+ * free to consult live store state and its commands appear and disappear with
+ * it.
+ *
+ * Keyed rather than appended so registering twice (a dev-server module reload)
+ * replaces rather than duplicates.
+ */
+const commandSources = new Map<string, () => Command[]>();
+
+/** Contribute commands from a feature area. Replaces any source with the same id. */
+export function registerCommandSource(id: string, source: () => Command[]): void {
+  commandSources.set(id, source);
+}
+
+/** Remove a contributed source (tests, and teardown of an optional feature). */
+export function unregisterCommandSource(id: string): void {
+  commandSources.delete(id);
+}
+
+function contributedCommands(): Command[] {
+  const out: Command[] = [];
+  for (const [id, source] of commandSources) {
+    try {
+      out.push(...source());
+    } catch (e) {
+      // A broken contributor must not take out the palette or the toolbar — the
+      // core commands are the ones the user cannot work without.
+      console.error(`[CommandRegistry] command source "${id}" threw:`, e);
+    }
+  }
+  return out;
+}
+
+/**
+ * Version history needs a relay-backed document and a usable REST session.
+ * Defined once here and consumed by the command below, so the toolbar no longer
+ * carries its own copy of the rule.
+ */
+function versionHistoryAvailable(): boolean {
+  const record = getActiveDocumentRecord();
+  return (record?.type === 'remote' || record?.type === 'cached') && relaySessionUsable();
+}
 
 export interface Command {
   /** Unique identifier */
@@ -62,6 +125,24 @@ export interface Command {
   execute: () => void;
   /** Optional guard — hide command when it returns false / skip dispatch. */
   canExecute?: () => boolean;
+  /**
+   * Glyph for surfaces that show one. The tile system's anatomy opens with an
+   * icon chip, so a command without an icon cannot appear in the Tools grid —
+   * `toolsActions()` drops it rather than rendering a hole.
+   */
+  icon?: LucideIcon;
+  /**
+   * A rendered mark, for anything that is not a Lucide glyph — an integration
+   * provider's brand SVG. Satisfies the tile system's icon chip in place of
+   * `icon`; surfaces prefer it when both are present.
+   */
+  iconNode?: ReactNode;
+  /**
+   * Where this command is offered. Defaults to the palette only, which is what
+   * every command did before surfaces existed — opting into `'tools'` is what
+   * puts a command in the Tools grid.
+   */
+  surfaces?: readonly ActionSurface[];
 }
 
 /** Recently executed command IDs (most recent first) */
@@ -166,13 +247,28 @@ function buildCommands(): Command[] {
     // --- Import ---
     {
       id: 'import.diagram',
-      label: 'Import diagram (Excalidraw)…',
+      label: 'Import diagram…',
       category: 'File',
+      icon: FileInput,
+      surfaces: ['palette', 'tools'],
       // The palette can't reach the engine; CanvasContainer opens the picker.
       execute: () => window.dispatchEvent(new CustomEvent('docushark:import-diagram')),
       // JP-370: import writes into the active doc → unavailable view-only (mirror
       // the toolbar button's guard, which the palette path otherwise bypasses).
       canExecute: () => !isActiveDocReadOnly(),
+    },
+
+    // Version history was previously built inline in the toolbar and existed
+    // nowhere else, so the palette could not reach it at all. Defining it here
+    // is what makes the Tools grid and the palette the same list.
+    {
+      id: 'file.versionHistory',
+      label: 'Version history',
+      category: 'File',
+      icon: History,
+      surfaces: ['palette', 'tools'],
+      execute: () => window.dispatchEvent(new CustomEvent('docushark:open-version-history')),
+      canExecute: () => versionHistoryAvailable(),
     },
 
     // --- Export (PDF) --- the dialog lives in UnifiedToolbar's local state, so
@@ -181,6 +277,8 @@ function buildCommands(): Command[] {
       id: 'file.exportPdf',
       label: 'Export to PDF…',
       category: 'File',
+      icon: FileDown,
+      surfaces: ['palette', 'tools'],
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-pdf-export')),
     },
 
@@ -305,7 +403,9 @@ function buildCommands(): Command[] {
 
     // --- View / app (global scope) ---
     {
-      id: 'view.toggleWhiteboard', label: 'Toggle whiteboard (Ideas)', category: 'View', keys: 'Mod+I', scope: 'global',
+      id: 'view.toggleWhiteboard', label: 'Whiteboard', category: 'View', keys: 'Mod+I', scope: 'global',
+      icon: StickyNote,
+      surfaces: ['palette', 'tools'],
       execute: () => useWhiteboardStore.getState().toggleVisibility(),
     },
     {
@@ -366,14 +466,38 @@ function buildCommands(): Command[] {
  * palette + help panel can never drift from the real binding.
  */
 export function getAllCommands(): Command[] {
-  return buildCommands().map((c) =>
+  return [...buildCommands(), ...contributedCommands()].map((c) =>
     c.keys ? { ...c, shortcut: formatCombo(c.keys) } : c,
+  );
+}
+
+/** True when `c` is offered on `surface` (absent `surfaces` = palette only). */
+export function isOnSurface(c: Command, surface: ActionSurface): boolean {
+  return (c.surfaces ?? ['palette']).includes(surface);
+}
+
+/**
+ * Commands for the Tools grid: opted in, currently available, and carrying an
+ * icon (the tile anatomy needs one). This is the single list the Tools surface
+ * renders — it does not maintain its own copy of what the app can do, which is
+ * how the toolbar and the palette came to describe the same four actions with
+ * different labels and two different paths into the PDF dialog.
+ */
+export function getToolsActions(): Command[] {
+  return getAllCommands().filter(
+    (c) =>
+      !c.reserved &&
+      // The tile anatomy opens with a chip, so an action with neither a glyph
+      // nor a mark cannot render — drop it rather than leave a hole.
+      (c.icon || c.iconNode) &&
+      isOnSurface(c, 'tools') &&
+      (!c.canExecute || c.canExecute()),
   );
 }
 
 /** Commands the user can run from the palette (executable, non-reserved). */
 export function getPaletteCommands(): Command[] {
-  return getAllCommands().filter((c) => !c.reserved);
+  return getAllCommands().filter((c) => !c.reserved && isOnSurface(c, 'palette'));
 }
 
 /**
