@@ -351,9 +351,23 @@ impl S3Backend {
             )
             .await?;
         if resp.status().is_success() {
+            crate::observability::durability().on_success();
             Ok(())
         } else {
-            Err(format!("R2 PUT {} -> {}", key, resp.status()))
+            // Every durable write funnels through here — doc mirrors, the
+            // workspace index, collections, style profiles, deleted ids, the
+            // published registry, the blob ledger, and blob bytes themselves.
+            // Reporting at this choke point rather than at each call site is
+            // what makes it impossible for a future writer to add a durable
+            // write that fails silently, which is exactly how JP-505 went
+            // unnoticed in both environments at once.
+            //
+            // The monitor decides how loudly: an outage is announced on its
+            // first failure and then at intervals, never once per failed write.
+            // Call sites keep their own `warn!` with the per-op detail.
+            let err = format!("R2 PUT {} -> {}", key, resp.status());
+            crate::observability::durability().on_failure(key, &err);
+            Err(err)
         }
     }
 

@@ -41,6 +41,8 @@
 //! dropped event.
 
 use std::borrow::Cow;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::build_info;
 
@@ -262,5 +264,221 @@ mod tests {
                 None => std::env::remove_var(&k),
             }
         }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Durability reporting
+// ---------------------------------------------------------------------------
+
+/// How long to stay quiet before re-announcing an ongoing durability outage.
+const DURABILITY_REANNOUNCE_AFTER: Duration = Duration::from_secs(300);
+
+/// Tracks the health of durable (R2) writes and decides how loudly to report.
+///
+/// ## Why this is not just `log::error!` at the call site
+///
+/// Every durable write failed for an unknown period in both environments and
+/// nobody noticed, because each failure was a `warn!` in an ephemeral log
+/// (JP-505). The obvious fix — promote them to `error!` so they become Sentry
+/// events — floods: these run in background queue workers, so when R2 is
+/// unavailable *every* op fails. Fifty active documents on a ten-second
+/// snapshot interval is roughly eighteen thousand events an hour, which is not
+/// an alert, it is a denial of service against your own issue stream.
+///
+/// So report on **transitions and intervals**, not occurrences: the first
+/// failure after health is an event, further failures are counted quietly, and
+/// an ongoing outage re-announces every five minutes carrying the running
+/// count. Recovery logs once at info. One outage becomes a handful of events
+/// that each say how bad it is, and per-op detail stays in the log where the
+/// call sites already put it.
+pub struct DurabilityMonitor {
+    state: Mutex<DurabilityState>,
+    reannounce_after: Duration,
+}
+
+#[derive(Default)]
+struct DurabilityState {
+    consecutive_failures: u64,
+    /// When the current outage was last announced. `None` = currently healthy.
+    announced_at: Option<Instant>,
+}
+
+/// What the monitor decided to do about one outcome — returned so the decision
+/// is testable without capturing log output.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DurabilityReport {
+    /// Nothing to say (a success while healthy, or a failure already announced).
+    Quiet,
+    /// Durable writes have started failing. Carries the running failure count.
+    OutageStarted(u64),
+    /// Still failing, and the quiet window has elapsed. Carries the count.
+    OutageContinuing(u64),
+    /// A write succeeded after an announced outage. Carries the failure count
+    /// that outage reached.
+    Recovered(u64),
+}
+
+impl DurabilityMonitor {
+    pub fn new(reannounce_after: Duration) -> Self {
+        Self {
+            state: Mutex::new(DurabilityState::default()),
+            reannounce_after,
+        }
+    }
+
+    /// A lock is only ever held for a few field updates, so poisoning cannot
+    /// leave it inconsistent — recover the guard rather than panicking inside
+    /// a storage path.
+    fn lock(&self) -> std::sync::MutexGuard<'_, DurabilityState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Record a failed durable write. `now` is injected so the interval
+    /// behaviour is testable without sleeping.
+    pub fn record_failure_at(&self, now: Instant) -> DurabilityReport {
+        let mut st = self.lock();
+        st.consecutive_failures += 1;
+        let count = st.consecutive_failures;
+        match st.announced_at {
+            None => {
+                st.announced_at = Some(now);
+                DurabilityReport::OutageStarted(count)
+            }
+            Some(at) if now.duration_since(at) >= self.reannounce_after => {
+                st.announced_at = Some(now);
+                DurabilityReport::OutageContinuing(count)
+            }
+            Some(_) => DurabilityReport::Quiet,
+        }
+    }
+
+    /// Record a successful durable write.
+    pub fn record_success(&self) -> DurabilityReport {
+        let mut st = self.lock();
+        let count = st.consecutive_failures;
+        let was_announced = st.announced_at.is_some();
+        st.consecutive_failures = 0;
+        st.announced_at = None;
+        if was_announced {
+            DurabilityReport::Recovered(count)
+        } else {
+            DurabilityReport::Quiet
+        }
+    }
+
+    /// Record a failure and log it at the level the decision calls for.
+    /// `target` is the object key; `err` the backend's own message.
+    pub fn on_failure(&self, target: &str, err: &str) {
+        match self.record_failure_at(Instant::now()) {
+            DurabilityReport::OutageStarted(n) => log::error!(
+                "durable writes are FAILING ({n} consecutive) — most recent: {target}: {err}"
+            ),
+            DurabilityReport::OutageContinuing(n) => log::error!(
+                "durable writes still failing ({n} consecutive) — most recent: {target}: {err}"
+            ),
+            // The call site already logs this one at warn with full detail;
+            // saying it twice would only make the log harder to read.
+            _ => {}
+        }
+    }
+
+    /// Record a success and log a recovery notice if one is due.
+    pub fn on_success(&self) {
+        if let DurabilityReport::Recovered(n) = self.record_success() {
+            log::info!("durable writes recovered after {n} consecutive failures");
+        }
+    }
+}
+
+/// Process-wide durability monitor. One instance because the question it
+/// answers — "are durable writes working?" — is a property of the process, not
+/// of any one workspace or document.
+pub fn durability() -> &'static DurabilityMonitor {
+    static MONITOR: LazyLock<DurabilityMonitor> =
+        LazyLock::new(|| DurabilityMonitor::new(DURABILITY_REANNOUNCE_AFTER));
+    &MONITOR
+}
+
+#[cfg(test)]
+mod durability_tests {
+    use super::*;
+
+    fn monitor() -> DurabilityMonitor {
+        DurabilityMonitor::new(Duration::from_secs(300))
+    }
+
+    #[test]
+    fn the_first_failure_is_announced() {
+        let m = monitor();
+        assert_eq!(m.record_failure_at(Instant::now()), DurabilityReport::OutageStarted(1));
+    }
+
+    #[test]
+    fn further_failures_inside_the_window_stay_quiet() {
+        // The whole point: an outage must not emit one event per failed write.
+        let m = monitor();
+        let t0 = Instant::now();
+        m.record_failure_at(t0);
+        for i in 1..500 {
+            assert_eq!(
+                m.record_failure_at(t0 + Duration::from_secs(i % 60)),
+                DurabilityReport::Quiet
+            );
+        }
+    }
+
+    #[test]
+    fn an_ongoing_outage_re_announces_after_the_window_with_a_running_count() {
+        let m = monitor();
+        let t0 = Instant::now();
+        m.record_failure_at(t0);
+        m.record_failure_at(t0 + Duration::from_secs(10));
+        assert_eq!(
+            m.record_failure_at(t0 + Duration::from_secs(300)),
+            DurabilityReport::OutageContinuing(3)
+        );
+    }
+
+    #[test]
+    fn success_while_healthy_says_nothing() {
+        let m = monitor();
+        assert_eq!(m.record_success(), DurabilityReport::Quiet);
+    }
+
+    #[test]
+    fn recovery_reports_how_bad_the_outage_got() {
+        let m = monitor();
+        let t0 = Instant::now();
+        for i in 0..4 {
+            m.record_failure_at(t0 + Duration::from_secs(i));
+        }
+        assert_eq!(m.record_success(), DurabilityReport::Recovered(4));
+    }
+
+    #[test]
+    fn a_new_outage_after_recovery_is_announced_again() {
+        // Without the reset on success, a second outage would be silent — the
+        // failure mode that would make this whole mechanism worse than useless.
+        let m = monitor();
+        let t0 = Instant::now();
+        m.record_failure_at(t0);
+        m.record_success();
+        assert_eq!(
+            m.record_failure_at(t0 + Duration::from_secs(1)),
+            DurabilityReport::OutageStarted(1)
+        );
+    }
+
+    #[test]
+    fn the_failure_count_resets_on_recovery() {
+        let m = monitor();
+        let t0 = Instant::now();
+        m.record_failure_at(t0);
+        m.record_failure_at(t0);
+        m.record_success();
+        m.record_failure_at(t0 + Duration::from_secs(1));
+        assert_eq!(m.record_success(), DurabilityReport::Recovered(1));
     }
 }
