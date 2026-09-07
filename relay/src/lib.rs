@@ -12,6 +12,7 @@
 pub mod api;
 pub mod auth;
 pub mod build_info;
+pub mod observability;
 pub mod config;
 pub mod mcp;
 pub mod server;

@@ -252,17 +252,35 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     setActivePage(newId);
   }, [createPage, setActivePage]);
 
+  // Warm the integration hub as soon as the tab bar exists, so the "+" menu is
+  // ready for the FIRST click.
+  //
+  // It used to be kicked off by the click itself, which read the hub state
+  // synchronously one line later — so the first click always missed and quietly
+  // created a plain page, and the "New page from Notion" entry only appeared on
+  // the second click. That reads as a broken button, and it hides the whole
+  // integration entry point from anyone who clicks once and moves on.
+  //
+  // Prefetching rather than awaiting the click is deliberate: awaiting would put
+  // a network round-trip in front of the core action. The store coalesces
+  // concurrent calls and caches with a TTL, so a re-mount costs nothing.
+  useEffect(() => {
+    void useIntegrationHubStore.getState().ensureLoaded();
+  }, []);
+
   // "+" click (JP-415): when the workspace has integration options (entitled,
   // with searchable providers), anchor an add-menu to the button; otherwise
   // keep the classic one-click page create — integrations never add friction
-  // to the core action. The hub is cached; the first-ever click kicks the load
-  // and creates directly (options appear from the next click on).
+  // to the core action.
   const wsIntegrations = workspaceIntegrationState(hub, activeWorkspaceId());
   const addMenuProviders = wsIntegrations?.entitled
     ? wsIntegrations.providers.filter((p) => p.provider.searchable)
     : [];
   const handleAddClick = useCallback(
     (anchorRect?: DOMRect) => {
+      // A TTL refresh, not the initial load (the mount effect above owns that):
+      // it picks up a provider connected on the account site since this document
+      // was opened. The decision below still uses the state we already have.
       void useIntegrationHubStore.getState().ensureLoaded();
       if (addMenuProviders.length > 0 && anchorRect && !sharedDocOffline()) {
         setAddMenu({ x: anchorRect.left, y: anchorRect.bottom + 4 });
