@@ -77,21 +77,24 @@ enum Command {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Sentry first, and BEFORE the Tokio runtime is built: the transport spawns
-    // its own worker and the panic hook must be installed before any task can
-    // run. `_sentry` is bound for the whole of `main` on purpose — dropping the
-    // guard flushes and disables the client, so `let _ = init()` here would turn
-    // reporting off on the very next line.
+    // Logger FIRST, then Sentry.
     //
-    // Inert without SENTRY_DSN (see observability.rs): a self-hosted relay picks
-    // up no telemetry by upgrading.
-    let _sentry = docushark_relay::observability::init();
-
-    // Route `log` into Sentry as well as stderr: `info`+ become breadcrumbs
-    // (free until an event fires, and they are what make one diagnosable),
-    // `error!` becomes an event. `warn!` deliberately does NOT — see the module
-    // docs; a warning that is really an incident should be raised at its call
-    // site rather than caught by a wider net.
+    // Order matters and the obvious order is wrong: `observability::init()`
+    // logs a line confirming it is enabled, and if Sentry is initialized before
+    // `set_boxed_logger` that line is emitted with no logger installed and is
+    // silently dropped. Shipped that way once (JP-507) — the relay was
+    // reporting correctly and the deploy looked like a no-op because the one
+    // line proving it was gone.
+    //
+    // Nothing is lost by this order: `sentry-log` captures into the current
+    // hub, which simply has no client until `init()` returns a few
+    // instructions later. Both still happen before the Tokio runtime is built,
+    // which is the constraint that actually matters — the transport spawns its
+    // own worker and the panic hook must be installed before any task can run.
+    //
+    // `info`+ become breadcrumbs (free until an event fires, and they are what
+    // make one diagnosable), `error!` becomes an event. `warn!` deliberately
+    // does NOT — see the observability module docs.
     let env_logger =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).build();
     let max_level = env_logger.filter();
@@ -102,6 +105,12 @@ fn main() -> anyhow::Result<()> {
     });
     log::set_boxed_logger(Box::new(logger)).expect("logger installed once");
     log::set_max_level(max_level);
+
+    // `_sentry` is bound for the whole of `main` on purpose — dropping the
+    // guard flushes and disables the client, so `let _ = init()` here would
+    // turn reporting off on the very next line. Inert without SENTRY_DSN: a
+    // self-hosted relay picks up no telemetry by upgrading.
+    let _sentry = docushark_relay::observability::init();
 
     let cli = Cli::parse();
     match cli.command {
