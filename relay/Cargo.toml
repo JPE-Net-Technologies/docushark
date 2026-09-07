@@ -41,6 +41,20 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
 env_logger = "0.11"
+
+# Optional error reporting (see src/observability.rs). Inert without SENTRY_DSN
+# — a self-hosted relay acquires no telemetry by upgrading. `panic` gives the
+# hook that reports panics the WS isolation boundary catches; `logs` is NOT
+# enabled (breadcrumbs + error events come from sentry-log, and shipping all
+# logs is a different product with a different meter).
+sentry = { version = "0.34", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "reqwest",
+    "rustls",
+] }
+sentry-log = "0.34"
 thiserror = "1.0"
 anyhow = "1.0"
 
