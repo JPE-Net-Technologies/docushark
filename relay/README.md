@@ -235,6 +235,8 @@ This table is the canonical inventory — a drift test
 | `RELAY_REGION` | the `--region` value (used to enforce `wsp[].region`) |
 | `RELAY_TOMBSTONE_TTL_DAYS` | deleted-id tombstone retention window (no toml key; default 30) |
 | `RELAY_SHOW_MCP_TOKEN` | diagnostic only: print the static MCP token unredacted in CLI output (truthy values) |
+| `SENTRY_DSN` | **optional**, and off unless set — send errors and panics to a Sentry-compatible endpoint. No DSN, no client, no network; there is no default endpoint compiled in. See `src/observability.rs` |
+| `SENTRY_ENVIRONMENT` | label for events from this deployment (defaults to `RELAY_REGION`, else `unknown` — never guesses `production`). Ignored without `SENTRY_DSN` |
 
 ## What's *not* here
 
