@@ -7,30 +7,21 @@
  * live in CanvasToolbar inside the canvas region so they don't leak app-wide.
  */
 
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  StickyNote,
   CircleHelp,
   Settings,
-  FileInput,
   FolderOpen,
   MoreHorizontal,
-  History,
   Wrench,
 } from 'lucide-react';
-import { Icon, PdfIcon } from './icons';
-import {
-  DropdownMenu,
-  menuAction,
-  type DropdownMenuEntry,
-} from './components/DropdownMenu';
+import { Icon } from './icons';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobileDocumentInfo } from './mobile/MobileDocumentInfo';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
 import { usePersistenceStore } from '../store/persistenceStore';
-import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { useRelaySessionUsable } from '../store/connectionStore';
@@ -45,6 +36,8 @@ import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
 import { useActiveLayoutMode } from './layout/useLayout';
 import { isGuestSession } from '../guest/guestSession';
+import { Popover } from './components/Popover';
+import { ToolsPanel } from './tools/ToolsPanel';
 import './UnifiedToolbar.css';
 
 /**
@@ -178,10 +171,16 @@ export function UnifiedToolbar({
 }: UnifiedToolbarProps) {
   const activeLayout = useActiveLayoutMode();
   const [showPdfExport, setShowPdfExport] = useState(false);
+  // Anchor rect doubles as the open flag — a popover with no anchor has nowhere
+  // to be, so the two can never disagree.
+  const [toolsAnchor, setToolsAnchor] = useState<DOMRect | null>(null);
+  const toolsOpen = toolsAnchor !== null;
+  const toolsBtnRef = useRef<HTMLButtonElement>(null);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   // JP-370: import writes into the active doc → disable it on a view-only doc.
   // Whiteboard (scratch overlay), Export, Help and Settings stay read-safe.
-  const isReadOnly = useActiveDocReadOnly();
+  // Re-render subscription only; the guard itself is the command's canExecute.
+  void useActiveDocReadOnly();
   /**
    * JP-464: a guest reading a published link is not an app user. Affordances
    * that assume a library, a session, or ownership (Documents, the document
@@ -197,10 +196,12 @@ export function UnifiedToolbar({
   const activeDocRecord = useActiveDocumentRecord();
   const relaySessionUsable = useRelaySessionUsable();
   const documentName = usePersistenceStore((state) => state.currentDocumentName);
-  const versionHistoryAvailable =
-    activeDocId !== null &&
-    (activeDocRecord?.type === 'remote' || activeDocRecord?.type === 'cached') &&
-    relaySessionUsable;
+  // Subscriptions kept purely to drive re-render: the Tools panel reads each
+  // command's `canExecute` at render time, so this component must re-render
+  // when the state behind those guards moves. The availability RULE itself now
+  // lives once, beside the command in CommandRegistry.
+  void activeDocRecord;
+  void relaySessionUsable;
 
   // Restoring from inside the open doc: the relay tombstones the source id and
   // the Deleted broadcast carries OUR user id, so the self-initiated guard
@@ -228,57 +229,32 @@ export function UnifiedToolbar({
 
   // The PDF export dialog lives in this component's local state, so the palette
   // (and any other caller) opens it via an event — mirroring the import bridge.
+  // Both dialogs live in this component's local state, so any caller opens them
+  // by event. That indirection is what lets the command be defined once, beside
+  // every other command, instead of the toolbar owning a private copy that only
+  // its own menu could reach — which is how version history ended up absent
+  // from the palette entirely.
   useEffect(() => {
-    const open = () => setShowPdfExport(true);
-    window.addEventListener('docushark:open-pdf-export', open);
-    return () => window.removeEventListener('docushark:open-pdf-export', open);
+    const openPdf = () => setShowPdfExport(true);
+    const openHistory = () => setShowVersionHistory(true);
+    window.addEventListener('docushark:open-pdf-export', openPdf);
+    window.addEventListener('docushark:open-version-history', openHistory);
+    return () => {
+      window.removeEventListener('docushark:open-pdf-export', openPdf);
+      window.removeEventListener('docushark:open-version-history', openHistory);
+    };
   }, []);
 
-  /**
-   * The document-scoped actions, gathered into one menu (JP — toolbar tidy).
-   * These were four loose icon buttons whose glyphs had to carry their whole
-   * meaning; as menu rows they get names, and the bar gets its width back.
-   * Availability stays declarative — a row the session can't use isn't built.
-   */
-  const toolEntries = useMemo((): DropdownMenuEntry[] => {
-    const entries: DropdownMenuEntry[] = [];
-    if (!guest) {
-      entries.push(
-        menuAction({
-          id: 'import',
-          label: 'Import diagram…',
-          icon: <Icon icon={FileInput} size={16} />,
-          disabled: isReadOnly,
-          onSelect: () => window.dispatchEvent(new CustomEvent('docushark:import-diagram')),
-        }),
-        menuAction({
-          id: 'whiteboard',
-          label: 'Whiteboard',
-          icon: <Icon icon={StickyNote} size={16} />,
-          onSelect: () => useWhiteboardStore.getState().toggleVisibility(),
-        }),
-      );
-    }
-    entries.push(
-      menuAction({
-        id: 'export-pdf',
-        label: 'Export to PDF…',
-        icon: <PdfIcon />,
-        onSelect: () => setShowPdfExport(true),
-      }),
-    );
-    if (versionHistoryAvailable && !guest) {
-      entries.push(
-        menuAction({
-          id: 'version-history',
-          label: 'Version history',
-          icon: <Icon icon={History} size={16} />,
-          onSelect: () => setShowVersionHistory(true),
-        }),
-      );
-    }
-    return entries;
-  }, [guest, isReadOnly, versionHistoryAvailable]);
+  // The Tools catalogue used to be built here, and the command palette built a
+  // second one in CommandRegistry. They described the same actions and had
+  // drifted — import carried two labels, the PDF dialog had two paths in, and
+  // version history existed only here so the palette could not reach it.
+  //
+  // The registry is now the only catalogue; `ToolsPanel` renders it. The store
+  // subscriptions above are still needed: a command's `canExecute` is read at
+  // render time, so this component must re-render when the state behind those
+  // guards changes, even though it no longer reads the values itself.
+
 
 
   return (
@@ -326,19 +302,43 @@ export function UnifiedToolbar({
             </button>
           ) : (
             <>
-              <DropdownMenu
-                trigger={
-                  <>
-                    <Icon icon={Wrench} size={14} />
-                    <span>Tools</span>
-                    <span className="toolbar-tools-chevron" aria-hidden="true">▾</span>
-                  </>
+              {/* A panel, not a menu: `DropdownMenu` is a role="menu" with
+                  roving tabindex whose children must be menu items, so a tile
+                  grid inside it would break its keyboard model. Deliberately
+                  click-to-open too — the old menu opened on hover, which is
+                  fine for a four-row list and a hazard for a grid you scan. */}
+              <button
+                ref={toolsBtnRef}
+                type="button"
+                className="toolbar-menu-chip toolbar-tools-btn"
+                title="Tools"
+                aria-haspopup="dialog"
+                aria-expanded={toolsOpen}
+                onClick={() =>
+                  setToolsAnchor(
+                    toolsOpen ? null : (toolsBtnRef.current?.getBoundingClientRect() ?? null),
+                  )
                 }
-                triggerClassName="toolbar-menu-chip toolbar-tools-btn"
-                triggerTitle="Tools — import, whiteboard, export, version history"
-                entries={toolEntries}
-                openOnHover
-              />
+              >
+                <Icon icon={Wrench} size={14} />
+                <span>Tools</span>
+                <span className="toolbar-tools-chevron" aria-hidden="true">▾</span>
+              </button>
+              {toolsAnchor && (
+                <Popover
+                  anchor={toolsAnchor}
+                  align="right"
+                  label="Tools"
+                  onClose={() => setToolsAnchor(null)}
+                >
+                  <ToolsPanel
+                    onAction={() => setToolsAnchor(null)}
+                    onOpenPalette={() =>
+                      window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette'))
+                    }
+                  />
+                </Popover>
+              )}
               <button
                 className="toolbar-help-btn"
                 onClick={() => void openDocsHandler()}

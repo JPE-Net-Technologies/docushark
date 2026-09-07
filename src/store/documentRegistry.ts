@@ -876,6 +876,17 @@ export function isActiveDocReadOnly(): boolean {
 }
 
 /** Reactive hook form of {@link isActiveDocReadOnly} for React components. */
+/**
+ * The active document's record, imperatively. Mirrors `useActiveDocumentRecord`
+ * for callers outside React (a command's `canExecute`).
+ */
+export function getActiveDocumentRecord() {
+  const state = useDocumentRegistry.getState();
+  return state.activeDocumentId === null
+    ? undefined
+    : state.entries[state.activeDocumentId]?.record;
+}
+
 export function useActiveDocReadOnly(): boolean {
   return useDocumentRegistry((state) =>
     state.activeDocumentId === null

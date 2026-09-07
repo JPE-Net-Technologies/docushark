@@ -1,0 +1,42 @@
+/**
+ * Tools panel — a tile grid in a popover.
+ *
+ * Sizing only. The tiles bring their own anatomy and brand tokens from
+ * `../tiles/tiles.css`; nothing here restyles a tile, because a tile that looks
+ * different in this surface is exactly what the tile system exists to prevent.
+ */
+
+.tools-panel {
+  /* Two 150px columns plus the grid gap and this panel's padding. 150 is the
+     settings-sheet column floor, kept deliberately: at the 132 a popover can
+     get away with, a label as ordinary as "Import diagram…" already wraps to
+     the tile's two-line clamp and the grid reads as cramped. Narrower than this
+     and the grid silently collapses to one column, which is a list again. */
+  min-width: 340px;
+  max-width: 380px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding: var(--space-2, 8px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.tools-panel__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+
+.tools-panel__group-title {
+  margin: 0;
+  padding: 0 var(--space-1, 4px);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* --text-muted, not --border-color: a heading is text, and the rail work
+     already learned that borrowing a border token here reads as a disabled
+     label rather than a quiet one. */
+  color: var(--text-muted);
+}

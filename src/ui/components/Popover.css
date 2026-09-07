@@ -1,0 +1,28 @@
+/**
+ * Popover shell — the surface only. Content brings its own layout.
+ *
+ * Positioned by the component (measured, then clamped), so this sets no
+ * left/top of its own.
+ */
+
+.popover {
+  position: fixed;
+  z-index: 10200; /* Matches the portal menus — above panels and the toolbar. */
+  background: var(--surface-raised, var(--bg-elevated));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: var(--shadow-lg, 0 8px 28px rgb(0 0 0 / 35%));
+  /* Not `overflow: hidden` — a transformed child makes a hidden box scrollable,
+     and the tile grid's own container handles its overflow. */
+  overflow: visible;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .popover {
+    animation: popover-in 90ms ease-out;
+  }
+  @keyframes popover-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: none; }
+  }
+}
