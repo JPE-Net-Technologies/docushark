@@ -67,6 +67,81 @@ describe('webClient', () => {
     });
   });
 
+  it('surfaces the server `detail` as the error message, not the machine code', async () => {
+    // `detail` used to be parsed and dropped here, so an import that failed on
+    // a Notion 429 reached the user as a toast reading "fetch_failed" — a
+    // machine code that names no cause and points at the wrong layer entirely
+    // (2026-09-07). The toast renders `.message`, so this IS the user-visible
+    // string.
+    const { impl } = stubFetch(502, {
+      error: 'fetch_failed',
+      code: 'provider_429',
+      detail: 'notion is rate-limiting this import. Wait a moment and try again.',
+      retryable: true,
+    });
+
+    const err = (await webClient
+      .fetchIntegrationResource('notion', 'p1', WS, deps(impl))
+      .catch((e: unknown) => e)) as WebClientError;
+
+    expect(err.message).toContain('rate-limiting');
+    expect(err.code).toBe('fetch_failed');
+    expect(err.retryable).toBe(true);
+  });
+
+  it('falls back to the code when the server sends no detail', async () => {
+    const { impl } = stubFetch(409, { error: 'not_connected' });
+
+    const err = (await webClient
+      .fetchIntegrationResource('notion', 'p1', WS, deps(impl))
+      .catch((e: unknown) => e)) as WebClientError;
+
+    expect(err.message).toBe('not_connected');
+    expect(err.retryable).toBe(false);
+  });
+
+  it('treats a non-retryable failure as non-retryable even with a detail', async () => {
+    const { impl } = stubFetch(502, {
+      error: 'fetch_failed',
+      detail: 'notion could not find this page.',
+      retryable: false,
+    });
+
+    const err = (await webClient
+      .fetchIntegrationResource('notion', 'p1', WS, deps(impl))
+      .catch((e: unknown) => e)) as WebClientError;
+
+    expect(err.message).toContain('could not find');
+    expect(err.retryable).toBe(false);
+  });
+
+  it('ignores a non-string detail rather than rendering [object Object]', async () => {
+    const { impl } = stubFetch(502, { error: 'fetch_failed', detail: { nested: 'oops' } });
+
+    const err = (await webClient
+      .fetchIntegrationResource('notion', 'p1', WS, deps(impl))
+      .catch((e: unknown) => e)) as WebClientError;
+
+    expect(err.message).toBe('fetch_failed');
+  });
+
+  it('survives a non-JSON error body', async () => {
+    const impl = vi.fn(async () => ({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new SyntaxError('not json');
+      },
+    })) as unknown as typeof fetch;
+
+    const err = (await webClient
+      .fetchIntegrationResource('notion', 'p1', WS, deps(impl))
+      .catch((e: unknown) => e)) as WebClientError;
+
+    expect(err.code).toBe('http_502');
+    expect(err.retryable).toBe(false);
+  });
+
   it('refuses to call without a token', async () => {
     const { impl, calls } = stubFetch(200, { members: [] });
     await expect(
