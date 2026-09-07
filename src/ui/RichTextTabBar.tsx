@@ -22,6 +22,7 @@ import { usePersistenceStore } from '../store/persistenceStore';
 import { useIntegrationHubStore, workspaceIntegrationState, providerLabel } from '../store/integrationHubStore';
 import { activeWorkspaceId } from '../store/activeWorkspace';
 import { refreshMirrorPage, detachMirrorPage } from '../services/mirrorPageService';
+import { OPEN_MIRROR_PICKER, type OpenMirrorPickerDetail } from '../services/integrationActions';
 import { useNotificationStore } from '../store/notificationStore';
 import { confirmDialog } from './confirm/confirmStore';
 import { opener } from '../platform/opener';
@@ -290,6 +291,19 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     },
     [addMenuProviders.length, handleAddPage],
   );
+
+  // A command can be run from the palette, where this component is not in
+  // scope, so integration actions ask for the picker by event rather than
+  // calling into it — the same bridge the PDF and version-history commands use.
+  useEffect(() => {
+    const open = (e: Event) => {
+      const providerId = (e as CustomEvent<OpenMirrorPickerDetail>).detail?.provider;
+      const match = hub?.providers.find((p) => p.id === providerId);
+      if (match) setPickerProvider(match);
+    };
+    window.addEventListener(OPEN_MIRROR_PICKER, open);
+    return () => window.removeEventListener(OPEN_MIRROR_PICKER, open);
+  }, [hub]);
 
   // Close the add-menu on outside click (same pattern as the context menu).
   useEffect(() => {

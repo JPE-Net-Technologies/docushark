@@ -5,6 +5,7 @@
  * for display, keyboard shortcut hints, and execution.
  */
 
+import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { FileDown, FileInput, History, StickyNote } from 'lucide-react';
 
@@ -130,6 +131,12 @@ export interface Command {
    * `toolsActions()` drops it rather than rendering a hole.
    */
   icon?: LucideIcon;
+  /**
+   * A rendered mark, for anything that is not a Lucide glyph — an integration
+   * provider's brand SVG. Satisfies the tile system's icon chip in place of
+   * `icon`; surfaces prefer it when both are present.
+   */
+  iconNode?: ReactNode;
   /**
    * Where this command is offered. Defaults to the palette only, which is what
    * every command did before surfaces existed — opting into `'tools'` is what
@@ -478,7 +485,13 @@ export function isOnSurface(c: Command, surface: ActionSurface): boolean {
  */
 export function getToolsActions(): Command[] {
   return getAllCommands().filter(
-    (c) => !c.reserved && c.icon && isOnSurface(c, 'tools') && (!c.canExecute || c.canExecute()),
+    (c) =>
+      !c.reserved &&
+      // The tile anatomy opens with a chip, so an action with neither a glyph
+      // nor a mark cannot render — drop it rather than leave a hole.
+      (c.icon || c.iconNode) &&
+      isOnSurface(c, 'tools') &&
+      (!c.canExecute || c.canExecute()),
   );
 }
 

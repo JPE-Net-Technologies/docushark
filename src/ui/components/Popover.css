@@ -8,13 +8,22 @@
 .popover {
   position: fixed;
   z-index: 10200; /* Matches the portal menus — above panels and the toolbar. */
-  background: var(--surface-raised, var(--bg-elevated));
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, 8px);
-  box-shadow: var(--shadow-lg, 0 8px 28px rgb(0 0 0 / 35%));
-  /* Not `overflow: hidden` — a transformed child makes a hidden box scrollable,
-     and the tile grid's own container handles its overflow. */
-  overflow: visible;
+  /* The glass treatment the layout menu already established, so the two read
+     as one surface rather than two popovers that happen to sit near each other.
+     Tokens, not literals — `--surface-raised` was invented for the first draft
+     of this file, resolved to nothing, and the panel rendered transparent.
+     backdrop-filter's cost scales with the NUMBER of glass surfaces, and one
+     popover at a time is exactly the case it is cheap for. */
+  background: var(--glass-surface);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-float), var(--glass-highlight);
+  /* A too-tall panel scrolls; it never truncates. Not `overflow: hidden` — a
+     transformed child makes a hidden box scrollable anyway. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 @media (prefers-reduced-motion: no-preference) {

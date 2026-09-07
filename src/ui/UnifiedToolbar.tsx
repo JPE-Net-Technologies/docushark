@@ -36,6 +36,7 @@ import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
 import { useActiveLayoutMode } from './layout/useLayout';
 import { isGuestSession } from '../guest/guestSession';
+import { useIntegrationHubStore } from '../store/integrationHubStore';
 import { Popover } from './components/Popover';
 import { ToolsPanel } from './tools/ToolsPanel';
 import './UnifiedToolbar.css';
@@ -202,6 +203,19 @@ export function UnifiedToolbar({
   // lives once, beside the command in CommandRegistry.
   void activeDocRecord;
   void relaySessionUsable;
+  // Same reason, for the integration actions contributed into the registry:
+  // they are derived from the hub, so the grid has to re-render when it loads.
+  // The subscription lives here rather than in ToolsPanel, which stays generic
+  // — it renders commands and does not know integrations exist.
+  void useIntegrationHubStore((s) => s.hub);
+
+  // The prose tab bar prefetches the hub, but it is not always mounted — a
+  // Diagram-focused layout has no prose tabs at all, and Tools would then offer
+  // no integration actions however long you waited. The store coalesces and
+  // caches with a TTL, so asking again here costs nothing.
+  useEffect(() => {
+    void useIntegrationHubStore.getState().ensureLoaded();
+  }, []);
 
   // Restoring from inside the open doc: the relay tombstones the source id and
   // the Deleted broadcast carries OUR user id, so the self-initiated guard

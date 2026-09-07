@@ -14,8 +14,9 @@
      and the grid silently collapses to one column, which is a list again. */
   min-width: 340px;
   max-width: 380px;
+  /* Scrolling belongs to the Popover, which owns the surface — a second
+     scroll container nested inside it gives two scrollbars and a trap. */
   max-height: min(70vh, 560px);
-  overflow-y: auto;
   padding: var(--space-2, 8px);
   display: flex;
   flex-direction: column;

@@ -85,7 +85,9 @@ export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
             {list.map((action) => (
               <ActionTile
                 key={action.id}
-                icon={action.icon!}
+                {...(action.iconNode !== undefined
+                  ? { chip: action.iconNode }
+                  : { icon: action.icon })}
                 label={action.label}
                 {...(action.shortcut ? { value: action.shortcut } : {})}
                 onClick={() => {
