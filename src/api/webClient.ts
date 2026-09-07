@@ -141,6 +141,9 @@ export class WebClientError extends Error {
     public readonly status: number,
     public readonly code: string,
     message?: string,
+    /** Whether the control plane says a retry could succeed (429, 5xx). Lets a
+     *  caller offer "try again" only when that is honest advice. */
+    public readonly retryable = false,
   ) {
     super(message ?? code);
     this.name = 'WebClientError';
@@ -192,13 +195,23 @@ async function request<T>(
 
   if (!res.ok) {
     let code = `http_${res.status}`;
+    let detail: string | undefined;
+    let retryable = false;
     try {
-      const errBody = (await res.json()) as { error?: string };
+      const errBody = (await res.json()) as { error?: string; detail?: string; retryable?: boolean };
       if (errBody?.error) code = errBody.error;
+      // `detail` is the ONLY field that names the actual cause. It used to be
+      // parsed and dropped right here, so `.message` was the bare machine code
+      // — an import that failed on a Notion 429 surfaced to the user as a toast
+      // reading "fetch_failed", which named nothing and pointed at the wrong
+      // layer entirely (2026-09-07). The control plane composes `detail` from a
+      // fixed vocabulary precisely so it is safe to show.
+      if (typeof errBody?.detail === 'string' && errBody.detail) detail = errBody.detail;
+      if (errBody?.retryable === true) retryable = true;
     } catch {
       /* non-JSON error body — keep the http_<status> code */
     }
-    throw new WebClientError(res.status, code);
+    throw new WebClientError(res.status, code, detail, retryable);
   }
 
   // 204 / empty bodies → undefined.
