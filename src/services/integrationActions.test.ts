@@ -51,16 +51,42 @@ describe('currentIntegrationActions', () => {
     expect(currentIntegrationActions()).toEqual([]);
   });
 
-  it('skips a provider that is available but NOT connected', () => {
+  it('offers a CONNECT action when nothing is connected yet', () => {
+    // The `+` menu carried a "Connect <provider>…" row and was removed when
+    // Tools took over the integration surface. Without this the editor offers
+    // no route to the account page at all, and an entitled user never learns
+    // the feature exists.
     setHub({ ...HUB, connections: [] } as IntegrationsHub);
-    expect(currentIntegrationActions()).toEqual([]);
+    const actions = currentIntegrationActions();
+    expect(actions.map((a) => a.id)).toEqual(['integration.connect']);
+    expect(actions[0]?.label).toBe('Connect an integration…');
   });
 
-  it('skips a connected provider that is not searchable', () => {
-    // Searchable is what makes "pick a page" meaningful; a connector without it
-    // has nothing for this action to open.
+  it('offers ONE connect action, not one per unconnected provider', () => {
+    // The account page is where you choose which; a list here would just be a
+    // worse version of that page.
     setHub({
       ...HUB,
+      providers: [
+        { id: 'notion', label: 'Notion', searchable: true },
+        { id: 'other', label: 'Other', searchable: true },
+      ],
+      connections: [],
+    } as IntegrationsHub);
+    expect(currentIntegrationActions()).toHaveLength(1);
+  });
+
+  it('a connected provider suppresses the connect action', () => {
+    // Once you are in, the prompt to get in is noise.
+    expect(currentIntegrationActions().map((a) => a.id)).toEqual(['integration.notion.newPage']);
+  });
+
+  it('offers nothing at all when no provider is searchable', () => {
+    // Searchable is what makes "pick a page" meaningful, so there is nothing to
+    // connect FOR — not even the prompt.
+    setHub({
+      ...HUB,
+      providers: [{ id: 'confluence', label: 'Confluence', searchable: false }],
       connections: [{ workspaceId: 'ws-1', provider: 'confluence' }],
     } as IntegrationsHub);
     expect(currentIntegrationActions()).toEqual([]);

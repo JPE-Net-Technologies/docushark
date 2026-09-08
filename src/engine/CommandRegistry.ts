@@ -7,7 +7,53 @@
 
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { FileDown, FileInput, History, StickyNote } from 'lucide-react';
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalSpaceAround,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalJustifyCenter,
+  AlignVerticalSpaceAround,
+  BookOpen,
+  BoxSelect,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  CirclePlus,
+  ClipboardPaste,
+  Columns2,
+  Copy,
+  FileDown,
+  FileInput,
+  FolderOpen,
+  Group,
+  Hand,
+  History,
+  Minus,
+  MousePointer2,
+  Network,
+  PanelLeft,
+  Redo2,
+  ScanSearch,
+  Search,
+  Spline,
+  Square,
+  SquareDashed,
+  SquarePlus,
+  StickyNote,
+  Trash2,
+  Type,
+  TypeOutline,
+  Undo2,
+  Ungroup,
+  Waypoints,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 
 import { useSessionStore, deleteSelected, getSelectedShapes } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
@@ -229,20 +275,20 @@ export function createIconShapeAtCenter(iconId: string): void {
 function buildCommands(): Command[] {
   return [
     // --- Tools (activate draw mode) --- dispatched by ToolManager (scope 'reserved').
-    { id: 'tool.select', label: 'Select tool', category: 'Tools', keys: 'V', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('select') },
-    { id: 'tool.rectangle', label: 'Rectangle tool', category: 'Tools', keys: 'R', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('rectangle') },
-    { id: 'tool.ellipse', label: 'Ellipse tool', category: 'Tools', keys: 'O', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('ellipse') },
-    { id: 'tool.line', label: 'Line tool', category: 'Tools', keys: 'L', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('line') },
-    { id: 'tool.text', label: 'Text tool', category: 'Tools', keys: 'T', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('text') },
-    { id: 'tool.connector', label: 'Connector tool', category: 'Tools', keys: 'C', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('connector') },
-    { id: 'tool.pan', label: 'Pan (Hand) tool', category: 'Tools', keys: 'H', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('pan') },
+    { id: 'tool.select', icon: MousePointer2, label: 'Select tool', category: 'Tools', keys: 'V', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('select') },
+    { id: 'tool.rectangle', icon: Square, label: 'Rectangle tool', category: 'Tools', keys: 'R', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('rectangle') },
+    { id: 'tool.ellipse', icon: Circle, label: 'Ellipse tool', category: 'Tools', keys: 'O', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('ellipse') },
+    { id: 'tool.line', icon: Minus, label: 'Line tool', category: 'Tools', keys: 'L', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('line') },
+    { id: 'tool.text', icon: Type, label: 'Text tool', category: 'Tools', keys: 'T', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('text') },
+    { id: 'tool.connector', icon: Spline, label: 'Connector tool', category: 'Tools', keys: 'C', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('connector') },
+    { id: 'tool.pan', icon: Hand, label: 'Pan (Hand) tool', category: 'Tools', keys: 'H', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('pan') },
 
     // --- Add shape (instant create at viewport center) ---
-    { id: 'add.rectangle', label: 'Add rectangle', category: 'Editing', execute: () => createShapeAtCenter('rectangle') },
-    { id: 'add.ellipse', label: 'Add ellipse', category: 'Editing', execute: () => createShapeAtCenter('ellipse') },
-    { id: 'add.text', label: 'Add text', category: 'Editing', execute: () => createShapeAtCenter('text') },
-    { id: 'add.line', label: 'Add line', category: 'Editing', execute: () => createShapeAtCenter('line') },
-    { id: 'add.connector', label: 'Add connector', category: 'Editing', execute: () => createShapeAtCenter('connector') },
+    { id: 'add.rectangle', icon: SquarePlus, label: 'Add rectangle', category: 'Editing', execute: () => createShapeAtCenter('rectangle') },
+    { id: 'add.ellipse', icon: CirclePlus, label: 'Add ellipse', category: 'Editing', execute: () => createShapeAtCenter('ellipse') },
+    { id: 'add.text', icon: TypeOutline, label: 'Add text', category: 'Editing', execute: () => createShapeAtCenter('text') },
+    { id: 'add.line', icon: Minus, label: 'Add line', category: 'Editing', execute: () => createShapeAtCenter('line') },
+    { id: 'add.connector', icon: Waypoints, label: 'Add connector', category: 'Editing', execute: () => createShapeAtCenter('connector') },
 
     // --- Import ---
     {
@@ -284,7 +330,7 @@ function buildCommands(): Command[] {
 
     // --- Documents surface (JP-218) ---
     {
-      id: 'view.documents',
+      id: 'view.documents', icon: FolderOpen,
       label: 'Go to Documents',
       category: 'File',
       keys: 'Mod+Shift+O', scope: 'global', whileTyping: true,
@@ -298,43 +344,43 @@ function buildCommands(): Command[] {
     // works while the prose editor is focused. The keys are browser-reserved in
     // the web PWA (work in desktop); the palette entries are the web path.
     {
-      id: 'page.next', label: 'Next page', category: 'Navigation',
+      id: 'page.next', icon: ChevronRight, label: 'Next page', category: 'Navigation',
       keys: 'Ctrl+PageDown | Ctrl+Tab', scope: 'global', whileTyping: true,
       execute: () => navigateActivePage('next'),
     },
     {
-      id: 'page.prev', label: 'Previous page', category: 'Navigation',
+      id: 'page.prev', icon: ChevronLeft, label: 'Previous page', category: 'Navigation',
       keys: 'Ctrl+PageUp | Ctrl+Shift+Tab', scope: 'global', whileTyping: true,
       execute: () => navigateActivePage('prev'),
     },
 
     // --- Editing (canvas scope — active when the canvas owns focus) ---
     {
-      id: 'edit.undo', label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
+      id: 'edit.undo', icon: Undo2, label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canUndo()) useHistoryStore.getState().undo(); },
       // JP-370: undo/redo aren't selection-gated, so the read-only clear-selection
       // trick doesn't cover them — block them on a view-only doc.
       canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canUndo(),
     },
     {
-      id: 'edit.redo', label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
+      id: 'edit.redo', icon: Redo2, label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
       execute: () => { if (useHistoryStore.getState().canRedo()) useHistoryStore.getState().redo(); },
       canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canRedo(),
     },
-    { id: 'edit.selectAll', label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
+    { id: 'edit.selectAll', icon: BoxSelect, label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
     {
-      id: 'edit.delete', label: 'Delete selected', category: 'Editing', keys: 'Delete | Backspace', scope: 'canvas',
+      id: 'edit.delete', icon: Trash2, label: 'Delete selected', category: 'Editing', keys: 'Delete | Backspace', scope: 'canvas',
       execute: () => { pushHistory('Delete shapes'); deleteSelected(); },
       canExecute: () => useSessionStore.getState().hasSelection(),
     },
-    { id: 'edit.clearSelection', label: 'Clear selection', category: 'Editing', keys: 'Escape', scope: 'canvas', execute: () => useSessionStore.getState().clearSelection() },
+    { id: 'edit.clearSelection', icon: SquareDashed, label: 'Clear selection', category: 'Editing', keys: 'Escape', scope: 'canvas', execute: () => useSessionStore.getState().clearSelection() },
 
     // --- Alignment ---
     ...alignmentCommands(),
 
     // --- Diagram layout (JP-305) ---
     {
-      id: 'arrange.selectConnected',
+      id: 'arrange.selectConnected', icon: Network,
       label: 'Select connected shapes',
       category: 'Editing',
       keys: 'Mod+Shift+A', scope: 'canvas',
@@ -342,7 +388,7 @@ function buildCommands(): Command[] {
       canExecute: canSelectConnectedChain,
     },
     {
-      id: 'arrange.autoLayoutTB',
+      id: 'arrange.autoLayoutTB', icon: AlignVerticalJustifyCenter,
       label: 'Auto-layout selection (top to bottom)',
       category: 'Editing',
       keys: 'Mod+Shift+L', scope: 'canvas',
@@ -350,7 +396,7 @@ function buildCommands(): Command[] {
       canExecute: canAutoLayoutSelection,
     },
     {
-      id: 'arrange.autoLayoutLR',
+      id: 'arrange.autoLayoutLR', icon: AlignHorizontalJustifyCenter,
       label: 'Auto-layout selection (left to right)',
       category: 'Editing',
       execute: () => autoLayoutSelection('LR'),
@@ -358,25 +404,25 @@ function buildCommands(): Command[] {
     },
 
     // --- View ---
-    { id: 'view.zoomIn', label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
-    { id: 'view.zoomOut', label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'view.zoomIn', icon: ZoomIn, label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
+    { id: 'view.zoomOut', icon: ZoomOut, label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
 
     // --- Clipboard + grouping (canvas scope). Copy/paste are engine-coupled
     // (clipboard + spatial index) so they bridge to the engine via an event;
     // group/ungroup are pure store ops and run directly. ---
     {
-      id: 'edit.copy', label: 'Copy', category: 'Editing', keys: 'Mod+C', scope: 'canvas',
+      id: 'edit.copy', icon: Copy, label: 'Copy', category: 'Editing', keys: 'Mod+C', scope: 'canvas',
       execute: () => window.dispatchEvent(new CustomEvent('docushark:copy-shapes')),
       canExecute: () => useSessionStore.getState().hasSelection(),
     },
     {
-      id: 'edit.paste', label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas',
+      id: 'edit.paste', icon: ClipboardPaste, label: 'Paste', category: 'Editing', keys: 'Mod+V', scope: 'canvas',
       execute: () => window.dispatchEvent(new CustomEvent('docushark:paste-shapes')),
       // JP-370: paste isn't selection-gated either (the engine also guards).
       canExecute: () => !isActiveDocReadOnly(),
     },
     {
-      id: 'edit.group', label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas',
+      id: 'edit.group', icon: Group, label: 'Group selected shapes', category: 'Editing', keys: 'Mod+G', scope: 'canvas',
       execute: () => {
         const ids = useSessionStore.getState().getSelectedIds();
         if (ids.length < 2) return;
@@ -388,7 +434,7 @@ function buildCommands(): Command[] {
       canExecute: () => getSelectedShapes().length >= 2,
     },
     {
-      id: 'edit.ungroup', label: 'Ungroup', category: 'Editing', keys: 'Mod+Shift+G', scope: 'canvas',
+      id: 'edit.ungroup', icon: Ungroup, label: 'Ungroup', category: 'Editing', keys: 'Mod+Shift+G', scope: 'canvas',
       execute: () => {
         const ids = useSessionStore.getState().getSelectedIds();
         if (ids.length !== 1) return;
@@ -409,17 +455,17 @@ function buildCommands(): Command[] {
       execute: () => useWhiteboardStore.getState().toggleVisibility(),
     },
     {
-      id: 'view.commandPalette', label: 'Command palette', category: 'View', keys: 'Mod+K', scope: 'global', whileTyping: true,
+      id: 'view.commandPalette', icon: Search, label: 'Command palette', category: 'View', keys: 'Mod+K', scope: 'global', whileTyping: true,
       execute: () => window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette')),
     },
     {
       // Shape search; suppressed while typing so the prose find (Ctrl+F in the
       // editor) wins when the editor is focused.
-      id: 'view.searchShapes', label: 'Search shapes', category: 'View', keys: 'Mod+F', scope: 'global',
+      id: 'view.searchShapes', icon: ScanSearch, label: 'Search shapes', category: 'View', keys: 'Mod+F', scope: 'global',
       execute: () => window.dispatchEvent(new CustomEvent('docushark:toggle-search')),
     },
     {
-      id: 'view.docs', label: 'Open documentation', category: 'View', keys: 'F1', scope: 'global', whileTyping: true,
+      id: 'view.docs', icon: BookOpen, label: 'Open documentation', category: 'View', keys: 'F1', scope: 'global', whileTyping: true,
       execute: () => { void opener.openDocs(); },
     },
 
@@ -433,7 +479,7 @@ function buildCommands(): Command[] {
     // --- Layouts ---
     ...layoutCommands(),
     {
-      id: 'view.cycleRelaxedFocus',
+      id: 'view.cycleRelaxedFocus', icon: Columns2,
       label: 'Cycle prose / split / diagram focus',
       category: 'View',
       keys: 'Mod+Shift+\\', scope: 'global', whileTyping: true,
@@ -442,7 +488,7 @@ function buildCommands(): Command[] {
       canExecute: () => useUIPreferencesStore.getState().layout.defaultMode === 'relaxed',
     },
     {
-      id: 'view.toggleNavigator',
+      id: 'view.toggleNavigator', icon: PanelLeft,
       label: 'Toggle Navigator panel',
       category: 'View',
       scope: 'global',
@@ -576,14 +622,14 @@ function alignmentCommands(): Command[] {
   const distGuard = () => getSelectedShapes().length >= 3;
 
   return [
-    { id: 'align.left', label: 'Align left', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignHorizontal(getSelectedShapes(), 'left'); if (u.length) updateShapes(u); }, canExecute: guard },
-    { id: 'align.centerH', label: 'Align center (horizontal)', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignHorizontal(getSelectedShapes(), 'center'); if (u.length) updateShapes(u); }, canExecute: guard },
-    { id: 'align.right', label: 'Align right', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignHorizontal(getSelectedShapes(), 'right'); if (u.length) updateShapes(u); }, canExecute: guard },
-    { id: 'align.top', label: 'Align top', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignVertical(getSelectedShapes(), 'top'); if (u.length) updateShapes(u); }, canExecute: guard },
-    { id: 'align.centerV', label: 'Align middle (vertical)', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignVertical(getSelectedShapes(), 'middle'); if (u.length) updateShapes(u); }, canExecute: guard },
-    { id: 'align.bottom', label: 'Align bottom', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignVertical(getSelectedShapes(), 'bottom'); if (u.length) updateShapes(u); }, canExecute: guard },
-    { id: 'align.distributeH', label: 'Distribute horizontally', category: 'Editing', execute: () => { pushHistory('Distribute shapes'); const u = distribute(getSelectedShapes(), 'horizontal'); if (u.length) updateShapes(u); }, canExecute: distGuard },
-    { id: 'align.distributeV', label: 'Distribute vertically', category: 'Editing', execute: () => { pushHistory('Distribute shapes'); const u = distribute(getSelectedShapes(), 'vertical'); if (u.length) updateShapes(u); }, canExecute: distGuard },
+    { id: 'align.left', icon: AlignStartVertical, label: 'Align left', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignHorizontal(getSelectedShapes(), 'left'); if (u.length) updateShapes(u); }, canExecute: guard },
+    { id: 'align.centerH', icon: AlignCenterVertical, label: 'Align center (horizontal)', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignHorizontal(getSelectedShapes(), 'center'); if (u.length) updateShapes(u); }, canExecute: guard },
+    { id: 'align.right', icon: AlignEndVertical, label: 'Align right', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignHorizontal(getSelectedShapes(), 'right'); if (u.length) updateShapes(u); }, canExecute: guard },
+    { id: 'align.top', icon: AlignStartHorizontal, label: 'Align top', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignVertical(getSelectedShapes(), 'top'); if (u.length) updateShapes(u); }, canExecute: guard },
+    { id: 'align.centerV', icon: AlignCenterHorizontal, label: 'Align middle (vertical)', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignVertical(getSelectedShapes(), 'middle'); if (u.length) updateShapes(u); }, canExecute: guard },
+    { id: 'align.bottom', icon: AlignEndHorizontal, label: 'Align bottom', category: 'Editing', execute: () => { pushHistory('Align shapes'); const u = alignVertical(getSelectedShapes(), 'bottom'); if (u.length) updateShapes(u); }, canExecute: guard },
+    { id: 'align.distributeH', icon: AlignHorizontalSpaceAround, label: 'Distribute horizontally', category: 'Editing', execute: () => { pushHistory('Distribute shapes'); const u = distribute(getSelectedShapes(), 'horizontal'); if (u.length) updateShapes(u); }, canExecute: distGuard },
+    { id: 'align.distributeV', icon: AlignVerticalSpaceAround, label: 'Distribute vertically', category: 'Editing', execute: () => { pushHistory('Distribute shapes'); const u = distribute(getSelectedShapes(), 'vertical'); if (u.length) updateShapes(u); }, canExecute: distGuard },
   ];
 }
 

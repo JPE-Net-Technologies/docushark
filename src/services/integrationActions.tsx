@@ -41,7 +41,11 @@ import {
   workspaceIntegrationState,
   type WorkspaceProviderState,
 } from '../store/integrationHubStore';
+import { Plug } from 'lucide-react';
+
 import { ProviderIcon } from '../ui/integrations/ProviderIcon';
+import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../api/relayConnection';
+import { opener } from '../platform/opener';
 
 /** Event the editor listens for to open a provider's resource picker. */
 export const OPEN_MIRROR_PICKER = 'docushark:open-mirror-picker';
@@ -90,7 +94,36 @@ export function currentIntegrationActions(): Command[] {
   const hub = useIntegrationHubStore.getState().hub;
   const ws = workspaceIntegrationState(hub, activeWorkspaceId());
   if (!ws?.entitled) return [];
-  return ws.providers.filter((p) => p.connected).flatMap(actionsForProvider);
+
+  const searchable = ws.providers.filter((p) => p.provider.searchable);
+  const connected = searchable.filter((p) => p.connected);
+  if (connected.length > 0) return connected.flatMap(actionsForProvider);
+
+  // Nothing connected yet, but this workspace is entitled to connect something.
+  //
+  // The `+` menu used to carry a "Connect <provider>…" row and was removed when
+  // Tools took over the integration surface (JP-506); without this the editor
+  // would offer no route to the account page at all, and an entitled user would
+  // simply never learn the feature exists. One action, not one per provider —
+  // the account page is where you choose.
+  if (searchable.length === 0) return [];
+  return [
+    {
+      id: 'integration.connect',
+      label: 'Connect an integration…',
+      category: 'File',
+      icon: Plug,
+      surfaces: ['palette', 'tools'],
+      execute: () => void openAccountIntegrations(),
+    },
+  ];
+}
+
+/** Open the account site's integrations page in the user's browser. */
+export async function openAccountIntegrations(): Promise<void> {
+  const conn = await loadConnection();
+  const base = (conn?.cloudBaseUrl ?? DEFAULT_CLOUD_BASE_URL).replace(/\/+$/, '');
+  await opener.openExternalUrl(`${base}/account/integrations`);
 }
 
 /**
