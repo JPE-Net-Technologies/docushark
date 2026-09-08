@@ -343,6 +343,7 @@ export function UnifiedToolbar({
                   anchor={toolsAnchor}
                   align="right"
                   label="Tools"
+                  triggerRef={toolsBtnRef}
                   onClose={() => setToolsAnchor(null)}
                 >
                   <ToolsPanel

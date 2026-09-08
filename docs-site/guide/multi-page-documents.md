@@ -15,9 +15,8 @@ Click the **+** button in the page tab bar (in the toolbar area) to create a new
 - **Rich text content** in the Document Editor
 - **Layer order** for shape stacking
 
-In a workspace with integrations available, the **+** button on the prose tab
-bar opens a small menu instead — **New page** creates a blank page as usual,
-and each connected source (for example Notion) offers **New page from …** (see
+The **+** button always creates a blank page. To bring a page in from a
+connected source instead, use **Tools → New page from …** (see
 [Mirrored pages](#mirrored-pages) below).
 
 ## Page Tabs
@@ -46,8 +45,9 @@ A **mirrored page** shows a live copy of a page from a connected source, such
 as a Notion page, inside your document. Available on paid workspace plans with
 the source connected from your account's Integrations page.
 
-To add one, click **+** on the prose tab bar and choose **New page from
-Notion…**, then search for the page you want and pick it. The content —
+To add one, open **Tools** and choose **New page from Notion…**, then search
+for the page you want and pick it. The same action is in the command palette —
+press <kbd>Mod</kbd>+<kbd>K</kbd> and start typing the source's name. The content —
 headings, lists, tables, images, and file attachments — is imported as a
 read-only page, and the tab carries the source's icon so you can spot mirrored
 pages at a glance. Attachments come across as files you can open from the page,

@@ -19,14 +19,12 @@ import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { sharedDocOffline } from '../collaboration/sharedDocOffline';
 import { usePendingSyncPages } from '../store/pendingSyncPages';
 import { usePersistenceStore } from '../store/persistenceStore';
-import { useIntegrationHubStore, workspaceIntegrationState, providerLabel } from '../store/integrationHubStore';
-import { activeWorkspaceId } from '../store/activeWorkspace';
+import { useIntegrationHubStore, providerLabel } from '../store/integrationHubStore';
 import { refreshMirrorPage, detachMirrorPage } from '../services/mirrorPageService';
 import { OPEN_MIRROR_PICKER, type OpenMirrorPickerDetail } from '../services/integrationActions';
 import { useNotificationStore } from '../store/notificationStore';
 import { confirmDialog } from './confirm/confirmStore';
 import { opener } from '../platform/opener';
-import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../api/relayConnection';
 import { MirrorResourcePicker } from './integrations/MirrorResourcePicker';
 import { IngestSubpagesDialog } from './integrations/IngestSubpagesDialog';
 import { ProviderIcon } from './integrations/ProviderIcon';
@@ -79,7 +77,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   // JP-415 integration affordances: the "+" add-menu (only shown when the
   // workspace has integration options) and the resource-browser modal.
-  const [addMenu, setAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [pickerProvider, setPickerProvider] = useState<IntegrationProvider | null>(null);
   // JP-475 mirror families: descendants collapse under their root's tab. The
   // flyout navigates a family; the ingest dialog mirrors new subpages.
@@ -91,11 +88,9 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   // Measured-then-clamped portal positions (the InlinePageTabs pattern) so
   // neither menu can render out of the viewport.
   const [adjustedCtxPos, setAdjustedCtxPos] = useState<{ x: number; y: number } | null>(null);
-  const [adjustedAddPos, setAdjustedAddPos] = useState<{ x: number; y: number } | null>(null);
 
   const editInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-  const addMenuRef = useRef<HTMLDivElement>(null);
   const familyFlyoutRef = useRef<HTMLDivElement>(null);
   const [adjustedFlyoutPos, setAdjustedFlyoutPos] = useState<{ x: number; y: number } | null>(null);
   const colorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,26 +124,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     const rect = contextMenuRef.current.getBoundingClientRect();
     setAdjustedCtxPos(clampToViewport(contextMenu.x, contextMenu.y, rect.width, rect.height));
   }, [contextMenu.isOpen, contextMenu.x, contextMenu.y]);
-
-  // Same for the "+" add-menu (its anchor — the add button — can sit at the
-  // strip's right edge, which is exactly where an unclamped menu overflows).
-  // Re-clamps on size change: the provider rows carry brand-icon images, so
-  // the menu can grow a few px after the first measure (cold icon load).
-  useEffect(() => {
-    const el = addMenuRef.current;
-    if (!addMenu || !el) {
-      setAdjustedAddPos(null);
-      return undefined;
-    }
-    const reclamp = () => {
-      const rect = el.getBoundingClientRect();
-      setAdjustedAddPos(clampToViewport(addMenu.x, addMenu.y, rect.width, rect.height));
-    };
-    reclamp();
-    const ro = new ResizeObserver(reclamp);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [addMenu]);
 
   // Helpers for color picker submenu hover with timeout
   const openColorPicker = useCallback(() => {
@@ -269,28 +244,11 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     void useIntegrationHubStore.getState().ensureLoaded();
   }, []);
 
-  // "+" click (JP-415): when the workspace has integration options (entitled,
-  // with searchable providers), anchor an add-menu to the button; otherwise
-  // keep the classic one-click page create — integrations never add friction
-  // to the core action.
-  const wsIntegrations = workspaceIntegrationState(hub, activeWorkspaceId());
-  const addMenuProviders = wsIntegrations?.entitled
-    ? wsIntegrations.providers.filter((p) => p.provider.searchable)
-    : [];
-  const handleAddClick = useCallback(
-    (anchorRect?: DOMRect) => {
-      // A TTL refresh, not the initial load (the mount effect above owns that):
-      // it picks up a provider connected on the account site since this document
-      // was opened. The decision below still uses the state we already have.
-      void useIntegrationHubStore.getState().ensureLoaded();
-      if (addMenuProviders.length > 0 && anchorRect && !sharedDocOffline()) {
-        setAddMenu({ x: anchorRect.left, y: anchorRect.bottom + 4 });
-        return;
-      }
-      handleAddPage();
-    },
-    [addMenuProviders.length, handleAddPage],
-  );
+  // "+" creates a page. It used to open a menu offering the workspace's
+  // integration sources as well, which meant the core action — add a page —
+  // cost a menu, and the integration entries were duplicated by the Tools grid
+  // once that existed (JP-506). Tools owns the integration surface now, so this
+  // is one click again and there is one place offering "New page from …".
 
   // A command can be run from the palette, where this component is not in
   // scope, so integration actions ask for the picker by event rather than
@@ -304,24 +262,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     window.addEventListener(OPEN_MIRROR_PICKER, open);
     return () => window.removeEventListener(OPEN_MIRROR_PICKER, open);
   }, [hub]);
-
-  // Close the add-menu on outside click (same pattern as the context menu).
-  useEffect(() => {
-    if (!addMenu) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setAddMenu(null);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [addMenu]);
-
-  const openAccountIntegrations = useCallback(() => {
-    setAddMenu(null);
-    void loadConnection().then((conn) => {
-      const base = (conn?.cloudBaseUrl ?? DEFAULT_CLOUD_BASE_URL).replace(/\/+$/, '');
-      void opener.openExternalUrl(`${base}/account/integrations`);
-    });
-  }, []);
 
   // Mirror page actions (context menu on a mirror tab).
   const handleOpenSource = useCallback((url: string) => {
@@ -553,7 +493,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
             </div>
           );
         }}
-        onAdd={handleAddClick}
+        onAdd={handleAddPage}
       />
 
       {/* Context menu — mirror pages swap Rename/Color for source actions
@@ -697,44 +637,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
             </div>
           );
         })(),
-        document.body
-      )}
-
-      {/* Add-menu (JP-415): "New page" + the workspace's integration sources. */}
-      {addMenu && createPortal(
-        <div
-          ref={addMenuRef}
-          className="rich-text-tab-context-menu"
-          style={{ left: (adjustedAddPos ?? addMenu).x, top: (adjustedAddPos ?? addMenu).y }}
-        >
-          <div
-            className="rich-text-tab-context-item"
-            onClick={() => {
-              setAddMenu(null);
-              handleAddPage();
-            }}
-          >
-            New page
-          </div>
-          {addMenuProviders.length > 0 && <div className="rich-text-tab-context-divider" />}
-          {addMenuProviders.map(({ provider, connected }) => (
-            <div
-              key={provider.id}
-              className="rich-text-tab-context-item rich-text-tab-context-item-provider"
-              onClick={() => {
-                if (connected) {
-                  setAddMenu(null);
-                  setPickerProvider(provider);
-                } else {
-                  openAccountIntegrations();
-                }
-              }}
-            >
-              <ProviderIcon provider={provider.id} size={14} />
-              {connected ? `New page from ${provider.label}…` : `Connect ${provider.label}…`}
-            </div>
-          ))}
-        </div>,
         document.body
       )}
 

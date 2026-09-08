@@ -28,7 +28,15 @@
  * answer.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 import { clampToViewport } from '../contextMenuUtils';
@@ -45,6 +53,15 @@ export interface PopoverProps {
   onClose: () => void;
   /** Accessible name for the panel. */
   label: string;
+  /**
+   * The element that opened this panel, excluded from the outside-click check.
+   *
+   * Without it a trigger cannot toggle: pressing it while the panel is open
+   * fires this component's `mousedown` listener (which closes) and then the
+   * trigger's own `onClick` (which reopens), so the panel appears stuck open.
+   * Excluding the trigger lets its click be the only thing that acts.
+   */
+  triggerRef?: RefObject<HTMLElement | null>;
   className?: string;
   children: ReactNode;
 }
@@ -55,6 +72,7 @@ export function Popover({
   offset = 4,
   onClose,
   label,
+  triggerRef,
   className = '',
   children,
 }: PopoverProps) {
@@ -82,7 +100,10 @@ export function Popover({
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      if (ref.current?.contains(target)) return;
+      if (triggerRef?.current?.contains(target)) return; // let the trigger toggle
+      onClose();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -100,7 +121,7 @@ export function Popover({
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   return createPortal(
     <div
