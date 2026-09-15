@@ -15,6 +15,9 @@
 //! prefix — at the cost of cross-workspace byte dedup, consistent with the
 //! relay's existing full-size-per-grant metering.
 
+use std::time::Duration;
+
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -30,6 +33,59 @@ const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 /// SHA-256 of the empty string — the payload hash for body-less requests.
 const EMPTY_SHA256: &str =
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/// Total attempts per R2 request — the first, plus two retries.
+///
+/// R2 answers a small share of requests with a server-side 5xx; that is normal
+/// object-store behaviour, not a fault. Without a retry a *single* such blip
+/// permanently dropped a durable write (JP-508: one `500` on a doc mirror
+/// during a cold-start backfill paged as an incident). Three attempts covers
+/// an isolated blip without letting a real outage sit in a queue worker —
+/// worst case adds well under a second before the failure is reported.
+const R2_MAX_ATTEMPTS: u32 = 3;
+
+/// Base backoff before the first retry; doubles per attempt.
+const R2_RETRY_BASE_DELAY: Duration = Duration::from_millis(120);
+
+/// Bounds the TCP + TLS handshake to R2.
+const R2_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bounds each individual read from an R2 connection — **not** the whole
+/// transfer, so a genuinely slow large upload still completes as long as bytes
+/// keep moving.
+const R2_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Whether an HTTP status earns another attempt.
+///
+/// **5xx / 408 / 429 only.** A 4xx is the server telling us the request itself
+/// is wrong — a 403 from an expired credential (JP-505) or a 404 — and
+/// retrying it just burns time before reporting the same failure. Getting this
+/// boundary wrong in the permissive direction would have turned that outage
+/// into a slow one rather than a loud one.
+fn status_is_retryable(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+/// Backoff for `attempt` (1 = the delay before the second attempt), with
+/// jitter over the lower half of the window.
+///
+/// The jitter matters more here than the doubling: the mirror worker, the
+/// ledger sweep and the startup backfill all hammer R2 concurrently, so a
+/// fixed backoff would re-collide them in lockstep after a shared outage.
+fn retry_delay(attempt: u32) -> Duration {
+    // Clamp the exponent rather than trusting the caller: an unclamped
+    // `1 << (attempt - 1)` overflows a u32 at attempt 33, which panics in debug
+    // and — far worse — wraps to 1 in release, silently collapsing the backoff
+    // to the base delay and hammering R2 at exactly the moment it is struggling.
+    // `R2_MAX_ATTEMPTS` keeps that unreachable today; this keeps it unreachable
+    // if someone raises it.
+    let exponent = (attempt - 1).min(16);
+    let window = R2_RETRY_BASE_DELAY.saturating_mul(1u32 << exponent);
+    let half = window / 2;
+    half + half.mul_f64(rand::random::<f64>())
+}
 
 /// Connection + credential parameters for the S3/R2 byte store.
 #[derive(Debug, Clone)]
@@ -84,7 +140,21 @@ impl S3Backend {
         }
         Self {
             config,
-            http: reqwest::Client::new(),
+            // Timeouts are not optional here. The doc-mirror worker drains its
+            // queue *serially*, awaiting each transfer, so a single R2 request
+            // that stalls without ever answering halts every later durable
+            // write for the life of the process — and because nothing ever
+            // returns an error, the durability monitor never fires and the
+            // outage is both total and invisible. That is a strictly worse
+            // failure than the one this module reports on, and an untimed
+            // client is the only thing standing between here and it.
+            http: reqwest::Client::builder()
+                .connect_timeout(R2_CONNECT_TIMEOUT)
+                .read_timeout(R2_READ_TIMEOUT)
+                .build()
+                // Only fails if the TLS backend cannot initialize, which is
+                // exactly when `Client::new()` would have panicked anyway.
+                .expect("R2 HTTP client"),
         }
     }
 
@@ -303,7 +373,7 @@ impl S3Backend {
     ) -> Result<Option<(u64, Option<String>)>, String> {
         let key = self.object_key(ws, hash);
         let resp = self
-            .send_signed("HEAD", &key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
+            .send_signed("HEAD", &key, Bytes::new(), EMPTY_SHA256, &[])
             .await?;
         if resp.status().as_u16() == 404 {
             return Ok(None);
@@ -345,7 +415,7 @@ impl S3Backend {
             .send_signed(
                 "PUT",
                 key,
-                reqwest::Body::from(data),
+                Bytes::from(data),
                 &payload_hash,
                 &[("content-type".to_string(), content_type.to_string())],
             )
@@ -375,7 +445,7 @@ impl S3Backend {
     /// treat a truly-absent object distinctly from a transient failure.
     pub async fn get_object_at(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
         let resp = self
-            .send_signed("GET", key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
+            .send_signed("GET", key, Bytes::new(), EMPTY_SHA256, &[])
             .await?;
         if resp.status().as_u16() == 404 {
             return Ok(None);
@@ -392,7 +462,7 @@ impl S3Backend {
     /// DELETE the object at an **explicit key** (JP-200). 404 = success (idempotent).
     pub async fn delete_object_at(&self, key: &str) -> Result<(), String> {
         let resp = self
-            .send_signed("DELETE", key, reqwest::Body::from(Vec::new()), EMPTY_SHA256, &[])
+            .send_signed("DELETE", key, Bytes::new(), EMPTY_SHA256, &[])
             .await?;
         let code = resp.status().as_u16();
         if resp.status().is_success() || code == 404 {
@@ -425,37 +495,94 @@ impl S3Backend {
         self.get_object_at(&self.object_key(ws, hash)).await
     }
 
-    /// Issue a SigV4 header-authenticated request to R2. `extra_headers` are
-    /// signed alongside `host`/`x-amz-date`/`x-amz-content-sha256`.
+    /// Issue a SigV4 header-authenticated request to R2, retrying transient
+    /// failures. `extra_headers` are signed alongside
+    /// `host`/`x-amz-date`/`x-amz-content-sha256`.
+    ///
+    /// ## Why the retry lives here and not at the call sites
+    ///
+    /// Two reasons, one of them a correctness requirement:
+    ///
+    /// 1. **Every attempt must be signed afresh.** A SigV4 signature carries
+    ///    the timestamp it was made at and R2 rejects a stale one, so a retry
+    ///    that replayed the first attempt's headers would draw a *403* after a
+    ///    backoff — an auth error invented by the retry itself, which is about
+    ///    the most misleading failure this module could produce. Signing
+    ///    inside the loop makes that impossible to get wrong.
+    /// 2. Every verb benefits: the doc-mirror PUT, the restore-on-miss GET
+    ///    (JP-200) and the GC DELETE. All three address a fixed key and are
+    ///    idempotent — a replayed PUT rewrites identical bytes, a replayed
+    ///    DELETE treats 404 as success — so retrying is safe for all of them.
+    ///
+    /// `body` is [`Bytes`] rather than `reqwest::Body` precisely so an attempt
+    /// can be rebuilt: a `Body` is consumed by sending it, and blob payloads
+    /// are far too large to clone per attempt.
     async fn send_signed(
         &self,
         method: &str,
         key: &str,
-        body: reqwest::Body,
+        body: Bytes,
         payload_hash: &str,
         extra_headers: &[(String, String)],
     ) -> Result<reqwest::Response, String> {
         let canonical_uri = self.canonical_uri(key);
         let url = format!("{}://{}{}", self.scheme(), self.host_header(), canonical_uri);
-        let signed = sign_headers_at(
-            &self.host_header(),
-            &canonical_uri,
-            &self.config.region,
-            &self.config.access_key_id,
-            &self.config.secret_access_key,
-            method,
-            payload_hash,
-            extra_headers,
-            Utc::now(),
-        );
-
         let m = reqwest::Method::from_bytes(method.as_bytes())
             .map_err(|e| format!("bad method {}: {}", method, e))?;
-        let mut req = self.http.request(m, &url).body(body);
-        for (k, v) in signed {
-            req = req.header(k, v);
+
+        let mut attempt = 1;
+        loop {
+            let signed = sign_headers_at(
+                &self.host_header(),
+                &canonical_uri,
+                &self.config.region,
+                &self.config.access_key_id,
+                &self.config.secret_access_key,
+                method,
+                payload_hash,
+                extra_headers,
+                Utc::now(),
+            );
+            // `Bytes::clone` is a refcount bump, not a copy of the payload.
+            let mut req = self
+                .http
+                .request(m.clone(), &url)
+                .body(reqwest::Body::from(body.clone()));
+            for (k, v) in signed {
+                req = req.header(k, v);
+            }
+
+            let outcome = req.send().await;
+            // A transport error (connection reset, TLS hiccup, timeout) is
+            // transient by nature — there is no status to inspect, and the
+            // request may never have reached R2 at all.
+            let retryable = match &outcome {
+                Ok(resp) => status_is_retryable(resp.status()),
+                Err(_) => true,
+            };
+            if !retryable || attempt >= R2_MAX_ATTEMPTS {
+                return outcome.map_err(|e| format!("R2 {} {}: {}", method, key, e));
+            }
+
+            let delay = retry_delay(attempt);
+            // `debug`, not `warn`: a retried blip that then succeeds is not an
+            // incident, and logging it at warn would re-teach the reflex that
+            // JP-505 was about — that warnings in this path are noise.
+            log::debug!(
+                "R2 {} {} attempt {}/{} failed ({}) — retrying in {:?}",
+                method,
+                key,
+                attempt,
+                R2_MAX_ATTEMPTS,
+                match &outcome {
+                    Ok(r) => r.status().to_string(),
+                    Err(e) => e.to_string(),
+                },
+                delay,
+            );
+            tokio::time::sleep(delay).await;
+            attempt += 1;
         }
-        req.send().await.map_err(|e| format!("R2 {} {}: {}", method, key, e))
     }
 }
 
@@ -1035,5 +1162,78 @@ mod tests {
             mint.headers,
             vec![("content-type".to_string(), "image/png".to_string())]
         );
+    }
+
+    // --- Retry policy (JP-508). The transport loop itself needs a live R2 to
+    // exercise, but the two decisions it delegates are pure and are where the
+    // damage would be: retrying a 4xx turns a credential outage (JP-505) into a
+    // slow credential outage, and a fixed delay re-collides the queue workers.
+
+    #[test]
+    fn transient_statuses_are_retried() {
+        for code in [500u16, 502, 503, 504, 408, 429] {
+            assert!(
+                status_is_retryable(reqwest::StatusCode::from_u16(code).unwrap()),
+                "{code} should be retried"
+            );
+        }
+    }
+
+    #[test]
+    fn client_errors_and_success_are_terminal() {
+        // 403 is the JP-505 shape (dead credential) and 404 is "absent" — both
+        // are answers, not blips. Retrying them only delays the report.
+        for code in [200u16, 204, 400, 403, 404, 409, 412] {
+            assert!(
+                !status_is_retryable(reqwest::StatusCode::from_u16(code).unwrap()),
+                "{code} must not be retried"
+            );
+        }
+    }
+
+    #[test]
+    fn backoff_grows_and_stays_inside_its_window() {
+        // Each attempt's delay lies in [window/2, window] where window doubles.
+        for attempt in 1..=3u32 {
+            let window = R2_RETRY_BASE_DELAY * (1 << (attempt - 1));
+            for _ in 0..64 {
+                let d = retry_delay(attempt);
+                assert!(d >= window / 2, "attempt {attempt}: {d:?} below window/2");
+                assert!(d <= window, "attempt {attempt}: {d:?} above window");
+            }
+        }
+    }
+
+    #[test]
+    fn backoff_survives_an_attempt_cap_someone_raises_later() {
+        // The exponent is clamped, so no attempt number can overflow the shift.
+        // Without the clamp this panics in debug at attempt 33 and silently
+        // collapses the backoff to the base delay in release — the opposite of
+        // backing off, at the worst possible moment.
+        for attempt in [32u32, 33, 64, 1000, u32::MAX] {
+            let d = retry_delay(attempt);
+            assert!(d >= R2_RETRY_BASE_DELAY / 2, "attempt {attempt} collapsed to {d:?}");
+        }
+    }
+
+    #[test]
+    fn backoff_is_jittered_not_fixed() {
+        // A fixed backoff would march the mirror worker, ledger sweep and
+        // startup backfill back into R2 in lockstep after a shared outage.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..64 {
+            seen.insert(retry_delay(2).as_nanos());
+        }
+        assert!(seen.len() > 1, "retry_delay(2) produced a constant delay");
+    }
+
+    #[test]
+    fn the_whole_retry_budget_is_bounded() {
+        // Worst case must stay well under a second: these run in background
+        // queue workers, and a real outage should be reported, not absorbed.
+        let worst: Duration = (1..R2_MAX_ATTEMPTS)
+            .map(|a| R2_RETRY_BASE_DELAY * (1 << (a - 1)))
+            .sum();
+        assert!(worst < Duration::from_secs(1), "retry budget {worst:?} too slow");
     }
 }
