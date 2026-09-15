@@ -132,7 +132,7 @@ function TileHint({ hint }: { hint?: string | undefined }) {
 }
 
 interface TileHeadProps {
-  icon?: LucideIcon;
+  icon?: LucideIcon | undefined;
   /** Replaces the glyph entirely (the colour swatch, a layout thumbnail). */
   chip?: ReactNode;
   chipStyle?: React.CSSProperties;
@@ -513,7 +513,13 @@ export function PickerTile({
 // ---------------------------------------------------------------------------
 
 export interface ActionTileProps extends TileBaseProps {
-  icon: LucideIcon;
+  icon?: LucideIcon | undefined;
+  /**
+   * Replaces the glyph entirely — for a mark that is not a Lucide icon, such as
+   * an integration provider's brand SVG. Exactly one of `icon` or `chip` should
+   * be given; `chip` wins if both are.
+   */
+  chip?: ReactNode | undefined;
   label: string;
   value?: string | undefined;
   onClick: () => void;
@@ -523,6 +529,7 @@ export interface ActionTileProps extends TileBaseProps {
 
 export function ActionTile({
   icon,
+  chip,
   label,
   value,
   onClick,
@@ -541,7 +548,7 @@ export function ActionTile({
       onClick={onClick}
       {...(base.title !== undefined ? { title: base.title } : {})}
     >
-      <TileHead icon={icon} title={label} value={value} />
+      <TileHead {...(chip !== undefined ? { chip } : { icon })} title={label} value={value} />
       <TileHint hint={base.hint} />
     </button>
   );

@@ -19,9 +19,9 @@
 .command-palette {
   width: 520px;
   max-height: 420px;
-  background: var(--color-bg-primary, #1e1e2e);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl);
   display: flex;
   flex-direction: column;
@@ -47,7 +47,7 @@
 }
 
 .command-palette-input::placeholder {
-  color: var(--color-text-muted, #888);
+  color: var(--text-muted);
 }
 
 .command-palette-list {
@@ -58,7 +58,7 @@
 
 .command-palette-empty {
   padding: 20px 16px;
-  color: var(--color-text-muted, #888);
+  color: var(--text-muted);
   text-align: center;
   font-size: 13px;
 }
@@ -81,7 +81,7 @@
 
 .command-palette-item:hover,
 .command-palette-item.selected {
-  background: var(--color-bg-hover, #313244);
+  background: var(--bg-hover);
 }
 
 .command-palette-item-label {
@@ -99,18 +99,72 @@
 }
 
 .command-palette-shortcut {
-  background: var(--color-bg-secondary, #2a2a3a);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;
-  color: var(--color-text-muted, #888);
+  color: var(--text-muted);
   font-family: inherit;
 }
 
 .command-palette-category {
   font-size: 11px;
-  color: var(--color-text-muted, #666);
+  color: var(--text-faint);
   min-width: 50px;
   text-align: right;
+}
+
+
+/* --- Icon chip + sections (JP-506) ----------------------------------------
+   The chip is the tile system's opening move, reused at list scale so the
+   palette and the Tools grid read as one vocabulary. Deliberately not a tile:
+   a palette is a keyboard-driven filtered list, and a grid would break up/down
+   navigation and make scan-while-typing harder. */
+
+.command-palette-chip {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--glass-tile);
+  border: 1px solid var(--glass-tile-border);
+  color: var(--text-secondary);
+}
+
+.command-palette-chip img {
+  /* Provider brand marks come through as <img>; keep them inside the chip. */
+  width: 15px;
+  height: 15px;
+}
+
+.command-palette-item:hover .command-palette-chip,
+.command-palette-item.selected .command-palette-chip {
+  background: var(--glass-tile-hover);
+  color: var(--text-primary);
+}
+
+/* A run is heading + rows. It exists so a heading and the rows beneath it move
+   together; it is not a focus stop and carries no styling of its own. */
+.command-palette-run {
+  display: contents;
+}
+
+.command-palette-section {
+  padding: 10px 16px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* --text-muted, not --border-color: a heading is quiet text, not a divider. */
+  color: var(--text-muted);
+}
+
+.command-palette-list {
+  /* `display: contents` on the runs means rows are laid out by this container,
+     which keeps one scroll context and lets scrollIntoView work per row. */
+  display: flex;
+  flex-direction: column;
 }

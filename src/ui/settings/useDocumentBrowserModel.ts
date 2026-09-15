@@ -28,7 +28,6 @@ import {
   useRelayDocumentStore,
   useIsCloudSignedIn,
   isCloudSignedIn,
-  RelayDocumentUnavailableOfflineError,
 } from '../../store/relayDocumentStore';
 import { ensureCollabSessionForDoc } from '../../collaboration/ensureCollabSession';
 import {
@@ -52,6 +51,7 @@ import { getDocumentMetadata } from '../../types/Document';
 import { tagsMatch } from '../../types/DocumentTags';
 import { isSyncedDocument, type DocumentRecord } from '../../types/DocumentRegistry';
 import { confirmDialog, promptDialog } from '../confirm/confirmStore';
+import { openDocumentById } from '../../services/openDocument';
 
 /** Document type axis the nav rail / filter row toggles. `'shared'` (JP-444)
  *  is relay-backed docs owned by someone other than the signed-in user. */
@@ -303,7 +303,6 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
   const newDocument = usePersistenceStore((s) => s.newDocument);
   const saveDocument = usePersistenceStore((s) => s.saveDocument);
-  const loadDocument = usePersistenceStore((s) => s.loadDocument);
   const deleteDocument = usePersistenceStore((s) => s.deleteDocument);
   const permanentlyDeleteDocument = usePersistenceStore((s) => s.permanentlyDeleteDocument);
   const renameDocument = usePersistenceStore((s) => s.renameDocument);
@@ -545,36 +544,11 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     if (signedIn || isHost) fetchDocumentList();
   }, [fetchDocumentList, signedIn, isHost]);
 
-  const handleOpen = useCallback(
-    async (docId: string) => {
-      if (docId === currentDocumentId) return;
-      const entry = entries[docId];
-      if (!entry) return;
-      const record = entry.record;
-      if (record.type === 'remote' || record.type === 'cached') {
-        try {
-          const doc = await loadRelayDocument(docId);
-          usePersistenceStore.getState().loadRemoteDocument(doc);
-        } catch (error) {
-          console.error('Failed to load relay document:', error);
-          const { useNotificationStore } = await import('../../store/notificationStore');
-          const offline =
-            error instanceof RelayDocumentUnavailableOfflineError ||
-            (typeof navigator !== 'undefined' && navigator.onLine === false);
-          useNotificationStore
-            .getState()
-            .warning(
-              offline
-                ? 'This document isn’t available offline. Open it while connected, or use “Make available offline” first, then reopen.'
-                : 'Couldn’t open this document. Check your connection and try again.',
-            );
-        }
-      } else {
-        loadDocument(docId);
-      }
-    },
-    [currentDocumentId, entries, loadRelayDocument, loadDocument]
-  );
+  // Delegates: the palette's quick-open needs the same behaviour and cannot
+  // call a hook, so the implementation moved to services/openDocument and this
+  // is the browser's binding to it. See that module for why it is worth sharing
+  // rather than writing twice.
+  const handleOpen = useCallback((docId: string) => openDocumentById(docId), []);
 
   // Soft delete → Trash, no confirm/toast — shared by the per-card and bulk
   // paths (which own their own confirmation policy). Relay docs hard-delete on

@@ -216,9 +216,20 @@ export function useIsConnected(): boolean {
  * affordances (transfers, version history) key off this, not connectivity.
  */
 export function useRelaySessionUsable(): boolean {
-  return useConnectionStore(
-    (s) => s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt),
-  );
+  return useConnectionStore(relaySessionUsableFrom);
+}
+
+/** The rule itself, so the hook and the imperative reader cannot drift. */
+function relaySessionUsableFrom(s: { token: string | null; tokenExpiresAt: number | null }): boolean {
+  return s.token !== null && (s.tokenExpiresAt === null || Date.now() < s.tokenExpiresAt);
+}
+
+/**
+ * Imperative form of [`useRelaySessionUsable`], for callers outside React —
+ * a command's `canExecute` runs during a render but is not itself a hook.
+ */
+export function relaySessionUsable(): boolean {
+  return relaySessionUsableFrom(useConnectionStore.getState());
 }
 
 /**

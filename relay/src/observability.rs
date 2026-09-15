@@ -370,10 +370,26 @@ impl DurabilityMonitor {
 
     /// Record a failure and log it at the level the decision calls for.
     /// `target` is the object key; `err` the backend's own message.
+    ///
+    /// The opening event deliberately does **not** lead with the failure count.
+    /// It is 1 by construction — the count is read at announce time, and the
+    /// first announcement happens on the first failure — so printing it invited
+    /// exactly the misreading it produced in practice: "(1 consecutive)" was
+    /// taken as *one write was lost*, when a burst of eight had failed inside
+    /// the same millisecond and looked identical. The true size is knowable
+    /// only once the outage ends or persists, so it is reported there instead.
     pub fn on_failure(&self, target: &str, err: &str) {
         match self.record_failure_at(Instant::now()) {
-            DurabilityReport::OutageStarted(n) => log::error!(
-                "durable writes are FAILING ({n} consecutive) — most recent: {target}: {err}"
+            // "retryable failures were already retried" rather than "retries
+            // exhausted": a 4xx is terminal and never retried at all, so the
+            // stronger claim would be false for the case that matters most —
+            // a dead credential (JP-505) — and would point the reader at a
+            // persistent server-side fault instead of at their own token.
+            DurabilityReport::OutageStarted(_) => log::error!(
+                "durable writes are FAILING — {target}: {err} \
+                 (retryable failures were already retried; further failures are \
+                 counted quietly and the total is reported on recovery or after {}s)",
+                self.reannounce_after.as_secs()
             ),
             DurabilityReport::OutageContinuing(n) => log::error!(
                 "durable writes still failing ({n} consecutive) — most recent: {target}: {err}"
@@ -384,10 +400,28 @@ impl DurabilityMonitor {
         }
     }
 
-    /// Record a success and log a recovery notice if one is due.
+    /// Record a success, announcing recovery if an outage was open.
+    ///
+    /// ## Why this captures to Sentry directly
+    ///
+    /// Recovery is not an error, so `info!` is the honest log level — but the
+    /// relay only promotes `error!` to Sentry (see the module docs), which left
+    /// a recovered outage looking identical to an ongoing one: the opening
+    /// event stayed `unresolved` forever and no follow-up ever arrived. Reading
+    /// "no follow-up" as "it cleared" is a guess; reading it as "still broken"
+    /// costs an investigation. Neither is acceptable for the one signal that
+    /// says whether durable storage works.
+    ///
+    /// So capture it explicitly rather than raising the log level — raising it
+    /// would file recovery as an error, which is worse than the problem. This
+    /// is also the **only** place the true blast radius is knowable, so the
+    /// count rides along with it.
     pub fn on_success(&self) {
         if let DurabilityReport::Recovered(n) = self.record_success() {
-            log::info!("durable writes recovered after {n} consecutive failures");
+            let msg = format!("durable writes recovered after {n} consecutive failures");
+            log::info!("{msg}");
+            // Inert without a DSN, like everything else in this module.
+            sentry::capture_message(&msg, sentry::Level::Info);
         }
     }
 }

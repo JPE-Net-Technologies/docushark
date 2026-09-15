@@ -7,6 +7,12 @@ import './shapes/registerBuiltInShapes';
 // Register import adapters (Excalidraw, …) so file-drop / paste / the Import
 // command can recognize and parse diagram files.
 import './shapes/import/registerImportAdapters';
+// Contribute integration actions ("New page from Notion…") into the command
+// registry, so they appear in the Tools grid and the palette. Reads live hub
+// state at render time, so this only wires the source — nothing is fetched here.
+import { registerIntegrationActions } from './services/integrationActions';
+
+registerIntegrationActions();
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';

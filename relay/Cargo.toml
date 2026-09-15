@@ -92,6 +92,11 @@ hex = "0.4"
 # deliberately *not* `aws-sdk-s3` (keeps the relay's 1.77.2 MSRV + a small dep
 # tree; the relay only needs presign + HEAD + DELETE against R2).
 hmac = "0.12"
+# Cheap-to-clone request payloads for the R2 retry loop (blob_backend/s3.rs).
+# A retry must re-send the body, and blob bytes run to 150 MiB — `Bytes` makes
+# each attempt a refcount bump instead of a copy. Already in the tree via
+# `reqwest`; named here only so the code may refer to it.
+bytes = "1"
 
 # CSPRNG (used for nonces in the revocation push bearer compare, plus
 # test-side keypair generation).
