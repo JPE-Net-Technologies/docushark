@@ -2267,8 +2267,41 @@ pub(crate) fn markdown_to_html_for_tests(md: &str) -> String {
     markdown_to_html(md)
 }
 
+/// Render Markdown with no field library, so `{{name}}` tokens become
+/// label-less placeholders the editor resolves live.
+///
+/// Test-only: every production write resolves fields first and calls
+/// [`markdown_to_html_with_fields`] directly. This exists because the adapter
+/// suite and the JP-468 round-trip hook assert Markdown-shape behaviour that has
+/// nothing to do with fields, and threading an empty map through each of them
+/// would add noise to ~15 call sites without adding coverage.
+#[cfg(test)]
 fn markdown_to_html(md: &str) -> String {
-    use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
+    markdown_to_html_with_fields(md, &FieldMap::new())
+}
+
+/// Render Markdown to the HTML TipTap persists, resolving `{{name}}` against
+/// `fields`.
+///
+/// ## A field token appears in two contexts; only one of them used to work
+///
+/// **In text** it becomes a `fieldRef` span, and the value is baked in as
+/// `data-label` plus the span's text child — matching what
+/// `prose_html::field_html` promises static consumers and what the editor's
+/// `renderHTML` emits.
+///
+/// **In a link or image destination** a span is impossible, because an `href`
+/// holds a URL, so the resolved value is substituted into the destination
+/// itself. Missing this second context produced silently dead links: `dest_url`
+/// lives on `Tag::Link`, not an `Event::Text`, so `[click]({{unsubscribe_link}})`
+/// fell through to `push_html`, which percent-encoded the braces into
+/// `%7B%7B…%7D%7D`. That fails in the worst direction — a reader sees an
+/// ordinary link and gets a 404 — which is how it survived in a real document.
+///
+/// An unresolvable name is left exactly as written in both contexts rather than
+/// guessed at.
+fn markdown_to_html_with_fields(md: &str, fields: &FieldMap) -> String {
+    use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -2293,7 +2326,30 @@ fn markdown_to_html(md: &str) -> String {
                 events.push(Event::End(TagEnd::CodeBlock));
             }
             Event::Text(t) if in_code_block == 0 && t.contains("{{") => {
-                expand_field_tokens(&t, &mut events);
+                expand_field_tokens(&t, fields, &mut events);
+            }
+            // Destinations are carried on the tag, not as text, so the pass
+            // above can never reach them. Code spans are unaffected: pulldown
+            // does not parse a link inside one.
+            Event::Start(Tag::Link { link_type, dest_url, title, id })
+                if dest_url.contains("{{") =>
+            {
+                events.push(Event::Start(Tag::Link {
+                    link_type,
+                    dest_url: CowStr::from(substitute_field_tokens(&dest_url, fields)),
+                    title,
+                    id,
+                }));
+            }
+            Event::Start(Tag::Image { link_type, dest_url, title, id })
+                if dest_url.contains("{{") =>
+            {
+                events.push(Event::Start(Tag::Image {
+                    link_type,
+                    dest_url: CowStr::from(substitute_field_tokens(&dest_url, fields)),
+                    title,
+                    id,
+                }));
             }
             other => events.push(other),
         }
@@ -2469,11 +2525,14 @@ fn try_parse_field_token(s: &str) -> Option<(&str, usize)> {
 }
 
 /// Split `text` on `{{name}}` tokens, pushing literal stretches as `Event::Text`
-/// and each token as an `Event::InlineHtml` `<span data-field data-name="name">`
-/// (no `data-label` — the editor's nodeView fills the live value). A malformed
-/// `{{…` with no valid close stays literal. (LaTeX math is handled earlier, on
-/// the raw Markdown, by [`protect_math`].)
-fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>) {
+/// and each token as an `Event::InlineHtml` `fieldRef` span. A malformed `{{…`
+/// with no valid close stays literal. (LaTeX math is handled earlier, on the raw
+/// Markdown, by [`protect_math`].)
+fn expand_field_tokens<'a>(
+    text: &str,
+    fields: &FieldMap,
+    out: &mut Vec<pulldown_cmark::Event<'a>>,
+) {
     use pulldown_cmark::{CowStr, Event};
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -2482,8 +2541,7 @@ fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>)
         if bytes[i] == b'{' && bytes[i + 1] == b'{' {
             if let Some((name, consumed)) = try_parse_field_token(&text[i + 2..]) {
                 flush_literal(text, literal_start, i, out);
-                let span = format!("<span data-field data-name=\"{}\"></span>", escape_field_attr(name));
-                out.push(Event::InlineHtml(CowStr::from(span)));
+                out.push(Event::InlineHtml(CowStr::from(field_span_html(name, fields))));
                 i += 2 + consumed;
                 literal_start = i;
                 continue;
@@ -2492,6 +2550,29 @@ fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>)
         i += 1;
     }
     flush_literal(text, literal_start, text.len(), out);
+}
+
+/// The `fieldRef` span for `name`, baked with its value when `fields` has one.
+///
+/// Baking is what makes the field visible to everything that is not a live
+/// editor. The write path used to emit the label-less form unconditionally,
+/// trusting the editor's nodeView to fill the value in — but that only happens
+/// once a human opens the document, so PDF export, MCP `get_prose` and any
+/// non-collaborative open rendered an agent-authored field as nothing at all.
+/// An unknown (or empty) name still emits the label-less form: the editor can
+/// resolve it live, and `field_html` omits an empty label anyway, so writing one
+/// would add noise without adding meaning.
+fn field_span_html(name: &str, fields: &FieldMap) -> String {
+    let attr = escape_field_attr(name);
+    match fields.get(name) {
+        Some(value) if !value.is_empty() => format!(
+            "<span data-field data-name=\"{}\" data-label=\"{}\">{}</span>",
+            attr,
+            escape_field_attr(value),
+            escape_html(value)
+        ),
+        _ => format!("<span data-field data-name=\"{}\"></span>", attr),
+    }
 }
 
 /// Push `text[start..end]` as an `Event::Text` if non-empty.
@@ -2559,14 +2640,82 @@ fn check_prose_size(content: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A document's field values by name, resolved once per write. Empty values are
+/// dropped so "present but blank" and "absent" behave alike — `field_html` omits
+/// an empty label too, and agreeing with it keeps one rule instead of two.
+type FieldMap = std::collections::BTreeMap<String, String>;
+
+/// Read the document's field library for a prose write.
+///
+/// Live-then-resident, the same order `list_fields` uses: the Y.Doc library is
+/// fresher than the snapshot whenever the document is open. **Best-effort by
+/// design** — a prose write must never fail because fields could not be read,
+/// and an empty map reproduces exactly the previous label-less behaviour, so the
+/// worst case is the bug this replaces rather than a lost write.
+fn resolve_field_values(ctx: &ToolContext, doc_id: &DocId) -> FieldMap {
+    let raw = if let Some(handle) = resident_handle(ctx, doc_id) {
+        handle.fields_json()
+    } else {
+        match fetch_doc(ctx, doc_id) {
+            Ok((doc, _)) => doc
+                .get("fields")
+                .and_then(|f| f.get("fields"))
+                .and_then(|m| m.as_object())
+                .cloned()
+                .unwrap_or_default(),
+            Err(_) => serde_json::Map::new(),
+        }
+    };
+    raw.into_iter()
+        .filter_map(|(name, field)| {
+            let value = field.get("value")?.as_str()?;
+            (!value.is_empty()).then(|| (name, value.to_string()))
+        })
+        .collect()
+}
+
+/// Replace every `{{name}}` in `s` that `fields` resolves, leaving anything it
+/// does not resolve exactly as written. Used for link and image destinations,
+/// where a `fieldRef` span cannot go and only the value itself will do.
+fn substitute_field_tokens(s: &str, fields: &FieldMap) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut literal_start = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            if let Some((name, consumed)) = try_parse_field_token(&s[i + 2..]) {
+                if let Some(value) = fields.get(name).filter(|v| !v.is_empty()) {
+                    out.push_str(&s[literal_start..i]);
+                    out.push_str(value);
+                    i += 2 + consumed;
+                    literal_start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&s[literal_start..]);
+    out
+}
+
 /// Turn agent-supplied content into the HTML stored on a prose page.
 /// Markdown is the default (agents produce it reliably); `html` is a
 /// pass-through escape hatch. The editor re-parses this HTML against the
 /// ProseMirror schema on load, which silently drops anything the schema
 /// doesn't model — a natural sanitizer for pass-through HTML.
-fn content_to_html(content: &str, format: Option<&str>) -> Result<String, String> {
+///
+/// `fields` resolves `{{name}}` at write time. Pass-through `html` is left
+/// alone: an author writing raw HTML has already chosen their own markup, and
+/// rewriting it would make the escape hatch less of one.
+fn content_to_html(
+    content: &str,
+    format: Option<&str>,
+    fields: &FieldMap,
+) -> Result<String, String> {
     match format.unwrap_or("markdown") {
-        "markdown" | "md" => Ok(markdown_to_html(content)),
+        "markdown" | "md" => Ok(markdown_to_html_with_fields(content, fields)),
         "html" => Ok(content.to_string()),
         other => Err(format!(
             "Unknown content format '{}'; expected 'markdown' or 'html'",
@@ -2647,10 +2796,11 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
 
     // Render once, outside the retry loop — deterministic and lets a bad
     // format fail fast before we touch the store.
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
     let html = match &parsed.content {
         Some(c) => {
             check_prose_size(c)?;
-            content_to_html(c, parsed.format.as_deref())?
+            content_to_html(c, parsed.format.as_deref(), &fields)?
         }
         None => String::new(),
     };
@@ -2763,7 +2913,8 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
     check_prose_size(&parsed.content)?;
-    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
+    let html = content_to_html(&parsed.content, parsed.format.as_deref(), &fields)?;
     // JP-328: report what the structural gate healed, so the author sees it.
     let fixes = crate::sync::validate_prose_html(&html);
 
@@ -2850,7 +3001,8 @@ fn insert_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
     check_prose_size(&parsed.content)?;
-    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
+    let html = content_to_html(&parsed.content, parsed.format.as_deref(), &fields)?;
     // JP-328: same structural gate as set_prose, so the author sees what healed.
     let fixes = crate::sync::validate_prose_html(&html);
     let side = match parsed.side.as_deref() {
@@ -3381,10 +3533,11 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     let title = parsed.title.trim().to_string();
     let inner_html = escape_html(&title);
     // Render the body once, up front, so a bad format fails before any write.
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
     let body_html = match &parsed.body {
         Some(b) => {
             check_prose_size(b)?;
-            content_to_html(b, parsed.format.as_deref())?
+            content_to_html(b, parsed.format.as_deref(), &fields)?
         }
         None => String::new(),
     };
@@ -8937,6 +9090,83 @@ mod tests {
         assert!(html.contains("{{unclosed and "), "got: {html}");
         // The well-formed `{{x}}` after the junk still converts.
         assert!(html.contains(r#"<span data-field data-name="x"></span>"#), "got: {html}");
+    }
+
+    // ---- JP-448: resolving {{name}} at write time ----
+    // The label-less shape above is what a *live editor* can resolve. These
+    // cover what everything else receives: PDF export, `get_prose`, and any
+    // non-collaborative open, none of which run a nodeView.
+
+    #[test]
+    fn markdown_field_token_bakes_a_known_value() {
+        let fields = FieldMap::from([("Company".to_string(), "Acme Inc.".to_string())]);
+        let html = markdown_to_html_with_fields("The {{Company}} agrees.", &fields);
+        assert!(
+            html.contains(
+                r#"<span data-field data-name="Company" data-label="Acme Inc.">Acme Inc.</span>"#
+            ),
+            "got: {html}"
+        );
+    }
+
+    #[test]
+    fn markdown_field_token_without_a_value_stays_label_less() {
+        // An unknown name must not invent a label — a live editor resolves it,
+        // and `field_html` drops an empty one anyway.
+        let fields = FieldMap::from([("Other".to_string(), "x".to_string())]);
+        let html = markdown_to_html_with_fields("pay {{Amount}} now", &fields);
+        assert!(html.contains(r#"<span data-field data-name="Amount"></span>"#), "got: {html}");
+        assert!(!html.contains("data-label"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_field_value_is_escaped() {
+        let fields = FieldMap::from([("Co".to_string(), "A & B".to_string())]);
+        let html = markdown_to_html_with_fields("{{Co}}", &fields);
+        assert!(!html.contains("A & B"), "value went in raw: {html}");
+        assert!(html.contains("&amp;"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_field_token_in_a_link_destination_resolves() {
+        // JP-448 #5: `dest_url` rides on `Tag::Link`, not an `Event::Text`, so
+        // the text pass never reached it and `push_html` percent-encoded the
+        // braces into a dead `%7B%7B…%7D%7D` href. Found in a real document, on
+        // a CASL-mandated unsubscribe link.
+        let fields = FieldMap::from([(
+            "unsubscribe_link".to_string(),
+            "https://example.com/u?id=1".to_string(),
+        )]);
+        let html = markdown_to_html_with_fields("[click here]({{unsubscribe_link}})", &fields);
+        assert!(html.contains(r#"href="https://example.com/u?id=1""#), "got: {html}");
+        assert!(!html.contains("%7B%7B"), "token was percent-encoded: {html}");
+    }
+
+    #[test]
+    fn markdown_field_token_in_an_image_destination_resolves() {
+        let fields =
+            FieldMap::from([("logo".to_string(), "https://cdn.example/l.png".to_string())]);
+        let html = markdown_to_html_with_fields("![alt]({{logo}})", &fields);
+        assert!(html.contains(r#"src="https://cdn.example/l.png""#), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_unresolvable_link_token_is_left_alone() {
+        // Nothing to substitute → leave the destination as authored rather than
+        // inventing one. A destination is never a span.
+        let html = markdown_to_html_with_fields("[x]({{nope}})", &FieldMap::new());
+        assert!(!html.contains("data-field"), "a destination is not a span: {html}");
+        assert!(html.contains("%7B%7B") || html.contains("{{nope}}"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_field_token_in_code_is_untouched_even_with_a_value() {
+        // The code guard must win over baking, or a fenced example of the
+        // syntax would silently become the value.
+        let fields = FieldMap::from([("x".to_string(), "SECRET".to_string())]);
+        let fenced = markdown_to_html_with_fields("```\n{{x}}\n```", &fields);
+        assert!(fenced.contains("{{x}}"), "got: {fenced}");
+        assert!(!fenced.contains("SECRET"), "value leaked into code: {fenced}");
     }
 
     // ---- LaTeX math markdown adapter ----
