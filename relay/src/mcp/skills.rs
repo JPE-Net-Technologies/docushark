@@ -54,10 +54,11 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   `delete_reference` removes an entry, and refuses while it is still cited unless
   you pass `force`.
 - Fields: define a reusable value with `set_fields`, then reference it as `{{name}}`
-  (Markdown). If the doc won't be opened in an editor before you hand it off (e.g.
-  export), bake the value into the stored HTML directly with
-  `<span data-field data-name="name" data-label="value">value</span>` (format:"html")
-  so it isn't blank.
+  (Markdown). The value is resolved at write time, so the field reads correctly in
+  an export, in `get_prose`, and on a non-collaborative open — you do not need to
+  hand-write the span. A name with no matching field stays an unresolved
+  placeholder for a live editor to fill. `{{name}}` also works inside a link or
+  image destination, where the value replaces the token in the URL itself.
 - Character entities: with format:"markdown" (the default) and format:"html",
   named entities (`&mdash;`, `&le;`, `&aacute;`) and numeric ones (`&#275;`,
   `&#x2014;`) both decode to the character. Literal Unicode is always safe too.

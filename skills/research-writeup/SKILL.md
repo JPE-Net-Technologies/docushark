@@ -43,9 +43,9 @@ by the document's reference library — rather than a hand-typed list. Work in o
    ## References      (leave this heading empty — the bibliography is generated)
    ```
 
-   Set field values with `set_fields`. If the doc won't be opened in an editor
-   before you hand it off, bake fields as
-   `<span data-field data-name="Author" data-label="…">…</span>` so they aren't blank.
+   Set field values with `set_fields`, then reference them as `{{Author}}`. The
+   value is resolved at write time, so a field is not blank in an export even if
+   the document is never opened in an editor.
 
 5. **(Optional) Add a figure.** Use `generate_diagram(docId, canvasPageId, nodes,
    edges)` for a study-design or concept diagram, and refer to it from the prose.

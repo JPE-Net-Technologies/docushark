@@ -182,9 +182,15 @@ relay — the MCP surface only reads and writes CSL-JSON.
 
 A *field* is a `name → value` pair that propagates everywhere it's referenced. To
 **reference** a field in prose, write `{{name}}` in Markdown via
-`set_prose`/`add_prose_page` — it becomes a live field placeholder (`<span
-data-field data-name="name">`) that renders the current value and updates when the
-value changes. (`{{name}}` inside inline code or a code block stays literal.)
+`set_prose`/`add_prose_page`. The value is resolved at write time, so the stored
+HTML carries it (`<span data-field data-name="name" data-label="value">value</span>`)
+and an export, `get_prose`, or a non-collaborative open shows the value without the
+document ever being opened in an editor; a connected editor still re-derives it
+live when the value changes. A name with no matching field stays an unresolved
+placeholder (`<span data-field data-name="name">`) for a live editor to fill.
+`{{name}}` also works inside a link or image destination, where the value replaces
+the token in the URL itself. (`{{name}}` inside inline code or a code block stays
+literal.)
 
 Fields are stored as the document's top-level `fields` object —
 `{ fields: { "<name>": { name, value } }, order: [...] }` — and round-trip

@@ -89,14 +89,14 @@ All tools are namespaced `docushark_*`.
 | Tool | Purpose |
 | -- | -- |
 | `list_documents` | List documents in the workspace (`id`, `name`, `modifiedAt`, `source`, and page counts). `pageCount` is the **canvas + prose total**; `canvasPageCount` and `prosePageCount` give the breakdown (a document has a diagram canvas and a separate prose body). |
-| `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
+| `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's <code v-pre>{{name}}</code> values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
 | `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
 | `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }` (`id` is the heading's durable block id). `index` is used by the structural tools. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
-| `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
+| `list_fields` | The document's fields (reusable <code v-pre>{{name}}</code> values) in display order, each `{ name, value }`. |
 | `get_skills` | Agent onboarding: with no args, the **content contract** (rules for valid prose + shapes) plus a recipe catalogue; with `{ skill }`, that recipe's full steps. Call it first if unsure how a tool expects its input — authoring valid content avoids the relay having to heal it. |
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 | `list_files` | The document's embedded files/blobs: `{ id, name, mimeType, size }`. Companion to the `blob://<hash>` image refs `get_prose` returns. |
@@ -185,10 +185,16 @@ relay — the MCP surface only reads and writes CSL-JSON.
 | `set_fields` | Set/update document **fields** — reusable named values (e.g. `Company` → `Acme Inc.`, `Version` → `2.0`). Upsert by name: a new name is created, an existing name's value is replaced. Returns the names written + which were newly added. |
 
 A *field* is a `name → value` pair that propagates everywhere it's referenced. To
-**reference** a field in prose, write `{{name}}` in Markdown via
-`set_prose`/`add_prose_page` — it becomes a live field placeholder (`<span
-data-field data-name="name">`) that renders the current value and updates when the
-value changes. (`{{name}}` inside inline code or a code block stays literal.)
+**reference** a field in prose, write <code v-pre>{{name}}</code> in Markdown via
+`set_prose`/`add_prose_page`. The value is resolved at write time, so the stored
+HTML carries it (`<span data-field data-name="name" data-label="value">value</span>`)
+and an export, `get_prose`, or a non-collaborative open shows the value without the
+document ever being opened in an editor; a connected editor still re-derives it
+live when the value changes. A name with no matching field stays an unresolved
+placeholder (`<span data-field data-name="name">`) for a live editor to fill.
+<code v-pre>{{name}}</code> also works inside a link or image destination, where the value replaces
+the token in the URL itself. (<code v-pre>{{name}}</code> inside inline code or a code block stays
+literal.)
 
 Fields are stored as the document's top-level `fields` object —
 `{ fields: { "<name>": { name, value } }, order: [...] }` — and round-trip
