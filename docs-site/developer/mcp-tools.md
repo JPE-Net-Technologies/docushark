@@ -171,12 +171,18 @@ icons directly — build those with `add_shape(s)`.
 | `update_reference` | Repair an existing entry. `id` + `item` (CSL-JSON); fields **merge** by default (an explicit `null` clears one), `replace: true` swaps the whole item. The `id` is the library key and cannot change — renaming it would orphan every citation pointing at it. Fails on an unknown id. |
 | `delete_reference` | Remove an entry from the library and the bibliography. **Refuses while the reference is still cited inline**, naming the page/block sites and the count; `force: true` deletes anyway and leaves those citations unresolved. |
 
-This populates the **library** only — it doesn't yet insert an inline citation
-or bibliography into the prose (do that in the editor). The library is stored as
-the document's top-level `references` field and round-trips durably; a *connected*
-editor sees new references on reload, as references aren't live-synced yet.
-Formatting (CSL → APA/MLA/Chicago/Vancouver) is done in the editor, not the
-relay — the MCP surface only reads and writes CSL-JSON.
+These tools manage the **library** only; they don't write into the prose. To cite
+inline, write
+`<span data-citation data-ref-id="<id>" data-label="(Author, Year)">(Author, Year)</span>`
+with `set_prose` (`format: "html"`). To add the reference list, place an empty
+`<div data-bibliography></div>` where it belongs, in Markdown or HTML. The library
+is stored as the document's top-level `references` field and round-trips durably;
+a *connected* editor sees new references on reload, as references aren't
+live-synced yet. Formatting (CSL → APA/MLA/Chicago/Vancouver) is done in the
+editor, not the relay — the MCP surface only reads and writes CSL-JSON — so the
+editor renders a placed bibliography and caches the result in the node. Until an
+editor has opened the document once, an export or `get_prose` shows the
+bibliography node without a list.
 
 ### Fields (write)
 

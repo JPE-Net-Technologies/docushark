@@ -43,8 +43,9 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   `<span data-citation data-ref-id="<id>" data-label="(Author, Year)">(Author, Year)</span>`
   (format:"html"), where `<id>` is a library id you added. **For any researched or
   scholarly content, cite real sources this way — don't hand-type a "References"
-  list.** The formatted bibliography (`<div data-bibliography>`) is generated in
-  the editor from the library, so you don't emit it yourself.
+  list.** For the reference list, place an empty `<div data-bibliography></div>`
+  where it belongs (Markdown or format:"html"): the editor renders the formatted
+  list from the library and caches it in the node, so you never type the entries.
 - `data-label` is a CACHE, not the source of truth. A connected editor recomputes
   it from the library entry in the active citation style and writes the result
   back over whatever you wrote. So a citation that renders as the title instead

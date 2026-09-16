@@ -920,7 +920,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor {
             name: "docushark_add_reference",
             description:
-                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The data-label is a CACHE, not the source of truth: a connected editor recomputes it from the library entry in the active citation style and writes the result back, so a label that renders wrong means the LIBRARY ENTRY is wrong — most often a missing author, which makes the formatter fall back to a title-first form. Repair it with update_reference; rewriting the label alone will be overwritten. The formatted bibliography (<div data-bibliography>) is generated in the editor from the library. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
+                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The data-label is a CACHE, not the source of truth: a connected editor recomputes it from the library entry in the active citation style and writes the result back, so a label that renders wrong means the LIBRARY ENTRY is wrong — most often a missing author, which makes the formatter fall back to a title-first form. Repair it with update_reference; rewriting the label alone will be overwritten. To add the reference list, place an empty <div data-bibliography></div> via set_prose (Markdown or HTML format); the editor renders the formatted list from the library and caches it in the node, so never type the entries. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -8911,6 +8911,76 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.result["orphanedCitations"], json!(0), "escaped markup is not a citation");
+    }
+
+    #[test]
+    fn an_agent_can_place_an_empty_bibliography_in_html() {
+        // JP-448 #3a. The formatted reference list is rendered by the editor
+        // from the library and written back into `bibHtml`, so an agent only has
+        // to place the node. This pins that an EMPTY node, with no cached
+        // `data-bib-html`, survives the whole write path, including the JP-328
+        // structural gate, instead of being dropped as contentless. The agent
+        // guidance that tells them to do this is only true while this passes.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        let pid = page_id.as_str();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": pid, "format": "html",
+                "content": "<h2>References</h2><div data-bibliography></div>"}),
+        )
+        .unwrap();
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": pid}),
+        )
+        .unwrap();
+        let body = serde_json::to_string(&out.result).unwrap();
+        assert!(body.contains("<div data-bibliography"), "bibliography node dropped: {body}");
+        assert!(!body.contains("&lt;div data-bibliography"), "stored as text, not a node: {body}");
+    }
+
+    #[test]
+    fn an_agent_can_place_an_empty_bibliography_in_markdown() {
+        // The same guarantee from the default Markdown format. CommonMark reads a
+        // line opening with `<div` as a raw HTML block and passes it through, so
+        // an agent can place the node inside ordinary Markdown output without
+        // switching the whole page to HTML.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        let pid = page_id.as_str();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": pid,
+                "content": "## References\n\n<div data-bibliography></div>\n"}),
+        )
+        .unwrap();
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": pid}),
+        )
+        .unwrap();
+        let body = serde_json::to_string(&out.result).unwrap();
+        assert!(body.contains("<div data-bibliography"), "bibliography node dropped: {body}");
+        assert!(!body.contains("&lt;div data-bibliography"), "stored as text, not a node: {body}");
     }
 
     #[test]
