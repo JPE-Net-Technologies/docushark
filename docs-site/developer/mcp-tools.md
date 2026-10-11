@@ -92,8 +92,8 @@ All tools are namespaced `docushark_*`.
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's <code v-pre>{{name}}</code> values). The map of what exists. |
 | `get_page` | The shapes on one canvas page, as DSL objects. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
-| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. |
-| `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }` (`id` is the heading's durable block id). `index` is used by the structural tools. |
+| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`, and `revision` (for the whole-page writers' `expectedRevision`). |
+| `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }` (`id` is the heading's durable block id), plus the page's `revision`. Name headings by `id` in the structural tools; an `index` shifts when a heading is added above it. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable <code v-pre>{{name}}</code> values) in display order, each `{ name, value }`. |
@@ -101,7 +101,7 @@ All tools are namespaced `docushark_*`.
 | `list_icons` | Discover icon IDs to put on shapes: `{ id, name, category }` entries plus the match `total` and available `categories`. Filter with `query` (substring over id + name) and/or `category`; cap with `limit` (default 50, max 200). Apply an id via `add_shape`/`update_shape` (`iconId`). |
 | `list_files` | The document's embedded files/blobs: `{ id, name, mimeType, size }`. Companion to the `blob://<hash>` image refs `get_prose` returns. |
 | `get_file` | One embedded file by id/hash — its metadata (and content where applicable). |
-| `get_table` | A prose table's structure — rows, cells, and any `colspan`/`rowspan`/`colwidth` — for span-aware edits via `edit_table`. |
+| `get_table` | A prose table's structure — rows, cells, and any `colspan`/`rowspan`/`colwidth` — for span-aware edits via `edit_table`. Also returns the page's `revision`. |
 | `get_storage` | The workspace's storage usage: blob + document bytes against the quota. |
 
 ### Author
@@ -116,7 +116,7 @@ All tools are namespaced `docushark_*`.
 | Tool | Purpose |
 | -- | -- |
 | `add_prose_page` | Append a prose page. Markdown by default. |
-| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a block) **or** `id` (a durable `blk-…` block id) to replace **only that block** — a targeted edit. Markdown by default; `format: "html"` supplies styled HTML directly (marks, cell spans, task lists round-trip). |
+| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a block) **or** `id` (a durable `blk-…` block id) to replace **only that block** — a targeted edit. Markdown by default; `format: "html"` supplies styled HTML directly (marks, cell spans, task lists round-trip). A whole-page write returns the page's new `revision` and accepts `expectedRevision` (refused with `ERR_STALE_WRITE` if the page changed after that read; not accepted with `anchor`/`id`, which already check their block). |
 | `insert_block` | Insert a prose block at a position relative to a durable block `id`. |
 | `delete_block` | Delete a prose block by its durable `id`. |
 | `move_block` | Move a prose block to a new position by `id`. |
@@ -126,9 +126,9 @@ All tools are namespaced `docushark_*`.
 
 | Tool | Purpose |
 | -- | -- |
-| `insert_section` | Insert a heading (+ optional body) at `start`/`end` or after a heading `index`. |
-| `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to a new index. |
-| `edit_table` | Structural prose-table edits — add/remove rows & columns, merge/split cells, set headers or column widths (span-aware). Pair with `get_table`. |
+| `insert_section` | Insert a heading (+ optional body) at `start`/`end`, or after a heading named by `afterId` (preferred) or `afterIndex`. Returns the new section, the outline and the page's new `revision`; accepts `expectedRevision`. |
+| `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to the position another heading holds now. Name headings by `id`/`toId` (preferred) or `index`/`toIndex`; giving both requires them to agree (`ERR_ID_INDEX_MISMATCH`). Returns the affected section, the outline and the page's new `revision`; accepts `expectedRevision`. |
+| `edit_table` | Structural prose-table edits — add/remove rows & columns, merge/split cells, set headers or column widths (span-aware). Pair with `get_table`. Returns the page's new `revision`; accepts `expectedRevision`. |
 
 ### Diagram (write)
 
@@ -253,6 +253,18 @@ reload):
   actually changed — so an unchanged block's identity, a collaborator's caret and
   scroll position, and concurrent edits *outside* the changed window all survive.
   It is not a blunt whole-fragment swap.
+- **Revisions and stale writes.** Every prose read (`get_prose`, `get_outline`,
+  `get_table`) returns the page's `revision`, a hash of its content. Pass it as
+  `expectedRevision` to a whole-page writer (`set_prose` without `anchor`/`id`,
+  `insert_section`, `restructure_outline`, `edit_table`) and the write lands
+  only if the page is unchanged since that read: the check is atomic with the
+  write, live or cold. Otherwise the write is refused with `ERR_STALE_WRITE`
+  and nothing is written; re-read and apply the change to the current content.
+  Even without `expectedRevision`, `insert_section`, `restructure_outline` and
+  `edit_table` never overwrite a concurrent change: if the page changes between
+  their own read and write, they re-read and recompute. Name headings by `id`
+  rather than `index` in the outline tools, since an index shifts when a
+  heading is added above it.
 - **Anchored / block-targeted edits** (`set_prose` with `anchor` or `id`, plus
   `insert_block`/`delete_block`/`move_block`) touch only the addressed block.
   `anchor` doubles as a **block-level compare-and-swap** — it must match exactly

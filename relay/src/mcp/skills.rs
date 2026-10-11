@@ -24,6 +24,13 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 
 ## Prose (set_prose / add_prose_page / insert_section)
 - Pass Markdown by default, or well-formed HTML with format:"html".
+- A document may be open in someone's editor while you write. Change one block at
+  a time (set_prose with an id or anchor, insert_block, delete_block, move_block).
+  When you rewrite a whole page, or use insert_section / restructure_outline /
+  edit_table, pass the `revision` from your last read as `expectedRevision`: if
+  the page changed since, the write is refused with ERR_STALE_WRITE and nothing
+  is written, so re-read and apply your change to the current content. Name
+  headings by their `id` from get_outline, not their index.
 - Allowed block types only: paragraph, heading (h1-h6), bulletList/orderedList
   (with listItem), blockquote, codeBlock, table, horizontalRule, image, figure
   (with figcaption), callout, gallery, math block, task list (with checkable

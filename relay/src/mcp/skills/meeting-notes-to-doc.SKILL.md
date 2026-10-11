@@ -51,11 +51,15 @@ clearly describe a flow worth drawing.
    write topics out of order, fix the structure with the outline tools rather than
    rewriting the page:
    - `get_outline(docId, prosePageId)` → the flat list of headings with their
-     `index` and `level`.
-   - `restructure_outline(docId, prosePageId, op, index, toIndex?)` to
-     `move` / `promote` / `demote` a section.
-   - `insert_section(docId, prosePageId, level, title, body, afterIndex?)` to slot a
+     `id`, `index` and `level`, plus the page's `revision`.
+   - `restructure_outline(docId, prosePageId, op, id, toId?)` to
+     `move` / `promote` / `demote` a section. Name headings by `id`: an index
+     shifts when someone adds a heading above it.
+   - `insert_section(docId, prosePageId, level, title, body, afterId?)` to slot a
      new section in a specific spot.
+   Pass the `revision` from your last read as `expectedRevision`, so a change
+   someone made meanwhile is never overwritten; on `ERR_STALE_WRITE`, re-read
+   and try again.
 
 5. **Refine one line in place** — a paragraph, a single bullet, a table cell, or a
    heading — without touching the rest by calling `set_prose` with `anchor` = the
@@ -76,5 +80,6 @@ clearly describe a flow worth drawing.
 - Prose is Markdown (GFM): use tables for attendee/owner grids, headings for the
   outline, and `{{fields}}` for values you'll reuse across related docs.
 - Each write replaces the whole page unless you use `anchor`; for incremental
-  additions during a long meeting, prefer `insert_section` or anchored `set_prose`
-  so you don't overwrite earlier content.
+  additions during a long meeting, prefer `insert_section` or anchored `set_prose`,
+  and pass `expectedRevision` on any whole-page write, so you never overwrite
+  earlier content or a collaborator's edits.
