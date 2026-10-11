@@ -267,11 +267,177 @@ fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Pe
     }
 }
 
-/// A single MCP tool descriptor (name, description, input schema).
+/// A single MCP tool descriptor (name, hints, description, input schema).
 pub struct ToolDescriptor {
     pub name: &'static str,
+    /// What the tool does to relay state. Required, so a new tool cannot be
+    /// added without deciding: the rate-limit bucket and the MCP annotations
+    /// both derive from it (JP-511).
+    pub hints: ToolHints,
     pub description: &'static str,
     pub input_schema: Value,
+}
+
+/// What a tool does to relay state. The single source for the MCP tool
+/// annotations in `tools/list` and for the rate-limit bucket: any tool that is
+/// not `read_only` draws from the per-workspace write bucket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolHints {
+    /// Never changes a document, a page, a file or the workspace.
+    pub read_only: bool,
+    /// May remove or overwrite existing content. Meaningful only for writes.
+    pub destructive: bool,
+    /// Repeating the call with the same arguments has no further effect.
+    pub idempotent: bool,
+    /// Reaches a service outside the relay (a DOI lookup).
+    pub open_world: bool,
+}
+
+impl ToolHints {
+    pub const READ: Self = Self {
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+    };
+    pub const READ_OPEN_WORLD: Self = Self {
+        open_world: true,
+        ..Self::READ
+    };
+    /// Adds content; repeating the call adds it again.
+    pub const WRITE: Self = Self {
+        read_only: false,
+        destructive: false,
+        idempotent: false,
+        open_world: false,
+    };
+    pub const WRITE_OPEN_WORLD: Self = Self {
+        open_world: true,
+        ..Self::WRITE
+    };
+    /// Sets a value or position; repeating the call changes nothing further.
+    pub const WRITE_IDEMPOTENT: Self = Self {
+        idempotent: true,
+        ..Self::WRITE
+    };
+    pub const DESTRUCTIVE: Self = Self {
+        destructive: true,
+        ..Self::WRITE
+    };
+    pub const DESTRUCTIVE_IDEMPOTENT: Self = Self {
+        destructive: true,
+        idempotent: true,
+        ..Self::WRITE
+    };
+
+    /// MCP `ToolAnnotations` (protocol 2025-06-18). `destructiveHint` and
+    /// `idempotentHint` carry meaning only when `readOnlyHint` is false.
+    pub fn annotations(&self) -> Value {
+        if self.read_only {
+            json!({"readOnlyHint": true, "openWorldHint": self.open_world})
+        } else {
+            json!({
+                "readOnlyHint": false,
+                "destructiveHint": self.destructive,
+                "idempotentHint": self.idempotent,
+                "openWorldHint": self.open_world,
+            })
+        }
+    }
+}
+
+/// The declared hints for a tool, by advertised name, or `None` for a name no
+/// descriptor carries. Built once from `descriptors()` so the rate limiter and
+/// `tools/list` can never disagree.
+pub fn tool_hints(name: &str) -> Option<ToolHints> {
+    static HINTS: std::sync::OnceLock<std::collections::HashMap<&'static str, ToolHints>> =
+        std::sync::OnceLock::new();
+    HINTS
+        .get_or_init(|| descriptors().into_iter().map(|d| (d.name, d.hints)).collect())
+        .get(name)
+        .copied()
+}
+
+#[cfg(test)]
+mod tool_hint_tests {
+    use super::*;
+    use crate::server::permissions::Permission;
+
+    /// JP-511 guard. The hint decides the rate-limit bucket, so the dangerous
+    /// mistake is a tool that changes state marked read-only: it would draw
+    /// from the read bucket, which is unlimited on loopback and self-host.
+    /// Read tools are named get_/list_/resolve_ and nothing else is, so the
+    /// name and the hint must agree.
+    #[test]
+    fn read_only_hint_matches_the_read_naming_convention() {
+        for d in descriptors() {
+            let verb = d.name.trim_start_matches("docushark_");
+            let reads_by_name = ["get_", "list_", "resolve_"]
+                .iter()
+                .any(|prefix| verb.starts_with(prefix));
+            assert_eq!(
+                d.hints.read_only, reads_by_name,
+                "{}: the read_only hint disagrees with the tool's name",
+                d.name
+            );
+        }
+    }
+
+    /// A tool that needs less than Editor access on a private document must not
+    /// change it. `create_document` is the one ungated write: there is no
+    /// document to hold access to yet.
+    #[test]
+    fn tools_callable_without_editor_access_are_read_only() {
+        for d in descriptors() {
+            let below_editor = matches!(
+                tool_required_permission(d.name),
+                None | Some(Permission::Viewer)
+            );
+            if below_editor && d.name != "docushark_create_document" {
+                assert!(
+                    d.hints.read_only,
+                    "{} is callable without Editor access but is not read-only",
+                    d.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deletes_are_destructive_writes() {
+        for d in descriptors().into_iter().filter(|d| d.name.contains("_delete_")) {
+            assert!(
+                !d.hints.read_only && d.hints.destructive,
+                "{} deletes content but is not marked destructive",
+                d.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_descriptor_resolves_its_own_hints() {
+        for d in &descriptors() {
+            assert_eq!(tool_hints(d.name), Some(d.hints), "{}", d.name);
+        }
+        assert_eq!(tool_hints("docushark_not_a_tool"), None);
+    }
+
+    #[test]
+    fn annotations_carry_write_hints_only_for_writes() {
+        assert_eq!(
+            ToolHints::READ.annotations(),
+            json!({"readOnlyHint": true, "openWorldHint": false})
+        );
+        assert_eq!(
+            ToolHints::DESTRUCTIVE_IDEMPOTENT.annotations(),
+            json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true,
+                "openWorldHint": false
+            })
+        );
+    }
 }
 
 /// Return the list of foundation tools advertised via `tools/list`.
@@ -279,6 +445,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
     vec![
         ToolDescriptor {
             name: "docushark_list_documents",
+            hints: ToolHints::READ,
             description:
                 "List DocuShark relay documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
             input_schema: json!({
@@ -289,6 +456,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_document",
+            hints: ToolHints::READ,
             description:
                 "Return a document by id: top-level metadata plus a list of pages with their ids and names.",
             input_schema: json!({
@@ -302,6 +470,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_page",
+            hints: ToolHints::READ,
             description:
                 "Return the shapes on a single page as DSL objects. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form.",
             input_schema: json!({
@@ -316,6 +485,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_shape",
+            hints: ToolHints::READ,
             description:
                 "Return a single shape (by id) on a page as a DSL object — the read-one companion to get_page. Useful to inspect a shape before update_shape/delete_shape.",
             input_schema: json!({
@@ -331,6 +501,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_files",
+            hints: ToolHints::READ,
             description:
                 "List every file attached to a document: canvas file shapes (name, MIME type, size, category) and images embedded in prose pages. Each entry carries a blobRef — the content hash to pass to get_file for the bytes. inStore=false means the bytes are not on this relay (e.g. a local-only attachment that was never uploaded).",
             input_schema: json!({
@@ -344,6 +515,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_file",
+            hints: ToolHints::READ,
             description:
                 "Fetch an attached file's bytes by blobRef (from list_files or a file shape). Returns either a short-lived download URL to GET directly (object-storage backend) or the base64 bytes inline (filesystem backend, small files only). The blob must be referenced by the given document.",
             input_schema: json!({
@@ -358,6 +530,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_storage",
+            hints: ToolHints::READ,
             description:
                 "Workspace storage stats: bytes used by stored files, the storage quota (null = unlimited), and the per-file size ceiling. Check before large add_file uploads.",
             input_schema: json!({
@@ -368,6 +541,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_file",
+            hints: ToolHints::WRITE,
             description:
                 "Upload a file and attach it to a document as a canvas file card. Provide exactly one source: url (fetched server-side; https-only and the host must be on the relay's ingest allowlist), base64 (small files — the request body caps around 8 MB), or blobRef (attach a file already in the workspace store, e.g. from list_files or a previous upload). The relay stores the bytes content-addressed, enforces the workspace storage quota, and returns the new shape id + blobRef.",
             input_schema: json!({
@@ -393,6 +567,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_create_document",
+            hints: ToolHints::WRITE,
             description:
                 "Create a new, empty DocuShark document in the current workspace and return its id. The document starts with one blank canvas page (for diagrams) and one blank prose page (for text) — use add_shapes/connect to draw and the prose tools to write. This is the entry point for an agent authoring a document from scratch.",
             input_schema: json!({
@@ -408,6 +583,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_rename_document",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Rename a document (set its title). Updates the document name live for anyone who has it open. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -422,6 +598,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_document",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Permanently delete a document and all its pages, prose, and blobs. This cannot be undone on the server; anyone currently viewing it has it moved to their local Trash. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -435,6 +612,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_prose",
+            hints: ToolHints::READ,
             description:
                 "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML.",
             input_schema: json!({
@@ -449,6 +627,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_prose_page",
+            hints: ToolHints::WRITE,
             description:
                 "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
@@ -465,6 +644,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_set_prose",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
@@ -485,6 +665,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_insert_block",
+            hints: ToolHints::WRITE,
             description:
                 "Insert a NEW block beside an existing one without rewriting the page — the additive companion to set_prose's anchored edit (use this to ADD a bullet/paragraph/heading; use set_prose+anchor to CHANGE one). Pass 'anchor' — the current text of a block you can see — and the new 'content'; it's placed as a structural sibling of that block. Anchoring a bullet makes the new content a sibling bullet (a task item under a task list); anchoring a top-level paragraph/heading inserts at the top level; anchoring a line inside a blockquote/table cell inserts within it. 'side' is \"before\" or \"after\" (default \"after\"). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -504,6 +685,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_block",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a whole block by anchoring it — remove a bullet (and its nested sub-items), a paragraph, a heading, or a table cell's line, without rewriting the page. Pass 'anchor' — the current text of the block. Removes the entire structural unit, not just its text: deleting the last bullet removes the now-empty list, and the page never goes truly empty (a last-block delete leaves one empty paragraph). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -520,6 +702,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_move_block",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Move a block to a new position by anchoring both it and a target — reorder bullets within or across lists, or reorder top-level blocks, without rewriting the page. Pass 'anchor' (the block to move) and 'targetAnchor' (the block to move it next to), with 'side' \"before\"/\"after\" (default \"after\"). Moves the whole structural unit — a bullet keeps its nested sub-items. Same-kind only for now: anchor and target must both be bullets, or both top-level blocks; moving a bullet to the top level (or vice versa — the lift/sink case) is refused with ERR_MOVE_CROSS_CONTEXT. Also refuses self-moves and moving a block into its own subtree. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -539,6 +722,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_rename_prose_page",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Rename a prose page. Refuses local documents.",
             input_schema: json!({
@@ -554,6 +738,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_canvas_page",
+            hints: ToolHints::WRITE,
             description:
                 "Add a new (blank) canvas page to a document and return its id. Use this to start a second diagram in the same document; target it with the returned id in add_shape(s)/generate_diagram. Refuses local documents.",
             input_schema: json!({
@@ -568,6 +753,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_rename_canvas_page",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Rename a canvas page. Refuses local documents.",
             input_schema: json!({
@@ -583,6 +769,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_reorder_canvas_page",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set the order of a document's canvas pages. 'order' must be a permutation of the current canvas page ids. Refuses local documents.",
             input_schema: json!({
@@ -597,6 +784,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_canvas_page",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a canvas page by id. Refuses to delete the last remaining canvas page. Repoints the active page if the deleted one was active. Refuses local documents.",
             input_schema: json!({
@@ -611,6 +799,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_outline",
+            hints: ToolHints::READ,
             description:
                 "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
             input_schema: json!({
@@ -625,6 +814,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_insert_section",
+            hints: ToolHints::WRITE,
             description:
                 "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it with position:\"start\"|\"end\" (default \"end\"), or afterIndex to drop it right after an existing heading's section. Refuses local documents.",
             input_schema: json!({
@@ -645,6 +835,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_restructure_outline",
+            hints: ToolHints::WRITE,
             description:
                 "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to toIndex. 'index' is the 0-based heading index from get_outline. Returns the updated outline. Refuses local documents.",
             input_schema: json!({
@@ -662,6 +853,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_table",
+            hints: ToolHints::READ,
             description:
                 "Read a prose-page table as a resolved, span-aware grid — the coordinate model edit_table addresses. Returns rows/cols and one entry per cell: its 0-based grid slot (row, col — a merged cell is addressable through ANY slot it covers), tag (th/td), colspan/rowspan, text, colwidth, styling, and the first in-cell block's durable id (edit that cell's text via set_prose with that id). Select the table with tableIndex (0-based, document order) or an anchor/id of content inside it; omit both when the page has one table. Always read this before edit_table — its coordinates are the ones ops take.",
             input_schema: json!({
@@ -679,6 +871,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_edit_table",
+            hints: ToolHints::DESTRUCTIVE,
             description:
                 "Structural table surgery — one operation per call, addressed by get_table's 0-based span-aware grid coordinates (read it first; stale coordinates fail with ERR_CELL_RANGE, never guess). Ops: addRow/addColumn (at 'row'/'col', side before/after — a merged cell spanning the boundary grows instead of splitting), deleteRow/deleteColumn (spans shrink; the last row/column is refused), mergeCells (fromRow/fromCol → toRow/toCol rectangle; contents concatenate onto the top-left cell; a rectangle cutting through a merged cell is refused), splitCell (row/col; content stays on the anchor), setCellAttrs (row/col + backgroundColor/align/scope, empty string clears; scope is header-only), moveRow/moveColumn (from/to; refused on tables with merged cells), toggleHeaderRow/toggleHeaderColumn (row 0 / column 0), setColumnWidth (col + width px; omit width to clear). Returns the post-op grid. Writes the whole page (same granularity as restructure_outline). Refuses local documents. Table cell TEXT edits don't need this — use set_prose with the cell's block id.",
             input_schema: json!({
@@ -710,6 +903,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_generate_diagram",
+            hints: ToolHints::WRITE,
             description:
                 "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction with crossing minimization, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Connectors attach to typed anchors and by default are routed orthogonally around intervening shapes with explicit waypoints; pass routing \"straight\" for plain anchor-to-anchor lines. Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
             input_schema: json!({
@@ -753,12 +947,14 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_shape",
+            hints: ToolHints::WRITE,
             description:
                 "Add a single shape (rectangle, ellipse, text, or connector) to a page. Returns the id assigned. Warns if the document is locked by another user. Refuses local (renderer-owned) documents — those are read-only via MCP.",
             input_schema: dsl_shape_input_schema(),
         },
         ToolDescriptor {
             name: "docushark_add_shapes",
+            hints: ToolHints::WRITE,
             description:
                 "Add multiple shapes to a page in a single call. All-or-nothing: if any shape is invalid the whole batch is rejected and nothing is written. Returns the assigned ids in order.",
             input_schema: json!({
@@ -778,6 +974,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_connect",
+            hints: ToolHints::WRITE,
             description:
                 "Convenience over add_shape for connectors: creates a connector between two existing shapes on the same page. Anchors default to 'center'. Returns the new connector id.",
             input_schema: json!({
@@ -785,11 +982,11 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "fromId": {"type": "string"},
-                    "toId": {"type": "string"},
-                    "fromAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
-                    "toAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
-                    "label": {"type": "string"}
+                    "fromId": {"type": "string", "description": "Id of the shape the connector starts at."},
+                    "toId": {"type": "string", "description": "Id of the shape the connector ends at."},
+                    "fromAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Side of the start shape to attach to. \"center\" (the default) aims at the shape's centre and stops at its edge."},
+                    "toAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Side of the end shape to attach to. \"center\" (the default) aims at the shape's centre and stops at its edge."},
+                    "label": {"type": "string", "description": "Optional text shown on the connector. Keep it short: a label longer than the connector overlaps the shapes it joins."}
                 },
                 "required": ["docId", "pageId", "fromId", "toId"],
                 "additionalProperties": false
@@ -797,6 +994,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_update_shape",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, style, and icon fields (iconId/iconDisplayMode/iconSize) may be supplied; absent fields are left untouched. An empty iconId clears the icon. Refuses local documents.",
             input_schema: json!({
@@ -808,11 +1006,11 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "patch": {
                         "type": "object",
                         "properties": {
-                            "x": {"type": "number"},
-                            "y": {"type": "number"},
-                            "w": {"type": "number"},
-                            "h": {"type": "number"},
-                            "text": {"type": "string"},
+                            "x": {"type": "number", "description": "New centre x in canvas units."},
+                            "y": {"type": "number", "description": "New centre y in canvas units."},
+                            "w": {"type": "number", "description": "New width. For an ellipse, the horizontal diameter."},
+                            "h": {"type": "number", "description": "New height. For an ellipse, the vertical diameter."},
+                            "text": {"type": "string", "description": "New label (rectangle, ellipse, connector) or content (text shape)."},
                             "iconId": {"type": "string", "description": "Icon-library id from docushark_list_icons. Empty string clears the icon."},
                             "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"]},
                             "iconSize": {"type": "number"},
@@ -827,6 +1025,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_shape",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a shape by id. Connectors attached to it (start or end) are removed too, so no dangling connectors are left. Returns the ids actually deleted. Refuses local documents.",
             input_schema: json!({
@@ -842,6 +1041,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_prose_page",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a prose page by id. Refuses to delete the last remaining prose page (a document always has at least one). Note: in a connected editor the page's tab may persist until reload (the prose page list isn't yet live-synced); its content is removed immediately. Refuses local documents.",
             input_schema: json!({
@@ -856,6 +1056,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_reorder_shapes",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set the z-order (front-to-back stacking) of a page's shapes. 'order' must be a permutation of the page's current shape ids — every id present, none added or duplicated (read get_page first). Later ids render on top. Refuses local documents.",
             input_schema: json!({
@@ -875,6 +1076,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_reorder_prose_pages",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set the order of a document's prose pages. 'order' must be a permutation of the current prose page ids (read get_prose first). Note: in a connected editor the tab order may update only on reload (the prose page list isn't yet live-synced). Refuses local documents.",
             input_schema: json!({
@@ -893,6 +1095,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_references",
+            hints: ToolHints::READ,
             description:
                 "Return a document's reference library (citations) as CSL-JSON items in display order, plus the active citation style. Read-only.",
             input_schema: json!({
@@ -906,6 +1109,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_resolve_doi",
+            hints: ToolHints::READ_OPEN_WORLD,
             description:
                 "Resolve a DOI to a CSL-JSON reference via doi.org content negotiation, WITHOUT modifying any document. Use it to preview a reference before add_reference. Returns the CSL item.",
             input_schema: json!({
@@ -919,6 +1123,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_reference",
+            hints: ToolHints::WRITE_OPEN_WORLD,
             description:
                 "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The data-label is a CACHE, not the source of truth: a connected editor recomputes it from the library entry in the active citation style and writes the result back, so a label that renders wrong means the LIBRARY ENTRY is wrong — most often a missing author, which makes the formatter fall back to a title-first form. Repair it with update_reference; rewriting the label alone will be overwritten. To add the reference list, place an empty <div data-bibliography></div> via set_prose (Markdown or HTML format); the editor renders the formatted list from the library and caches it in the node, so never type the entries. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -938,6 +1143,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_update_reference",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Repair an existing reference in a document's library. Supply 'id' (the library key) and 'item' (CSL-JSON). By default the fields you supply are MERGED into the existing entry, and an explicit null clears a field; pass replace:true to swap the whole item instead. The 'id' cannot be changed here — renaming it would orphan every inline citation pointing at it. Fails if 'id' is not already in the library; use add_reference to create one. This is the tool for an inline citation that renders with the wrong text: the inline data-label is a cache the editor recomputes from the library, so fixing the entry here is what changes what readers see. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -954,6 +1160,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_reference",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Remove a reference from a document's library, and from the bibliography generated off it. REFUSES by default when the reference is still cited inline, naming where (page id and block id) and how many, so the blast radius is visible before you act; pass force:true to delete anyway, which leaves those inline citations unresolved. To repair a wrong entry rather than remove it, use update_reference. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -969,6 +1176,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_fields",
+            hints: ToolHints::READ,
             description:
                 "Return a document's fields (reusable named values like \"Company\" or \"Version\") in display order, each as {name, value}. Read-only.",
             input_schema: json!({
@@ -982,6 +1190,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_set_fields",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set or update one or more document fields (reusable named values). Each field is upserted by name: a new name is created, an existing name has its value replaced. Returns the names written and which were newly added. To reference a field in prose, write {{name}} in Markdown via set_prose/add_prose_page (it becomes a live field placeholder). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -1008,6 +1217,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_skills",
+            hints: ToolHints::READ,
             description:
                 "Learn how to drive DocuShark before writing. With no arguments, returns the content contract (the rules for valid prose + shapes, so your writes aren't malformed) and a catalogue of recipes. Pass {skill:\"<slug>\"} for a recipe's full steps. Call this first if you're unsure how a tool expects its input.",
             input_schema: json!({
@@ -1020,6 +1230,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_icons",
+            hints: ToolHints::READ,
             description:
                 "Discover icon IDs to put on shapes. Returns {id, name, category} entries plus the total match count and the available categories. Filter with `query` (substring over id + name) and/or `category` — the cloud sets are large, so always filter or page with `limit`. Apply an icon by setting `iconId` (with `iconDisplayMode`) on a shape via add_shape/add_shapes/update_shape. Read-only.",
             input_schema: json!({
@@ -1038,11 +1249,12 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
 fn dsl_style_schema_inline() -> Value {
     json!({
         "type": "object",
+        "description": "Colours and outline. Only these four keys take effect; any other key is dropped and reported in fixes.",
         "properties": {
-            "fill": {"type": "string"},
-            "stroke": {"type": "string"},
-            "strokeWidth": {"type": "number"},
-            "labelColor": {"type": "string"}
+            "fill": {"type": "string", "description": "Fill colour: a CSS colour such as \"#1e3a5f\", or \"auto\"."},
+            "stroke": {"type": "string", "description": "Outline colour: a CSS colour, or \"auto\"."},
+            "strokeWidth": {"type": "number", "description": "Outline width in canvas units."},
+            "labelColor": {"type": "string", "description": "Text colour: a CSS colour, or \"auto\" to pick a colour that contrasts with the fill. Left unset, labels use a dark default that is hard to read on dark fills."}
         },
         "additionalProperties": false
     })
@@ -1052,17 +1264,17 @@ fn dsl_shape_schema_inline() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "kind": {"type": "string", "enum": ["rectangle", "ellipse", "text", "connector"]},
-            "x": {"type": "number"},
-            "y": {"type": "number"},
-            "w": {"type": "number"},
-            "h": {"type": "number"},
-            "text": {"type": "string"},
-            "id": {"type": "string"},
-            "startShapeId": {"type": "string"},
-            "endShapeId": {"type": "string"},
-            "startAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
-            "endAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
+            "kind": {"type": "string", "enum": ["rectangle", "ellipse", "text", "connector"], "description": "What to draw. A connector joins two existing shapes named by startShapeId and endShapeId."},
+            "x": {"type": "number", "description": "Centre x in canvas units. Shapes are positioned by their centre, not their top-left corner."},
+            "y": {"type": "number", "description": "Centre y in canvas units; y grows downward."},
+            "w": {"type": "number", "description": "Width in canvas units. For an ellipse, the horizontal diameter."},
+            "h": {"type": "number", "description": "Height in canvas units. For an ellipse, the vertical diameter."},
+            "text": {"type": "string", "description": "The label of a rectangle, ellipse or connector, or the content of a text shape."},
+            "id": {"type": "string", "description": "Optional id of your choosing, unique within the page. An id that already exists is refused, so a retried call cannot duplicate the shape."},
+            "startShapeId": {"type": "string", "description": "Connector-only. Id of the shape the connector starts at."},
+            "endShapeId": {"type": "string", "description": "Connector-only. Id of the shape the connector ends at."},
+            "startAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Connector-only. Side of the start shape to attach to. \"center\" aims at the shape's centre and stops at its edge."},
+            "endAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Connector-only. Side of the end shape to attach to. \"center\" aims at the shape's centre and stops at its edge."},
             "startArrowStyle": {
                 "type": "string",
                 "enum": ["none","triangle","open","diamond"],
