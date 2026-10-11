@@ -118,6 +118,9 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Styling is inline per shape ({fill,stroke,strokeWidth,labelColor} or "AUTO").
 - Use the exact field names — an unrecognized key (e.g. fillColor for style.fill)
   is dropped, and an out-of-range value (heading level, labelPosition) is clamped.
+- Reading a big diagram: call get_page with summary:true first (counts by kind
+  and the bounding box), then read only what you need with ids, kinds, text,
+  region and fields. A full read of a 100-shape page costs about 25k tokens.
 - Files attach via add_file (never add_shape): it uploads the bytes (base64 /
   url / an existing blobRef) and places a file card on a canvas page. Read
   attachments with list_files + get_file; check headroom with get_storage.

@@ -401,6 +401,35 @@ pub fn dsl_patch_fixes(patch: &DslPatch) -> Vec<ShapeFix> {
 /// Lossy reverse mapping used by read tools so an LLM sees the same DSL
 /// shape it would write. Unknown shape types are returned as `None` so the
 /// caller can fall back to a generic representation.
+/// Round a coordinate or size to 2 decimal places for a DSL read (JP-512).
+/// Layout maths produces values such as `441.774658203125`; the extra digits
+/// cost agent context and carry no visual meaning. Stored shapes keep full
+/// precision: only what an agent reads is rounded.
+pub fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+/// A connector's waypoints with each point's `x` and `y` rounded (JP-512).
+fn round_points(points: &Value) -> Value {
+    match points {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|p| {
+                    let mut p = p.clone();
+                    for key in ["x", "y"] {
+                        if let Some(n) = p.get(key).and_then(Value::as_f64) {
+                            p[key] = json!(round2(n));
+                        }
+                    }
+                    p
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 pub fn shape_json_to_dsl(shape: &Value) -> Option<Value> {
     let kind = shape.get("type")?.as_str()?;
     let x = shape.get("x")?.as_f64()?;
@@ -429,15 +458,15 @@ pub fn shape_json_to_dsl(shape: &Value) -> Option<Value> {
     let mut out = json!({
         "id": shape.get("id"),
         "kind": dsl_kind,
-        "x": x,
-        "y": y,
+        "x": round2(x),
+        "y": round2(y),
     });
 
     if let Some(w) = w {
-        out["w"] = json!(w);
+        out["w"] = json!(round2(w));
     }
     if let Some(h) = h {
-        out["h"] = json!(h);
+        out["h"] = json!(round2(h));
     }
     if let Some(label) = shape.get("label").and_then(|v| v.as_str()) {
         out["text"] = json!(label);
@@ -489,8 +518,8 @@ pub fn shape_json_to_dsl(shape: &Value) -> Option<Value> {
         if let Some(v) = shape.get("routingMode").cloned() {
             out["routingMode"] = v;
         }
-        if let Some(v) = shape.get("waypoints").cloned() {
-            out["waypoints"] = v;
+        if let Some(v) = shape.get("waypoints") {
+            out["waypoints"] = round_points(v);
         }
         if let Some(v) = shape.get("labelPosition").cloned() {
             out["labelPosition"] = v;
@@ -1154,5 +1183,31 @@ mod tests {
         assert_eq!(shape["iconId"], "builtin:redis");
         assert_eq!(shape["iconDisplayMode"], "badge");
         assert!(changed.contains(&"iconId".to_string()));
+    }
+
+    /// JP-512: reads round coordinates, sizes and waypoints to 2 decimals.
+    #[test]
+    fn dsl_reads_round_coordinates_sizes_and_waypoints() {
+        let rect = json!({
+            "id": "s1", "type": "rectangle",
+            "x": 441.774658203125, "y": 40.0049, "width": 160.333333, "height": 72.0,
+        });
+        let dsl = shape_json_to_dsl(&rect).unwrap();
+        assert_eq!(dsl["x"], json!(441.77));
+        assert_eq!(dsl["y"], json!(40.0));
+        assert_eq!(dsl["w"], json!(160.33));
+        assert_eq!(dsl["h"], json!(72.0));
+
+        let ellipse = json!({"id": "e1", "type": "ellipse", "x": 1.0, "y": 2.0, "radiusX": 33.3333, "radiusY": 10.0});
+        assert_eq!(shape_json_to_dsl(&ellipse).unwrap()["w"], json!(66.67));
+
+        let connector = json!({
+            "id": "c1", "type": "connector", "x": 0.0, "y": 0.0,
+            "waypoints": [{"x": 441.774658203125, "y": 96.0}, {"x": 40.0, "y": 116.12345}],
+        });
+        assert_eq!(
+            shape_json_to_dsl(&connector).unwrap()["waypoints"],
+            json!([{"x": 441.77, "y": 96.0}, {"x": 40.0, "y": 116.12}])
+        );
     }
 }

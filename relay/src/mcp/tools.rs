@@ -31,8 +31,8 @@ use crate::sync::{DocHandle, DocRegistry};
 
 use super::DocDeletedSink;
 use super::adapter::{
-    apply_dsl_patch, dsl_fixes, dsl_patch_fixes, dsl_to_shape_json, shape_json_to_dsl, DslPatch,
-    DslShape, FixAction, ShapeFix,
+    apply_dsl_patch, dsl_fixes, dsl_patch_fixes, dsl_to_shape_json, round2, shape_json_to_dsl,
+    DslPatch, DslShape, FixAction, ShapeFix,
 };
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
@@ -472,12 +472,29 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_get_page",
             hints: ToolHints::READ,
             description:
-                "Return the shapes on a single page as DSL objects. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form.",
+                "Return the shapes on a single page as DSL objects, in z-order. Coordinates are shape centres, rounded to 2 decimals. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form. A large page is expensive to read whole: call with summary:true first (counts by kind and the bounding box), then read only what you need with ids, kinds, text, region and fields. Filters combine.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
-                    "pageId": {"type": "string"}
+                    "pageId": {"type": "string"},
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Only these shape ids."},
+                    "kinds": {"type": "array", "items": {"type": "string"}, "description": "Only shapes of these kinds (rectangle, ellipse, text, connector, file, or a library kind)."},
+                    "text": {"type": "string", "description": "Only shapes whose text contains this, ignoring case."},
+                    "region": {
+                        "type": "object",
+                        "description": "Only shapes whose bounds intersect this rectangle, plus connectors attached to them.",
+                        "properties": {
+                            "minX": {"type": "number"},
+                            "minY": {"type": "number"},
+                            "maxX": {"type": "number"},
+                            "maxY": {"type": "number"}
+                        },
+                        "required": ["minX", "minY", "maxX", "maxY"],
+                        "additionalProperties": false
+                    },
+                    "fields": {"type": "array", "items": {"type": "string"}, "description": "Return only these keys of each shape, e.g. [\"kind\", \"text\", \"x\", \"y\"]. id is always included."},
+                    "summary": {"type": "boolean", "description": "Return the matching shapes' count by kind and bounding box instead of the shapes."}
                 },
                 "required": ["docId", "pageId"],
                 "additionalProperties": false
@@ -1660,12 +1677,166 @@ struct GetPageArgs {
     doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
+    /// JP-512: read less of a large page. All optional and AND-combined.
+    ids: Option<Vec<String>>,
+    kinds: Option<Vec<String>>,
+    text: Option<String>,
+    region: Option<Region>,
+    fields: Option<Vec<String>>,
+    summary: Option<bool>,
+}
+
+/// An axis-aligned rectangle in canvas units (JP-512 `get_page` region).
+#[derive(Deserialize)]
+struct Region {
+    #[serde(rename = "minX")]
+    min_x: f64,
+    #[serde(rename = "minY")]
+    min_y: f64,
+    #[serde(rename = "maxX")]
+    max_x: f64,
+    #[serde(rename = "maxY")]
+    max_y: f64,
+}
+
+/// Every key a DSL shape read can carry, for validating a `fields` projection
+/// (JP-512): an unknown name is refused rather than silently returning shapes
+/// without it.
+const DSL_FIELDS: &[&str] = &[
+    "id", "kind", "x", "y", "w", "h", "text", "style", "iconId", "iconDisplayMode", "iconSize",
+    "startShapeId", "endShapeId", "startAnchor", "endAnchor", "routingMode", "waypoints",
+    "labelPosition", "fileName", "mimeType", "fileSize", "fileCategory", "blobRef", "label",
+    "_unmapped",
+];
+
+/// A DSL shape's bounds as `(minX, minY, maxX, maxY)`: its centre plus or
+/// minus half its size, or just the centre when it has no size.
+fn dsl_bounds(shape: &Value) -> Option<(f64, f64, f64, f64)> {
+    let x = shape["x"].as_f64()?;
+    let y = shape["y"].as_f64()?;
+    let half_w = shape["w"].as_f64().unwrap_or(0.0) / 2.0;
+    let half_h = shape["h"].as_f64().unwrap_or(0.0) / 2.0;
+    Some((x - half_w, y - half_h, x + half_w, y + half_h))
+}
+
+/// Apply `get_page`'s optional filters (JP-512), keeping z-order. Filters
+/// combine. A region selects shapes by their bounds; a connector has no
+/// reliable geometry of its own, so it joins a region selection when either
+/// end is a shape the region selected.
+fn filter_page_shapes(shapes: Vec<Value>, args: &GetPageArgs) -> Vec<Value> {
+    let needle = args.text.as_ref().map(|t| t.to_lowercase());
+    let basic = |shape: &Value| {
+        let id = shape["id"].as_str().unwrap_or_default();
+        let kind = shape["kind"].as_str().unwrap_or_default();
+        args.ids.as_ref().map_or(true, |ids| ids.iter().any(|i| i == id))
+            && args.kinds.as_ref().map_or(true, |kinds| kinds.iter().any(|k| k == kind))
+            && needle.as_ref().map_or(true, |n| {
+                shape["text"].as_str().is_some_and(|t| t.to_lowercase().contains(n.as_str()))
+            })
+    };
+    let Some(region) = &args.region else {
+        return shapes.into_iter().filter(|s| basic(s)).collect();
+    };
+    let selected: std::collections::HashSet<String> = shapes
+        .iter()
+        .filter(|s| s["kind"] != "connector")
+        .filter(|s| {
+            dsl_bounds(s).is_some_and(|(x0, y0, x1, y1)| {
+                x0 <= region.max_x && x1 >= region.min_x && y0 <= region.max_y && y1 >= region.min_y
+            })
+        })
+        .filter_map(|s| s["id"].as_str().map(String::from))
+        .collect();
+    shapes
+        .into_iter()
+        .filter(|s| {
+            let in_region = if s["kind"] == "connector" {
+                [&s["startShapeId"], &s["endShapeId"]]
+                    .iter()
+                    .any(|end| end.as_str().is_some_and(|id| selected.contains(id)))
+            } else {
+                s["id"].as_str().is_some_and(|id| selected.contains(id))
+            };
+            in_region && basic(s)
+        })
+        .collect()
+}
+
+/// `get_page` summary mode (JP-512): how many shapes match, by kind, and the
+/// bounding box of the non-connector ones (`null` when there are none).
+fn summarize_page_shapes(shapes: &[Value]) -> Value {
+    let mut by_kind = serde_json::Map::new();
+    let mut bounds: Option<(f64, f64, f64, f64)> = None;
+    for shape in shapes {
+        let kind = shape["kind"].as_str().unwrap_or("unknown").to_string();
+        let n = by_kind.get(&kind).and_then(Value::as_u64).unwrap_or(0);
+        by_kind.insert(kind, json!(n + 1));
+        if shape["kind"] == "connector" {
+            continue;
+        }
+        if let Some((x0, y0, x1, y1)) = dsl_bounds(shape) {
+            bounds = Some(match bounds {
+                None => (x0, y0, x1, y1),
+                Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+            });
+        }
+    }
+    json!({
+        "count": shapes.len(),
+        "byKind": by_kind,
+        "bounds": bounds.map(|(a, b, c, d)| json!({
+            "minX": round2(a), "minY": round2(b), "maxX": round2(c), "maxY": round2(d),
+        })),
+    })
+}
+
+/// Keep only the requested keys of a DSL shape (JP-512); `id` always stays.
+fn project_shape(shape: Value, fields: &[String]) -> Value {
+    match shape {
+        Value::Object(obj) => Value::Object(
+            obj.into_iter()
+                .filter(|(key, _)| key == "id" || fields.iter().any(|f| f == key))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: GetPageArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    if let Some(bad) = parsed
+        .fields
+        .iter()
+        .flatten()
+        .find(|f| !DSL_FIELDS.contains(&f.as_str()))
+    {
+        return Err(format!(
+            "Unknown field '{bad}' in fields; a shape read can carry: {}",
+            DSL_FIELDS.join(", ")
+        ));
+    }
+    let (shapes, source) = read_page_shapes(ctx, &parsed)?;
+    let shapes = filter_page_shapes(shapes, &parsed);
+    let result = if parsed.summary == Some(true) {
+        json!({"summary": summarize_page_shapes(&shapes), "source": source.wire()})
+    } else {
+        let shapes: Vec<Value> = match &parsed.fields {
+            Some(fields) => shapes.into_iter().map(|s| project_shape(s, fields)).collect(),
+            None => shapes,
+        };
+        json!({"shapes": shapes, "source": source.wire()})
+    };
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
 
+/// Every shape on a page as DSL objects in z-order, and where they were read
+/// from.
+fn read_page_shapes(ctx: &ToolContext, parsed: &GetPageArgs) -> Result<(Vec<Value>, DocSource), String> {
     // JP-251/JP-340: resident-accurate when the doc is hot — reads the live
     // Y.Doc the write path mutates (JP-35) for THIS page's surface
     // (`shapes:<pageId>`), so a write-then-read round-trip is consistent on any
@@ -1684,11 +1855,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .filter_map(|id| shapes_map.get(id))
         .map(shape_to_dsl_or_generic)
         .collect();
-        return Ok(ToolOutcome {
-            result: json!({"shapes": shapes, "source": DocSource::Relay.wire()}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
+        return Ok((shapes, DocSource::Relay));
     }
 
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
@@ -1710,12 +1877,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .filter_map(|id| shapes_obj.get(id))
         .map(shape_to_dsl_or_generic)
         .collect();
-
-    Ok(ToolOutcome {
-        result: json!({"shapes": shapes, "source": source.wire()}),
-        changed_doc_id: None,
-        change_detail: None,
-    })
+    Ok((shapes, source))
 }
 
 /// A shape's DSL form, or a generic descriptor for kinds the foundation adapter
@@ -1727,14 +1889,16 @@ fn shape_to_dsl_or_generic(shape: &Value) -> Value {
         // metadata read-only here (NOT in the bidirectional DSL adapter —
         // agents must not author file shapes via add_shape; bytes are fetched
         // with get_file).
+        // JP-512: coordinates rounded like every other DSL read.
+        let rounded = |key: &str| shape.get(key).and_then(Value::as_f64).map(round2);
         if shape.get("type").and_then(|v| v.as_str()) == Some("file") {
             return json!({
                 "id": shape.get("id"),
                 "kind": "file",
-                "x": shape.get("x"),
-                "y": shape.get("y"),
-                "w": shape.get("width"),
-                "h": shape.get("height"),
+                "x": rounded("x"),
+                "y": rounded("y"),
+                "w": rounded("width"),
+                "h": rounded("height"),
                 "fileName": shape.get("fileName"),
                 "mimeType": shape.get("mimeType"),
                 "fileSize": shape.get("fileSize"),
@@ -1746,8 +1910,8 @@ fn shape_to_dsl_or_generic(shape: &Value) -> Value {
         json!({
             "id": shape.get("id"),
             "kind": shape.get("type"),
-            "x": shape.get("x"),
-            "y": shape.get("y"),
+            "x": rounded("x"),
+            "y": rounded("y"),
             "_unmapped": true,
         })
     })
@@ -10826,6 +10990,159 @@ mod tests {
             );
             assert!(handle.prose_html(&page).is_some());
             assert_eq!(wrote["revision"], json!(read(&f, &page).1));
+        }
+    }
+
+    /// JP-512: `get_page` filters, projection and summary.
+    mod page_reads {
+        use super::*;
+
+        fn page(f: &Fixture, query: Value) -> Result<Value, String> {
+            let mut args = json!({"docId": "doc1", "pageId": "p1"});
+            for (k, v) in query.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            dispatch(&f.ctx(true), "docushark_get_page", &args).map(|o| o.result)
+        }
+
+        fn ids(result: &Value) -> Vec<String> {
+            result["shapes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].as_str().unwrap().to_string())
+                .collect()
+        }
+
+        /// a (50..150, 75..125), b (550..650, 75..125), c (60..140, 360..440),
+        /// t (240..360, 585..615); connectors ab ("writes") and bc.
+        fn fixture(dir: &TempDir) -> Fixture {
+            let f = seed(&dir.path().to_path_buf());
+            dispatch(
+                &f.ctx(true),
+                "docushark_add_shapes",
+                &json!({"docId": "doc1", "pageId": "p1", "shapes": [
+                    {"id": "a", "kind": "rectangle", "text": "Alpha service", "x": 100, "y": 100, "w": 100, "h": 50},
+                    {"id": "b", "kind": "rectangle", "text": "Bravo store", "x": 600, "y": 100, "w": 100, "h": 50},
+                    {"id": "c", "kind": "ellipse", "text": "Charlie queue", "x": 100, "y": 400, "w": 80, "h": 80},
+                    {"id": "t", "kind": "text", "text": "alpha note", "x": 300, "y": 600, "w": 120, "h": 30},
+                    {"id": "ab", "kind": "connector", "startShapeId": "a", "endShapeId": "b", "text": "writes"},
+                    {"id": "bc", "kind": "connector", "startShapeId": "b", "endShapeId": "c"}
+                ]}),
+            )
+            .unwrap();
+            f
+        }
+
+        #[test]
+        fn each_filter_selects_exactly_the_matching_shapes() {
+            let dir = TempDir::new().unwrap();
+            let f = fixture(&dir);
+            assert_eq!(ids(&page(&f, json!({})).unwrap()), ["a", "b", "c", "t", "ab", "bc"]);
+            assert_eq!(ids(&page(&f, json!({"ids": ["bc", "b"]})).unwrap()), ["b", "bc"]);
+            assert_eq!(ids(&page(&f, json!({"kinds": ["connector"]})).unwrap()), ["ab", "bc"]);
+            assert_eq!(ids(&page(&f, json!({"text": "ALPHA"})).unwrap()), ["a", "t"]);
+            let region = json!({"minX": 0, "minY": 0, "maxX": 200, "maxY": 200});
+            assert_eq!(
+                ids(&page(&f, json!({"region": region})).unwrap()),
+                ["a", "ab"],
+                "a connector joins the region through either end"
+            );
+            assert_eq!(
+                ids(&page(&f, json!({"region": region, "kinds": ["rectangle"]})).unwrap()),
+                ["a"],
+                "filters combine"
+            );
+            // The same filtered read from the live document.
+            f.make_resident("doc1");
+            assert_eq!(ids(&page(&f, json!({"text": "alpha"})).unwrap()), ["a", "t"]);
+        }
+
+        #[test]
+        fn fields_project_each_shape_and_unknown_fields_are_refused() {
+            let dir = TempDir::new().unwrap();
+            let f = fixture(&dir);
+            let out = page(&f, json!({"fields": ["text"]})).unwrap();
+            for shape in out["shapes"].as_array().unwrap() {
+                let keys: Vec<&String> = shape.as_object().unwrap().keys().collect();
+                let expected: &[&str] = if shape["id"] == "bc" { &["id"] } else { &["id", "text"] };
+                assert_eq!(keys, expected, "{shape}");
+            }
+            let err = page(&f, json!({"fields": ["colour"]})).unwrap_err();
+            assert!(err.starts_with("Unknown field 'colour'"), "{err}");
+        }
+
+        #[test]
+        fn summary_counts_by_kind_and_bounds_the_matching_shapes() {
+            let dir = TempDir::new().unwrap();
+            let f = fixture(&dir);
+            let all = page(&f, json!({"summary": true})).unwrap();
+            assert!(all.get("shapes").is_none());
+            assert_eq!(all["summary"]["count"], json!(6));
+            assert_eq!(
+                all["summary"]["byKind"],
+                json!({"rectangle": 2, "ellipse": 1, "text": 1, "connector": 2})
+            );
+            assert_eq!(
+                all["summary"]["bounds"],
+                json!({"minX": 50.0, "minY": 75.0, "maxX": 650.0, "maxY": 615.0})
+            );
+            let alpha = page(&f, json!({"summary": true, "text": "alpha"})).unwrap();
+            assert_eq!(alpha["summary"]["byKind"], json!({"rectangle": 1, "text": 1}));
+            let none = page(&f, json!({"summary": true, "ids": ["nope"]})).unwrap();
+            assert_eq!(none["summary"]["count"], json!(0));
+            assert_eq!(none["summary"]["bounds"], Value::Null);
+        }
+
+        /// The finding behind JP-512: a 100-node generated diagram could not be
+        /// read inline by an agent. Claude Code measures the structured result
+        /// (the September probe failed at 61,569 characters, ~25k tokens), so a
+        /// full read of a page this size sits at that limit whatever the text
+        /// format; what must fit comfortably is the projected read. Pins the
+        /// text compaction and the projection budget.
+        #[test]
+        fn a_large_generated_page_fits_the_read_budget() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let nodes: Vec<Value> = (0..100)
+                .map(|i| json!({"id": format!("n{i}"), "label": format!("svc-{}-{}", i / 10, i % 10)}))
+                .collect();
+            let mut edges = Vec::new();
+            for i in 0..90 {
+                edges.push(json!({"from": format!("n{i}"), "to": format!("n{}", i + 10)}));
+                if i % 2 == 0 {
+                    let to = if i % 10 < 9 { i + 11 } else { i + 9 };
+                    edges.push(json!({"from": format!("n{i}"), "to": format!("n{to}")}));
+                }
+            }
+            for k in 0..10 {
+                let from = (k * 7) % 70;
+                edges.push(json!({"from": format!("n{from}"), "to": format!("n{}", from + 30), "label": "async"}));
+            }
+            dispatch(
+                &f.ctx(true),
+                "docushark_generate_diagram",
+                &json!({"docId": "doc1", "pageId": "p1", "nodes": nodes, "edges": edges, "layout": "layered"}),
+            )
+            .unwrap();
+
+            let full = page(&f, json!({})).unwrap();
+            let pretty = serde_json::to_string_pretty(&full).unwrap().len();
+            let compact = serde_json::to_string(&full).unwrap().len();
+            let projected = serde_json::to_string(
+                &page(&f, json!({"fields": ["kind", "text", "x", "y"]})).unwrap(),
+            )
+            .unwrap()
+            .len();
+            let summary = serde_json::to_string(&page(&f, json!({"summary": true})).unwrap()).unwrap().len();
+            eprintln!(
+                "100 nodes, {} edges: pretty {pretty} B, compact {compact} B, projected {projected} B, summary {summary} B",
+                edges.len()
+            );
+            assert!(compact * 10 <= pretty * 6, "compact {compact} B is not well under pretty {pretty} B");
+            assert!(projected * 2 < compact, "projection {projected} B is not under half of {compact} B");
+            assert!(projected <= 25_000, "projected read {projected} B over the 25 KB inline budget");
+            assert!(summary < 300, "summary {summary} B");
         }
     }
 }

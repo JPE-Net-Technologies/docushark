@@ -86,7 +86,7 @@ All tools are namespaced `docushark_*`.
 | -- | -- |
 | `list_documents` | List documents in the workspace (`id`, `name`, `modifiedAt`, `source`, and page counts). `pageCount` is the **canvas + prose total**; `canvasPageCount` and `prosePageCount` give the breakdown (a document has a diagram canvas and a separate prose body). |
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
-| `get_page` | The shapes on one canvas page, as DSL objects. |
+| `get_page` | The shapes on one canvas page, as DSL objects in z-order; coordinates are shape centres, rounded to 2 decimals. Optional filters combine: `ids`, `kinds`, `text` (case-insensitive substring) and `region` (`{minX, minY, maxX, maxY}`; connectors attached to a selected shape come along). `fields` projects each shape to the listed keys (`id` is always kept), and `summary: true` returns the matching count by kind and bounding box instead of the shapes. Read a large page summary-first. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
 | `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`, and `revision` (a hash of that content, for the whole-page writers' `expectedRevision`). Embedded images appear as `blob://<hash>` references — list them with `list_files`, fetch bytes with `get_file`. |
 | `list_files` | Every file attached to the document: canvas file shapes (`fileName`, `mimeType`, `sizeBytes`, `fileCategory`) and prose-embedded images, each with its `blobRef` (content hash) and whether the bytes are `inStore` on this relay. |
@@ -319,6 +319,11 @@ current.
   editor re-routes connectors with the same algorithm when shapes move.
   Connectors route around nodes, not around each other — heavily parallel
   edges can still overlap. Node caps: 500 nodes / 1000 edges per call.
+- **Tool results.** Every result is returned twice: as `structuredContent` and as a
+  text block holding the same JSON, compact. Some clients cap how much of a result
+  they show the model inline, and a full `get_page` of a diagram with about 100
+  shapes is near such limits: read large pages with `summary: true` first, then
+  filter and project.
 - **Rate limits (per workspace).** Every tool that can change a document (any
   tool whose `tools/list` annotations do not say `readOnlyHint: true`) draws from
   the shared write bucket (`[tenancy.limits] writes_per_sec`/`writes_burst`,
