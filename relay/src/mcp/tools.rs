@@ -614,7 +614,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_get_prose",
             hints: ToolHints::READ,
             description:
-                "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML.",
+                "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML. Each page carries a 'revision': pass it as expectedRevision to a whole-page write (set_prose without anchor or id, insert_section, restructure_outline, edit_table) so the write is refused if the page changed after this read.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -646,7 +646,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_set_prose",
             hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. A whole-page write returns the page's new 'revision'; pass expectedRevision from your last read whenever the document may be open in an editor. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -657,7 +657,8 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "anchor": {"type": "string", "description": "Optional. The current text of the line to replace — a single bullet, table cell, heading, or paragraph, anywhere on the page (its container passes through). Must match exactly one line; whitespace is normalized and styling/marks are ignored. Omit (and omit 'id') to replace the whole page."},
                     "id": {"type": "string", "description": "Optional. The target block's durable id (the id=\"blk-…\" you saw in get_prose / get_outline) — drift-proof addressing that survives text edits. Alone, or WITH 'anchor' as a content check: both must then resolve to the same block (ERR_ID_ANCHOR_MISMATCH otherwise). A stale id fails hard (ERR_ID_NOT_FOUND) — re-read the page rather than guessing."},
                     "anchorUntil": {"type": "string", "description": "Optional. With 'anchor'/'id', replace the inclusive span of sibling lines (same parent block) from the target through the line matching this text."},
-                    "untilId": {"type": "string", "description": "Optional. The span end's durable id — the id twin of 'anchorUntil'."}
+                    "untilId": {"type": "string", "description": "Optional. The span end's durable id — the id twin of 'anchorUntil'."},
+                    "expectedRevision": {"type": "string", "description": "Optional, whole-page writes only. The page's 'revision' from your last read: if the page has changed since, the write is refused with ERR_STALE_WRITE and nothing is written. Not accepted with anchor or id, which already check the target block."}
                 },
                 "required": ["docId", "pageId", "content"],
                 "additionalProperties": false
@@ -801,7 +802,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_get_outline",
             hints: ToolHints::READ,
             description:
-                "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
+                "Return the heading outline of a prose page as an ordered list of { index, level, title, id }, plus the page's 'revision'. Address a heading by its 'id' (its durable block id) in insert_section and restructure_outline: an index shifts when a heading is added above it, an id does not. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -816,7 +817,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_insert_section",
             hints: ToolHints::WRITE,
             description:
-                "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it with position:\"start\"|\"end\" (default \"end\"), or afterIndex to drop it right after an existing heading's section. Refuses local documents.",
+                "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it right after an existing section with afterId (that heading's id from get_outline; preferred) or afterIndex, or at position:\"start\"|\"end\" (default \"end\"). Returns the new section, the updated outline and the page's new revision. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -826,8 +827,10 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "title": {"type": "string", "description": "Heading text (plain)."},
                     "body": {"type": "string", "description": "Optional section body below the heading."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of body. Default: \"markdown\"."},
-                    "position": {"type": "string", "enum": ["start", "end"], "description": "Where to insert when afterIndex is absent. Default: \"end\"."},
-                    "afterIndex": {"type": "integer", "minimum": 0, "description": "Insert after the section at this 0-based heading index (takes precedence over position)."}
+                    "position": {"type": "string", "enum": ["start", "end"], "description": "Where to insert when neither afterId nor afterIndex is given. Default: \"end\"."},
+                    "afterId": {"type": "string", "description": "Insert after the section whose heading has this durable id (from get_outline). Takes precedence over position."},
+                    "afterIndex": {"type": "integer", "minimum": 0, "description": "Insert after the section at this 0-based heading index. Prefer afterId: an index shifts when a heading is added above it. With afterId, both must name the same heading."},
+                    "expectedRevision": expected_revision_schema()
                 },
                 "required": ["docId", "pageId", "level", "title"],
                 "additionalProperties": false
@@ -837,17 +840,20 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_restructure_outline",
             hints: ToolHints::WRITE,
             description:
-                "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to toIndex. 'index' is the 0-based heading index from get_outline. Returns the updated outline. Refuses local documents.",
+                "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to the position another heading holds now. Name the heading by 'id' (its durable block id from get_outline; preferred) or 'index', and the move destination by 'toId' or 'toIndex'. Returns the affected section, the updated outline and the page's new revision. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
                     "op": {"type": "string", "enum": ["promote", "demote", "move"]},
-                    "index": {"type": "integer", "minimum": 0, "description": "0-based heading index to act on."},
-                    "toIndex": {"type": "integer", "minimum": 0, "description": "Target section index for op=\"move\"."}
+                    "id": {"type": "string", "description": "The heading's durable block id from get_outline. Preferred over index: it still names the same heading after others are added above it."},
+                    "index": {"type": "integer", "minimum": 0, "description": "0-based heading index from get_outline. With id, both must name the same heading."},
+                    "toId": {"type": "string", "description": "For op=\"move\": the heading whose current position the section moves to."},
+                    "toIndex": {"type": "integer", "minimum": 0, "description": "For op=\"move\": the 0-based position the section moves to. With toId, both must name the same heading."},
+                    "expectedRevision": expected_revision_schema()
                 },
-                "required": ["docId", "pageId", "op", "index"],
+                "required": ["docId", "pageId", "op"],
                 "additionalProperties": false
             }),
         },
@@ -855,7 +861,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_get_table",
             hints: ToolHints::READ,
             description:
-                "Read a prose-page table as a resolved, span-aware grid — the coordinate model edit_table addresses. Returns rows/cols and one entry per cell: its 0-based grid slot (row, col — a merged cell is addressable through ANY slot it covers), tag (th/td), colspan/rowspan, text, colwidth, styling, and the first in-cell block's durable id (edit that cell's text via set_prose with that id). Select the table with tableIndex (0-based, document order) or an anchor/id of content inside it; omit both when the page has one table. Always read this before edit_table — its coordinates are the ones ops take.",
+                "Read a prose-page table as a resolved, span-aware grid — the coordinate model edit_table addresses. Returns rows/cols and one entry per cell: its 0-based grid slot (row, col — a merged cell is addressable through ANY slot it covers), tag (th/td), colspan/rowspan, text, colwidth, styling, and the first in-cell block's durable id (edit that cell's text via set_prose with that id). Select the table with tableIndex (0-based, document order) or an anchor/id of content inside it; omit both when the page has one table. Always read this before edit_table — its coordinates are the ones ops take. Also returns the page's 'revision' for edit_table's expectedRevision.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -873,7 +879,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_edit_table",
             hints: ToolHints::DESTRUCTIVE,
             description:
-                "Structural table surgery — one operation per call, addressed by get_table's 0-based span-aware grid coordinates (read it first; stale coordinates fail with ERR_CELL_RANGE, never guess). Ops: addRow/addColumn (at 'row'/'col', side before/after — a merged cell spanning the boundary grows instead of splitting), deleteRow/deleteColumn (spans shrink; the last row/column is refused), mergeCells (fromRow/fromCol → toRow/toCol rectangle; contents concatenate onto the top-left cell; a rectangle cutting through a merged cell is refused), splitCell (row/col; content stays on the anchor), setCellAttrs (row/col + backgroundColor/align/scope, empty string clears; scope is header-only), moveRow/moveColumn (from/to; refused on tables with merged cells), toggleHeaderRow/toggleHeaderColumn (row 0 / column 0), setColumnWidth (col + width px; omit width to clear). Returns the post-op grid. Writes the whole page (same granularity as restructure_outline). Refuses local documents. Table cell TEXT edits don't need this — use set_prose with the cell's block id.",
+                "Structural table surgery — one operation per call, addressed by get_table's 0-based span-aware grid coordinates (read it first; stale coordinates fail with ERR_CELL_RANGE, never guess). Ops: addRow/addColumn (at 'row'/'col', side before/after — a merged cell spanning the boundary grows instead of splitting), deleteRow/deleteColumn (spans shrink; the last row/column is refused), mergeCells (fromRow/fromCol → toRow/toCol rectangle; contents concatenate onto the top-left cell; a rectangle cutting through a merged cell is refused), splitCell (row/col; content stays on the anchor), setCellAttrs (row/col + backgroundColor/align/scope, empty string clears; scope is header-only), moveRow/moveColumn (from/to; refused on tables with merged cells), toggleHeaderRow/toggleHeaderColumn (row 0 / column 0), setColumnWidth (col + width px; omit width to clear). Returns the post-op grid. Writes the whole page (same granularity as restructure_outline) and returns its new revision; pass expectedRevision from your last read so the write is refused if the page changed. Refuses local documents. Table cell TEXT edits don't need this — use set_prose with the cell's block id.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -895,7 +901,8 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "backgroundColor": {"type": "string", "description": "setCellAttrs: CSS colour; \"\" clears."},
                     "align": {"type": "string", "description": "setCellAttrs: text-align (left/center/right); \"\" clears."},
                     "scope": {"type": "string", "description": "setCellAttrs: header scope (col/row); \"\" clears; header cells only."},
-                    "width": {"type": "integer", "minimum": 0, "description": "setColumnWidth: pixels; omit or 0 to clear."}
+                    "width": {"type": "integer", "minimum": 0, "description": "setColumnWidth: pixels; omit or 0 to clear."},
+                    "expectedRevision": expected_revision_schema()
                 },
                 "required": ["docId", "pageId", "op"],
                 "additionalProperties": false
@@ -1244,6 +1251,15 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             }),
         },
     ]
+}
+
+/// Schema for the optional revision precondition on the whole-page prose
+/// writers (JP-513).
+fn expected_revision_schema() -> Value {
+    json!({
+        "type": "string",
+        "description": "Optional. The page's 'revision' from your last read (get_prose, get_outline or get_table). If the page has changed since, the write is refused with ERR_STALE_WRITE and nothing is written. Pass it whenever the document may be open in an editor."
+    })
 }
 
 fn dsl_style_schema_inline() -> Value {
@@ -2964,8 +2980,16 @@ fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     // Live Y.Doc content overlaid on the JSON page list when the doc is
     // resident (JP-201), so an agent sees prose a connected editor just typed.
     let resolved = resolve_prose_pages(ctx, &parsed.doc_id, &doc);
+    // JP-513: each page's revision is the hash of exactly the content returned
+    // here, so it can be passed back as a whole-page write's precondition.
     let render = |id: &str, name: &Value, order: &Value, content: &str| {
-        json!({"id": id, "name": name, "order": order, "content": content})
+        json!({
+            "id": id,
+            "name": name,
+            "order": order,
+            "content": content,
+            "revision": crate::sync::prose_revision(content),
+        })
     };
 
     if let Some(page_id) = parsed.page_id {
@@ -3118,19 +3142,33 @@ struct SetProseArgs {
     /// JP-432 Pillar C: the span end's durable id (the id twin of `anchorUntil`).
     #[serde(rename = "untilId")]
     until_id: Option<String>,
+    /// JP-513: whole-page writes only — refuse unless the page is still at
+    /// this revision (from `get_prose` / `get_outline` / `get_table`).
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: SetProseArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
+    let targeted = parsed.anchor.is_some() || parsed.id.is_some();
+    if targeted && parsed.expected_revision.is_some() {
+        // Refused rather than ignored: silently dropping a precondition would
+        // let the caller believe the write was guarded.
+        return Err("expectedRevision applies to whole-page writes only: an anchored or id-addressed \
+            write already checks the target block's current text and id. Drop expectedRevision, or \
+            omit anchor and id to replace the whole page."
+            .into());
+    }
     check_prose_size(&parsed.content)?;
     let fields = resolve_field_values(ctx, &parsed.doc_id);
     let html = content_to_html(&parsed.content, parsed.format.as_deref(), &fields)?;
     // JP-328: report what the structural gate healed, so the author sees it.
     let fixes = crate::sync::validate_prose_html(&html);
 
-    if parsed.anchor.is_some() || parsed.id.is_some() {
+    let mut revision = None;
+    if targeted {
         // JP-239: anchored, block-level replace — only the matched block(s)
         // change. Target = anchor and/or durable id (JP-432 Pillar C).
         let target =
@@ -3148,23 +3186,31 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         // unless this write would become the deterministic first seed (JP-338;
         // see fill_ids_for_page_write).
         let html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &html);
-        write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
-            let now = now_ms();
-            let rtp = rich_text_pages_mut(doc)?;
-            let page = rtp
-                .get_mut("pages")
-                .and_then(|v| v.as_object_mut())
-                .and_then(|pages| pages.get_mut(&parsed.page_id))
-                .and_then(|p| p.as_object_mut())
-                .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
-            page.insert("content".into(), json!(html));
-            page.insert("modifiedAt".into(), json!(now));
-            stamp_doc_modified(doc, now);
-            Ok(())
-        })?
+        // JP-513: with expectedRevision, the write lands only if the page is
+        // still at that revision.
+        let fallback;
+        let check = match parsed.expected_revision.as_deref() {
+            Some(expected) => {
+                // An empty live fragment reads as the JSON projection.
+                let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
+                fallback = read_prose_content(&doc_json, &parsed.page_id).unwrap_or_default();
+                Some(crate::sync::RevisionCheck { expected, empty_fallback: &fallback })
+            }
+            None => None,
+        };
+        revision = Some(write_prose_page_checked(
+            ctx,
+            &parsed.doc_id,
+            &parsed.page_id,
+            &html,
+            check,
+        )?);
     }
 
     let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    if let Some(revision) = revision {
+        result["revision"] = json!(revision);
+    }
     if !fixes.is_empty() {
         result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
     }
@@ -3703,7 +3749,11 @@ fn get_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let content = resolve_prose_content(ctx, &parsed.doc_id, &doc, &parsed.page_id)?;
     let outline = Outline::parse(&content);
     Ok(ToolOutcome {
-        result: json!({"outline": outline_summary(&outline), "source": source.wire()}),
+        result: json!({
+            "outline": outline_summary(&outline),
+            "revision": crate::sync::prose_revision(&content),
+            "source": source.wire(),
+        }),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -3720,8 +3770,14 @@ struct InsertSectionArgs {
     body: Option<String>,
     format: Option<String>,
     position: Option<String>,
+    /// JP-513: insert after the section whose heading has this durable id.
+    #[serde(rename = "afterId")]
+    after_id: Option<String>,
     #[serde(rename = "afterIndex")]
     after_index: Option<usize>,
+    /// JP-513: refuse the write unless the page is still at this revision.
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -3755,32 +3811,63 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     };
 
     // Read the current page content (live if resident, else JSON), apply the
-    // insert, then write the whole page back live-or-JSON (JP-238).
-    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
-    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
-    let mut outline = Outline::parse(&current);
-    let len = outline.sections.len();
-    let pos = match parsed.after_index {
-        Some(ai) => (ai + 1).min(len),
-        None => match parsed.position.as_deref() {
-            Some("start") => 0,
-            _ => len,
+    // insert, then write the whole page back live-or-JSON (JP-238) — conditioned
+    // on the revision read, so nothing written in between is lost (JP-513).
+    let (revision, (summary, pos)) = modify_prose_page(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        parsed.expected_revision.as_deref(),
+        |current| {
+            let mut outline = Outline::parse(current);
+            let len = outline.sections.len();
+            let pos = if parsed.after_id.is_some() {
+                let after = resolve_heading(
+                    &outline,
+                    parsed.after_id.as_deref(),
+                    parsed.after_index,
+                    "afterId",
+                    "afterIndex",
+                )?;
+                after + 1
+            } else {
+                match parsed.after_index {
+                    Some(ai) => (ai + 1).min(len),
+                    None => match parsed.position.as_deref() {
+                        Some("start") => 0,
+                        _ => len,
+                    },
+                }
+            };
+            // The new heading's durable id arrives via the whole-page fill below
+            // (it also back-fills any legacy id-less heading on the page).
+            outline.sections.insert(
+                pos,
+                Section {
+                    level,
+                    attrs_html: String::new(),
+                    id: None,
+                    inner_html: inner_html.clone(),
+                    title: title.clone(),
+                    body_html: body_html.clone(),
+                },
+            );
+            let new_html =
+                fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+            // Summarise AFTER the fill, so the new heading's id reaches the caller.
+            let summary = outline_summary(&Outline::parse(&new_html));
+            Ok((new_html, (summary, pos)))
         },
-    };
-    // The new heading's durable id arrives via the whole-page fill below (it
-    // also back-fills any legacy id-less heading on the page).
-    outline.sections.insert(
-        pos,
-        Section { level, attrs_html: String::new(), id: None, inner_html, title, body_html },
-    );
-    let new_html =
-        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+    )?;
 
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
-        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
-    })?;
-
-    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    let section = summary[pos].clone();
+    let mut result = json!({
+        "pageId": parsed.page_id,
+        "ok": true,
+        "section": section,
+        "outline": summary,
+        "revision": revision,
+    });
     attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
         result,
@@ -3796,9 +3883,18 @@ struct RestructureOutlineArgs {
     #[serde(rename = "pageId")]
     page_id: String,
     op: String,
-    index: usize,
+    /// JP-513: the heading's durable block id; with `index`, both must agree.
+    id: Option<String>,
+    index: Option<usize>,
+    /// JP-513: for "move", the heading whose current position the section
+    /// moves to; with `toIndex`, both must agree.
+    #[serde(rename = "toId")]
+    to_id: Option<String>,
     #[serde(rename = "toIndex")]
     to_index: Option<usize>,
+    /// JP-513: refuse the write unless the page is still at this revision.
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -3806,58 +3902,75 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // Read current content (live if resident, else JSON), apply the op, then
-    // write the whole page back live-or-JSON (JP-238).
-    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
-    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
-    let mut outline = Outline::parse(&current);
-    let n = outline.sections.len();
-    if parsed.index >= n {
+    if !matches!(parsed.op.as_str(), "promote" | "demote" | "move") {
         return Err(format!(
-            "No section at index {} — the page has {} heading(s)",
-            parsed.index, n
+            "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
+            parsed.op
         ));
     }
+
+    // Read current content (live if resident, else JSON), apply the op, then
+    // write the whole page back live-or-JSON (JP-238) — conditioned on the
+    // revision read, so nothing written in between is lost (JP-513).
     let mut fixes = Vec::new();
-    match parsed.op.as_str() {
-        "promote" => {
-            let lvl = outline.sections[parsed.index].level as i64;
-            let new = clamp_level(lvl - 1);
-            if i64::from(new) == lvl {
-                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
-            }
-            outline.sections[parsed.index].level = new;
-        }
-        "demote" => {
-            let lvl = outline.sections[parsed.index].level as i64;
-            let new = clamp_level(lvl + 1);
-            if i64::from(new) == lvl {
-                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
-            }
-            outline.sections[parsed.index].level = new;
-        }
-        "move" => {
-            let to = parsed.to_index.ok_or("op 'move' requires 'toIndex'")?.min(n - 1);
-            let section = outline.sections.remove(parsed.index);
-            outline.sections.insert(to, section);
-        }
-        other => {
-            return Err(format!(
-                "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
-                other
-            ))
-        }
-    }
-    let new_html =
-        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
-    // Summarise AFTER the fill, so back-filled heading ids reach the caller.
-    let summary = outline_summary(&Outline::parse(&new_html));
+    let (revision, (summary, affected)) = modify_prose_page(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        parsed.expected_revision.as_deref(),
+        |current| {
+            fixes.clear();
+            let mut outline = Outline::parse(current);
+            let index =
+                resolve_heading(&outline, parsed.id.as_deref(), parsed.index, "id", "index")?;
+            let affected = match parsed.op.as_str() {
+                "promote" | "demote" => {
+                    let lvl = outline.sections[index].level as i64;
+                    let step = if parsed.op == "promote" { -1 } else { 1 };
+                    let new = clamp_level(lvl + step);
+                    if i64::from(new) == lvl {
+                        fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
+                    }
+                    outline.sections[index].level = new;
+                    index
+                }
+                _ => {
+                    // "move": the section ends up at the position the destination
+                    // heading holds now (the toIndex meaning, addressed by id).
+                    let to = if parsed.to_id.is_some() {
+                        resolve_heading(
+                            &outline,
+                            parsed.to_id.as_deref(),
+                            parsed.to_index,
+                            "toId",
+                            "toIndex",
+                        )?
+                    } else {
+                        parsed
+                            .to_index
+                            .ok_or("op 'move' requires 'toId' or 'toIndex'")?
+                            .min(outline.sections.len() - 1)
+                    };
+                    let section = outline.sections.remove(index);
+                    outline.sections.insert(to, section);
+                    to
+                }
+            };
+            let new_html =
+                fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+            // Summarise AFTER the fill, so back-filled heading ids reach the caller.
+            let summary = outline_summary(&Outline::parse(&new_html));
+            Ok((new_html, (summary, affected)))
+        },
+    )?;
 
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
-        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
-    })?;
-
-    let mut result = json!({"pageId": parsed.page_id, "outline": summary});
+    let section = summary[affected].clone();
+    let mut result = json!({
+        "pageId": parsed.page_id,
+        "section": section,
+        "outline": summary,
+        "revision": revision,
+    });
     attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
         result,
@@ -3910,6 +4023,9 @@ struct EditTableArgs {
     align: Option<String>,
     scope: Option<String>,
     width: Option<u32>,
+    /// JP-513: refuse the write unless the page is still at this revision.
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 /// The table selector shared by `get_table`/`edit_table`: an explicit index,
@@ -4014,6 +4130,7 @@ fn get_table(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         result: json!({
             "pageId": parsed.page_id,
             "table": serde_json::to_value(&grid).map_err(|e| e.to_string())?,
+            "revision": crate::sync::prose_revision(&current),
         }),
         changed_doc_id: None,
         change_detail: None,
@@ -4032,28 +4149,35 @@ fn edit_table(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let op = parse_table_op(&parsed)?;
     let sel = table_sel(parsed.table_index, &parsed.id, &parsed.anchor)?;
 
-    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
-    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
-    let outcome = crate::sync::edit_table_in_html(&current, &sel, &op)?;
-    let new_html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outcome.html);
-    // Re-grid AFTER the fill so back-filled cell ids reach the caller (the
-    // restructure_outline convention); the index is stable across the fill.
-    let grid = crate::sync::table_grid_in_html(
-        &new_html,
-        &crate::sync::TableSel::Index(outcome.grid.table_index),
+    // Conditioned on the revision read, so nothing written in between is lost
+    // (JP-513).
+    let (revision, (grid, fixes)) = modify_prose_page(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        parsed.expected_revision.as_deref(),
+        |current| {
+            let outcome = crate::sync::edit_table_in_html(current, &sel, &op)?;
+            let new_html =
+                fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outcome.html);
+            // Re-grid AFTER the fill so back-filled cell ids reach the caller (the
+            // restructure_outline convention); the index is stable across the fill.
+            let grid = crate::sync::table_grid_in_html(
+                &new_html,
+                &crate::sync::TableSel::Index(outcome.grid.table_index),
+            )?;
+            Ok((new_html, (grid, outcome.fixes)))
+        },
     )?;
-
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
-        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
-    })?;
 
     let mut result = json!({
         "pageId": parsed.page_id,
         "ok": true,
         "table": serde_json::to_value(&grid).map_err(|e| e.to_string())?,
+        "revision": revision,
     });
-    if !outcome.fixes.is_empty() {
-        result["fixes"] = serde_json::to_value(&outcome.fixes).unwrap_or(Value::Null);
+    if !fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
     }
     Ok(ToolOutcome {
         result,
@@ -4464,24 +4588,120 @@ fn broadcast_canvas_page_meta(ctx: &ToolContext, doc_id: &DocId, page_id: &str) 
     }
 }
 
-/// Write a prose page's full HTML to the **live** Y.Doc fragment when the doc is
-/// resident — broadcasting the CRDT delta so connected editors update live
-/// (JP-238, whole-page replace) — else fall back to the JSON path. The live path
-/// leaves durability to the JP-36/JP-201 snapshot flatten (which projects prose
-/// into the JSON), exactly like the JP-35 shape write path.
-fn write_prose_page_live_or_json(
+/// Write a whole prose page (JP-238) and return its revision afterwards
+/// (JP-513). A resident document is written to its **live** Y.Doc fragment and
+/// the CRDT delta broadcast, so connected editors update live; durability is
+/// left to the JP-36/JP-201 snapshot flatten, as on the JP-35 shape write path.
+/// A closed document's JSON content is rewritten under optimistic concurrency.
+///
+/// With a `check`, the write lands only if the page is still at
+/// `check.expected`: for a resident document the comparison runs inside the
+/// write transaction, for a closed one inside the optimistic-concurrency
+/// retry, so a concurrent edit can never land between the check and the write.
+fn write_prose_page_checked(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
     html: &str,
-    json_fallback: impl FnMut(&mut Value) -> Result<(), String>,
-) -> Result<(), String> {
+    check: Option<crate::sync::RevisionCheck<'_>>,
+) -> Result<String, String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.replace_prose(page_id, html)?;
+        let (framed, revision) = handle.replace_prose_checked(page_id, html, check.as_ref())?;
         ctx.broadcast_update(doc_id, framed);
-        Ok(())
-    } else {
-        mutate_with_retry(ctx, doc_id, json_fallback).map(|_| ())
+        return Ok(revision);
+    }
+    mutate_with_retry(ctx, doc_id, |doc| {
+        if let Some(check) = &check {
+            let current = read_prose_content(doc, page_id)?;
+            if crate::sync::prose_revision(&current) != check.expected {
+                return Err(crate::sync::stale_write_error(check.expected));
+            }
+        }
+        write_prose_content(doc, page_id, html.to_string(), now_ms())
+    })?;
+    Ok(crate::sync::prose_revision(html))
+}
+
+/// Attempts for a structural whole-page edit whose page changed between its
+/// own read and its write (JP-513); each attempt re-reads and recomputes.
+const MODIFY_PAGE_ATTEMPTS: usize = 3;
+
+/// Read a prose page, transform it and write the result back without losing
+/// anything written to the page in between (JP-513). The write is conditioned
+/// on the revision this call read; if the page changed meanwhile, the read and
+/// the transform run again. With a caller `expected` revision, a page that no
+/// longer matches it is refused instead: the caller's own view is stale.
+/// Returns the page's new revision and the transform's extra output.
+fn modify_prose_page<T>(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    expected: Option<&str>,
+    mut transform: impl FnMut(&str) -> Result<(String, T), String>,
+) -> Result<(String, T), String> {
+    for _ in 0..MODIFY_PAGE_ATTEMPTS {
+        let (doc_json, _) = fetch_doc(ctx, doc_id)?;
+        let current = resolve_prose_content(ctx, doc_id, &doc_json, page_id)?;
+        let read_revision = crate::sync::prose_revision(&current);
+        if let Some(expected) = expected {
+            if expected != read_revision {
+                return Err(crate::sync::stale_write_error(expected));
+            }
+        }
+        let (new_html, extra) = transform(&current)?;
+        // An empty live fragment reads as the JSON projection.
+        let fallback = read_prose_content(&doc_json, page_id).unwrap_or_default();
+        let check = crate::sync::RevisionCheck { expected: &read_revision, empty_fallback: &fallback };
+        match write_prose_page_checked(ctx, doc_id, page_id, &new_html, Some(check)) {
+            Ok(revision) => return Ok((revision, extra)),
+            Err(e) if expected.is_none() && crate::sync::is_stale_write(&e) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!(
+        "{}: the page kept changing while this edit was applied, so nothing was written. Try again.",
+        crate::sync::ERR_STALE_WRITE
+    ))
+}
+
+/// Resolve a heading named by its durable `id` and/or 0-based `index`
+/// (JP-513). An id is looked up in the current outline, so it still names the
+/// same heading after others are added above it; with both, they must agree.
+fn resolve_heading(
+    outline: &Outline,
+    id: Option<&str>,
+    index: Option<usize>,
+    id_field: &str,
+    index_field: &str,
+) -> Result<usize, String> {
+    let n = outline.sections.len();
+    match (id, index) {
+        (None, None) => Err(format!(
+            "ERR_TARGET_MISSING: pass {id_field} (the heading's id from get_outline) or {index_field}"
+        )),
+        (Some(id), index) => {
+            let found = outline
+                .sections
+                .iter()
+                .position(|s| s.id.as_deref() == Some(id))
+                .ok_or_else(|| {
+                    format!(
+                        "ERR_ID_NOT_FOUND: no heading carries id \"{id}\" — it may have been \
+                         deleted, or the heading has no id yet; re-read the page with get_outline"
+                    )
+                })?;
+            match index {
+                Some(i) if i != found => Err(format!(
+                    "ERR_ID_INDEX_MISMATCH: heading id \"{id}\" is at index {found}, not {i} — \
+                     re-read the page with get_outline"
+                )),
+                _ => Ok(found),
+            }
+        }
+        (None, Some(i)) if i >= n => {
+            Err(format!("No section at index {i} — the page has {n} heading(s)"))
+        }
+        (None, Some(i)) => Ok(i),
     }
 }
 
@@ -8447,7 +8667,7 @@ mod tests {
             &json!({"docId":"doc1","pageId":page_id,"op":"move","index":0}),
         )
         .unwrap_err();
-        assert!(no_to.contains("requires 'toIndex'"));
+        assert!(no_to.contains("requires 'toId' or 'toIndex'"));
     }
 
     #[test]
@@ -10193,5 +10413,419 @@ mod tests {
             &json!({"docId": "doc1", "content": "fits"}),
         )
         .unwrap();
+    }
+
+    /// JP-513: page revisions, the whole-page write precondition, and
+    /// id-addressed outline verbs.
+    mod stale_writes {
+        use super::*;
+
+        fn call(f: &Fixture, tool: &str, args: Value) -> Value {
+            dispatch(&f.ctx(true), tool, &args)
+                .unwrap_or_else(|e| panic!("{tool} failed: {e}"))
+                .result
+        }
+
+        fn call_err(f: &Fixture, tool: &str, args: Value) -> String {
+            dispatch(&f.ctx(true), tool, &args).expect_err(tool)
+        }
+
+        /// A prose page seeded from HTML; returns its id.
+        fn page_with(f: &Fixture, html: &str) -> String {
+            let out = call(
+                f,
+                "docushark_add_prose_page",
+                json!({"docId": "doc1", "content": html, "format": "html"}),
+            );
+            out["id"].as_str().unwrap().to_string()
+        }
+
+        /// `(content, revision)` as get_prose reports them.
+        fn read(f: &Fixture, page: &str) -> (String, String) {
+            let out = call(f, "docushark_get_prose", json!({"docId": "doc1", "pageId": page}));
+            (
+                out["page"]["content"].as_str().unwrap().to_string(),
+                out["page"]["revision"].as_str().unwrap().to_string(),
+            )
+        }
+
+        fn outline_ids(f: &Fixture, page: &str) -> Vec<(String, String)> {
+            let out = call(f, "docushark_get_outline", json!({"docId": "doc1", "pageId": page}));
+            out["outline"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| {
+                    (
+                        s["title"].as_str().unwrap().to_string(),
+                        s["id"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        fn id_of(outline: &[(String, String)], title: &str) -> String {
+            outline.iter().find(|(t, _)| t == title).unwrap().1.clone()
+        }
+
+        /// A collaborator's edit to one block, as a connected editor's CRDT
+        /// update would land it: straight into the live fragment.
+        fn live_edit(handle: &DocHandle, page: &str, anchor: &str, html: &str) {
+            handle
+                .replace_prose_block(
+                    page,
+                    crate::sync::TargetSpec::new(None, Some(anchor)),
+                    None,
+                    html,
+                    None,
+                )
+                .unwrap();
+        }
+
+        const PAGE: &str = "<h1>Doc</h1><p>One.</p><p>Two.</p><p>Three: HUMAN</p>";
+
+        #[test]
+        fn revision_is_stable_and_changes_with_any_content_change() {
+            let a = crate::sync::prose_revision("<p>a</p>");
+            assert_eq!(a, crate::sync::prose_revision("<p>a</p>"));
+            assert_ne!(a, crate::sync::prose_revision("<p>b</p>"));
+            assert_ne!(a, crate::sync::prose_revision("<p>a</p><p></p>"));
+            assert!(a.starts_with("rev-") && a.len() == 20, "{a}");
+        }
+
+        #[test]
+        fn every_read_reports_the_same_revision_for_one_page_state() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(
+                &f,
+                "<h1>T</h1><table><tr><th><p>H</p></th></tr><tr><td><p>x</p></td></tr></table>",
+            );
+            let (_, rev) = read(&f, &page);
+            let outline = call(&f, "docushark_get_outline", json!({"docId": "doc1", "pageId": page}));
+            let table = call(&f, "docushark_get_table", json!({"docId": "doc1", "pageId": page}));
+            assert_eq!(outline["revision"], json!(rev));
+            assert_eq!(table["revision"], json!(rev));
+
+            // A whole-page write reports the revision the next read sees.
+            let wrote = call(
+                &f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "content": "<p>new</p>", "format": "html"}),
+            );
+            assert_eq!(wrote["revision"], json!(read(&f, &page).1));
+            assert_ne!(wrote["revision"], json!(rev));
+        }
+
+        #[test]
+        fn a_no_op_round_trip_keeps_the_revision_cold_and_resident() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            for resident in [false, true] {
+                if resident {
+                    f.make_resident("doc1");
+                }
+                let (content, rev) = read(&f, &page);
+                let wrote = call(
+                    &f,
+                    "docushark_set_prose",
+                    json!({
+                        "docId": "doc1", "pageId": page, "content": content,
+                        "format": "html", "expectedRevision": rev,
+                    }),
+                );
+                assert_eq!(wrote["revision"], json!(rev), "resident={resident}");
+                assert_eq!(read(&f, &page).1, rev, "resident={resident}");
+            }
+        }
+
+        /// The defect JP-513 fixes, as found on 2026-09-16: an agent rewrote the
+        /// whole page from a read taken before a person typed, and the typing
+        /// was silently reverted.
+        #[test]
+        fn a_stale_whole_page_write_is_refused_and_the_concurrent_edit_survives_resident() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let handle = f.make_resident("doc1");
+
+            let (stale, stale_rev) = read(&f, &page);
+            live_edit(&handle, &page, "Three: HUMAN", "<p>Three: HUMAN typed</p>");
+
+            let err = call_err(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "format": "html",
+                    "content": stale.replace("One.", "One EDITED."),
+                    "expectedRevision": stale_rev,
+                }),
+            );
+            assert!(err.starts_with("ERR_STALE_WRITE"), "{err}");
+            let (now, now_rev) = read(&f, &page);
+            assert!(now.contains("HUMAN typed") && !now.contains("EDITED"), "{now}");
+            assert!(!err.contains(&now_rev), "the refusal must not hand out the current revision");
+
+            // Re-read, re-apply: both edits survive.
+            let wrote = call(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "format": "html",
+                    "content": now.replace("One.", "One EDITED."),
+                    "expectedRevision": now_rev,
+                }),
+            );
+            let (fin, fin_rev) = read(&f, &page);
+            assert!(fin.contains("HUMAN typed") && fin.contains("One EDITED."), "{fin}");
+            assert_eq!(wrote["revision"], json!(fin_rev));
+        }
+
+        #[test]
+        fn a_stale_whole_page_write_is_refused_cold() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let (stale, stale_rev) = read(&f, &page);
+            call(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "anchor": "Three: HUMAN",
+                    "content": "<p>Three: other writer</p>", "format": "html",
+                }),
+            );
+            let err = call_err(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "format": "html",
+                    "content": stale.replace("One.", "One EDITED."),
+                    "expectedRevision": stale_rev,
+                }),
+            );
+            assert!(err.starts_with("ERR_STALE_WRITE"), "{err}");
+            let (now, _) = read(&f, &page);
+            assert!(now.contains("other writer") && !now.contains("EDITED"), "{now}");
+        }
+
+        #[test]
+        fn without_expected_revision_a_whole_page_write_stays_unconditional() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let handle = f.make_resident("doc1");
+            let (stale, _) = read(&f, &page);
+            live_edit(&handle, &page, "Three: HUMAN", "<p>Three: HUMAN typed</p>");
+            call(
+                &f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "format": "html", "content": stale}),
+            );
+            assert!(!read(&f, &page).0.contains("HUMAN typed"), "today's behaviour is kept");
+        }
+
+        #[test]
+        fn expected_revision_is_refused_on_targeted_writes() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let (_, rev) = read(&f, &page);
+            let err = call_err(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "anchor": "One.",
+                    "content": "<p>1</p>", "format": "html", "expectedRevision": rev,
+                }),
+            );
+            assert!(err.contains("whole-page writes only"), "{err}");
+            assert!(read(&f, &page).0.contains("One."), "nothing written");
+        }
+
+        #[test]
+        fn structural_writes_refuse_a_stale_expected_revision() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(
+                &f,
+                "<h1>A</h1><p>a</p><h1>B</h1><table><tr><th><p>H</p></th></tr><tr><td><p>x</p></td></tr></table>",
+            );
+            let (_, stale_rev) = read(&f, &page);
+            let a_id = id_of(&outline_ids(&f, &page), "A");
+            call(
+                &f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "anchor": "a", "content": "<p>a changed</p>", "format": "html"}),
+            );
+            let before = read(&f, &page).0;
+            for (tool, args) in [
+                ("docushark_insert_section", json!({"level": 2, "title": "New"})),
+                ("docushark_restructure_outline", json!({"op": "demote", "id": a_id})),
+                ("docushark_edit_table", json!({"op": "addRow", "row": 0})),
+            ] {
+                let mut args = args;
+                args["docId"] = json!("doc1");
+                args["pageId"] = json!(page);
+                args["expectedRevision"] = json!(stale_rev);
+                let err = call_err(&f, tool, args);
+                assert!(err.starts_with("ERR_STALE_WRITE"), "{tool}: {err}");
+                assert_eq!(read(&f, &page).0, before, "{tool} must not write");
+            }
+        }
+
+        /// Without a caller revision, a structural edit whose page changes
+        /// between its own read and write re-reads and recomputes instead of
+        /// overwriting the change (it used to write its stale result).
+        #[test]
+        fn a_structural_edit_reapplies_itself_when_the_page_changes_mid_edit() {
+            for resident in [false, true] {
+                let dir = TempDir::new().unwrap();
+                let f = seed(&dir.path().to_path_buf());
+                let page = page_with(&f, PAGE);
+                let handle = resident.then(|| f.make_resident("doc1"));
+                let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+                let ctx = f.ctx(true);
+                let mut calls = 0;
+                let (revision, ()) = modify_prose_page(&ctx, &doc_id, &page, None, |current| {
+                    calls += 1;
+                    if calls == 1 {
+                        // A collaborator types after this call read the page.
+                        match &handle {
+                            Some(h) => live_edit(h, &page, "Three: HUMAN", "<p>Three: HUMAN typed</p>"),
+                            None => {
+                                dispatch(
+                                    &ctx,
+                                    "docushark_set_prose",
+                                    &json!({
+                                        "docId": "doc1", "pageId": page, "anchor": "Three: HUMAN",
+                                        "content": "<p>Three: HUMAN typed</p>", "format": "html",
+                                    }),
+                                )
+                                .unwrap();
+                            }
+                        }
+                    }
+                    Ok((current.replace("Two.", "Two EDITED."), ()))
+                })
+                .unwrap();
+                assert_eq!(calls, 2, "resident={resident}: the edit must be recomputed once");
+                let (content, rev) = read(&f, &page);
+                assert!(
+                    content.contains("HUMAN typed") && content.contains("Two EDITED."),
+                    "resident={resident}: {content}"
+                );
+                assert_eq!(revision, rev, "resident={resident}");
+            }
+        }
+
+        /// The defect behind F3 (found 2026-09-16): a heading inserted above the
+        /// target shifted every index, and the index-addressed verbs acted on
+        /// the wrong sections. By id they act on the intended ones.
+        #[test]
+        fn outline_verbs_by_id_hit_the_intended_heading_after_a_concurrent_insert() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(
+                &f,
+                "<h1>Alpha</h1><p>a</p><h2>Alpha child</h2><p>ac</p><h1>Bravo</h1><p>b</p><h1>Charlie</h1><p>c</p>",
+            );
+            let ids = outline_ids(&f, &page);
+            let (bravo, charlie, child, alpha) = (
+                id_of(&ids, "Bravo"),
+                id_of(&ids, "Charlie"),
+                id_of(&ids, "Alpha child"),
+                id_of(&ids, "Alpha"),
+            );
+            // Someone adds a heading at the top: every index shifts by one.
+            call(
+                &f,
+                "docushark_insert_block",
+                json!({"docId": "doc1", "pageId": page, "anchor": "Alpha", "side": "before",
+                       "content": "<h1>Zero</h1>", "format": "html"}),
+            );
+
+            let demoted = call(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "demote", "id": bravo}),
+            );
+            assert_eq!(demoted["section"]["title"], json!("Bravo"));
+            assert_eq!(demoted["section"]["level"], json!(2));
+
+            let moved = call(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "move", "id": charlie, "toId": bravo}),
+            );
+            assert_eq!(moved["section"]["title"], json!("Charlie"));
+            let titles: Vec<&str> = moved["outline"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["title"].as_str().unwrap())
+                .collect();
+            assert_eq!(titles, ["Zero", "Alpha", "Alpha child", "Charlie", "Bravo"]);
+
+            let inserted = call(
+                &f,
+                "docushark_insert_section",
+                json!({"docId": "doc1", "pageId": page, "level": 2, "title": "Notes", "afterId": child}),
+            );
+            assert_eq!(inserted["section"]["title"], json!("Notes"));
+            assert_eq!(inserted["section"]["index"], json!(3));
+            assert!(inserted["section"]["id"].as_str().unwrap().starts_with("blk-"));
+            assert_eq!(inserted["revision"], json!(read(&f, &page).1));
+
+            let mismatch = call_err(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "promote", "id": alpha, "index": 3}),
+            );
+            assert!(mismatch.starts_with("ERR_ID_INDEX_MISMATCH"), "{mismatch}");
+            let missing = call_err(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "promote"}),
+            );
+            assert!(missing.starts_with("ERR_TARGET_MISSING"), "{missing}");
+
+            call(&f, "docushark_delete_block", json!({"docId": "doc1", "pageId": page, "id": charlie}));
+            let gone = call_err(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "promote", "id": charlie}),
+            );
+            assert!(gone.starts_with("ERR_ID_NOT_FOUND"), "{gone}");
+        }
+
+        /// The first live write into an empty page takes the deterministic-seed
+        /// path; its reported revision must still be what the next read sees,
+        /// and a precondition read from the empty page must hold.
+        #[test]
+        fn the_first_live_write_into_an_empty_page_reports_the_live_revision() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            // Added while closed, then opened: hydration leaves an empty page's
+            // live fragment empty (adding it to an open document seeds it).
+            let page = call(&f, "docushark_add_prose_page", json!({"docId": "doc1"}))["id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let handle = f.make_resident("doc1");
+            assert!(handle.prose_html(&page).is_none(), "fixture: the live fragment starts empty");
+            let (_, empty_rev) = read(&f, &page);
+            let wrote = call(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "content": "<p>first</p>",
+                    "format": "html", "expectedRevision": empty_rev,
+                }),
+            );
+            assert!(handle.prose_html(&page).is_some());
+            assert_eq!(wrote["revision"], json!(read(&f, &page).1));
+        }
     }
 }

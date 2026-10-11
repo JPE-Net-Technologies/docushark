@@ -393,7 +393,9 @@ Canvas: a shape's x and y are its centre, not its top-left corner; set style.lab
 give shapes your own ids when a call might be retried, because an existing id is refused rather than duplicated. \
 docushark_generate_diagram is not idempotent: running it again adds a second copy, so read the page before retrying. \
 Prose: when a document may be open in an editor, change one block at a time with set_prose's id or anchor, or with insert_block, \
-rather than rewriting the whole page.";
+rather than rewriting the whole page. When you do rewrite a whole page, or use insert_section, restructure_outline or edit_table, \
+pass the revision from your last read as expectedRevision; ERR_STALE_WRITE means the page changed, so re-read before retrying. \
+Name headings by their id from docushark_get_outline, not their index.";
 
 fn initialize_result() -> Value {
     json!({
