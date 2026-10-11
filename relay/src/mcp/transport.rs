@@ -392,6 +392,7 @@ Call docushark_get_skills before your first write: it returns the content contra
 Canvas: a shape's x and y are its centre, not its top-left corner; set style.labelColor to \"auto\" so labels stay readable on any fill; \
 give shapes your own ids when a call might be retried, because an existing id is refused rather than duplicated. \
 docushark_generate_diagram is not idempotent: running it again adds a second copy, so read the page before retrying. \
+For a large canvas page, call docushark_get_page with summary:true first, then filter it (ids, kinds, text, region, fields) rather than reading every shape. \
 Prose: when a document may be open in an editor, change one block at a time with set_prose's id or anchor, or with insert_block, \
 rather than rewriting the whole page. When you do rewrite a whole page, or use insert_section, restructure_outline or edit_table, \
 pass the revision from your last read as expectedRevision; ERR_STALE_WRITE means the page changed, so re-read before retrying. \
@@ -844,7 +845,10 @@ async fn handle_tools_call(
                 // hard-coded `single_tenant()` — correct on a public pod.
                 (state.on_doc_changed)(workspace, doc_id);
             }
-            let text = serde_json::to_string_pretty(&outcome.result).unwrap_or_else(|_| "{}".into());
+            // JP-512: compact. The text block is what most clients show the model,
+            // and pretty-printing nearly doubled its size on large reads; the
+            // same value is also returned as `structuredContent`.
+            let text = serde_json::to_string(&outcome.result).unwrap_or_else(|_| "{}".into());
             Json(rpc_result(
                 id,
                 json!({
@@ -1455,5 +1459,20 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} carries no readOnlyHint"));
             assert_eq!(read_only, !is_mcp_write_tool(name), "{name}");
         }
+    }
+
+    /// JP-512: the text block is compact JSON carrying exactly the structured
+    /// result (pretty-printing nearly doubled large reads).
+    #[tokio::test]
+    async fn tool_result_text_is_compact_and_equals_structured_content() {
+        let dir = TempDir::new().unwrap();
+        let (state, token) = make_state(&dir);
+        seed_canvas_doc(&state, "cdoc", "p1");
+        let app = router(state);
+        let body = call_tool(app, &token, "docushark_get_document", json!({"docId": "cdoc"})).await;
+        let text = body["result"]["content"][0]["text"].as_str().expect("a text block");
+        assert!(!text.contains('\n'), "text must be compact: {text}");
+        let parsed: Value = serde_json::from_str(text).expect("the text is JSON");
+        assert_eq!(parsed, body["result"]["structuredContent"]);
     }
 }
