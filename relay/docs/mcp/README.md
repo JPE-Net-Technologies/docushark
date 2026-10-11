@@ -307,11 +307,21 @@ current.
   editor re-routes connectors with the same algorithm when shapes move.
   Connectors route around nodes, not around each other — heavily parallel
   edges can still overlap. Node caps: 500 nodes / 1000 edges per call.
-- **Rate limits (per workspace).** Writes draw from the shared write bucket
-  (`[tenancy.limits] writes_per_sec`/`writes_burst`, shared with WS sync); reads
-  draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =
-  unlimited). Over the bucket → HTTP `429` with `ERR_RATE_LIMIT`. Tunable via
-  `RELAY_*` env on Cloud pods.
+- **Rate limits (per workspace).** Every tool that can change a document (any
+  tool whose `tools/list` annotations do not say `readOnlyHint: true`) draws from
+  the shared write bucket (`[tenancy.limits] writes_per_sec`/`writes_burst`,
+  shared with WS sync); read-only tools draw from a **separate** bucket
+  (`reads_per_sec`/`reads_burst`, `0` = unlimited). Over the bucket → HTTP `429`
+  with `ERR_RATE_LIMIT`. Tunable via `RELAY_*` env on Cloud pods.
+- **Tool annotations and server instructions.** Every tool in `tools/list`
+  carries MCP annotations: `readOnlyHint` and `openWorldHint` on all tools, plus
+  `destructiveHint` and `idempotentHint` on tools that write. A client can use
+  them to confirm destructive calls and to avoid blindly retrying
+  non-idempotent ones such as `generate_diagram`. `initialize` returns short
+  `instructions`: call `get_skills` before the first write, shape coordinates
+  are centres, `labelColor: "auto"` keeps labels readable, caller-chosen shape
+  ids make retries safe, and documents that may be open should be edited one
+  block at a time.
 - **Storage limits.** Document writes share the workspace storage meter with
   files (see `get_storage`). A write that would *grow* the workspace past its
   quota fails with `ERR_STORAGE_QUOTA` — shrinking edits and deletes always
