@@ -34,7 +34,8 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Allowed block types only: paragraph, heading (h1-h6), bulletList/orderedList
   (with listItem), blockquote, codeBlock, table, horizontalRule, image, figure
   (with figcaption), callout, gallery, math block, task list (with checkable
-  taskItem children). Anything else is unwrapped to its text.
+  taskItem children). Anything else is unwrapped to its text and reported in
+  fixes.
 - Atoms carry NO children: image, horizontalRule, hardBreak, an inline citation,
   a field reference, an inline/block math node. Never nest content inside them.
 - LaTeX math: write `$$ … $$` on its own line for a block (display) equation, or
@@ -93,8 +94,13 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   (<mark style="background-color: …">) and text colour (<span style="color: …">),
   alongside the marks bold/italic/underline/strike/code/sub/sup and links. A code
   block keeps its language: <pre><code class="language-rust">…</code></pre>.
+  The editor's other forms work too: <b>, <i>, <del>, <strike>, and a style on
+  any element (font-weight, font-style, text-decoration, vertical-align), so a
+  Google Docs paste keeps its formatting.
 - Task lists are checkable: <ul data-type="taskList"><li data-type="taskItem"
-  data-checked="true"><p>…</p></li></ul> (write with format:"html").
+  data-checked="true"><p>…</p></li></ul> (write with format:"html"). Markdown
+  `- [x] done` and a list whose every item starts with <input type="checkbox">
+  become task lists too.
 - To change ONE line without rewriting the page, use set_prose with anchor = that
   line's current text — it reaches a single bullet, table cell, heading, or
   paragraph anywhere on the page, leaving its list/table/quote and siblings intact.
@@ -127,9 +133,13 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 
 If a write reports a `fixes` array, the relay adjusted your input: it healed
 malformed prose, **dropped** an unrecognized/invalid field (`dropped_unknown` /
-`dropped_invalid`), or **clamped** a value (`clamped`). Each entry has an
-`action` + `reason` (shape fixes also name the `field`). Read it, correct the
-source, and re-send so nothing is silently lost."#;
+`dropped_invalid`), or **clamped** a value (`clamped`). Prose HTML the editor
+has no equivalent for is reported too: `unwrapped_element` (replaced by its
+text), `removed_element` (kept nothing) and `stripped_atom_text` (text inside a
+field, citation, file or math atom, which keeps its value in an attribute),
+each with the element in `nodeType` and a `count`. Each entry has an `action` +
+`reason` (shape fixes also name the `field`). Read it, correct the source, and
+re-send so nothing is silently lost."#;
 
 /// `(slug, when-to-use, full SKILL.md body)`. Bodies embedded at compile time —
 /// a fixed set, so `skill_body` can only ever return one of these (no fs lookup).

@@ -340,3 +340,119 @@ mod guard_tests {
         assert!(!has_attr_token(html, "data-file"), "prefix wrongly matched a longer attribute");
     }
 }
+
+
+// ---- JP-514: mark synonym parity ---------------------------------------------
+//
+// `relay/tests/prose-fixtures/mark-synonyms.json` lists every way the editor's
+// Tiptap mark rules accept a mark, with the marks the text "X" must carry.
+// `src/ui/proseMarkSynonyms.test.ts` proves each expectation against the real
+// editor schema; these tests require the relay parser to agree.
+
+#[derive(serde::Deserialize)]
+struct SynonymCase {
+    name: String,
+    html: String,
+    marks: Vec<String>,
+    /// The number of top-level blocks, where the case is about structure.
+    #[serde(default)]
+    blocks: Option<usize>,
+    #[serde(default)]
+    why: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct SynonymFixtures {
+    cases: Vec<SynonymCase>,
+}
+
+fn load_synonym_cases() -> Vec<SynonymCase> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/prose-fixtures/mark-synonyms.json");
+    let raw = std::fs::read_to_string(path).expect("read mark synonym fixtures");
+    let fixtures: SynonymFixtures = serde_json::from_str(&raw).expect("parse mark synonym fixtures");
+    assert!(fixtures.cases.len() > 20, "mark synonym fixtures must not be hollow");
+    fixtures.cases
+}
+
+/// The sorted names of the marks on the text run containing "X".
+fn marks_on_x(nodes: &[prose_parse::PmNode]) -> Option<Vec<String>> {
+    for node in nodes {
+        for child in &node.children {
+            match child {
+                prose_parse::PmChild::Text { text, marks } if text.contains('X') => {
+                    let mut names: Vec<String> = marks.iter().map(|m| m.name.clone()).collect();
+                    names.sort();
+                    names.dedup();
+                    return Some(names);
+                }
+                prose_parse::PmChild::Node(inner) => {
+                    if let Some(found) = marks_on_x(std::slice::from_ref(inner)) {
+                        return Some(found);
+                    }
+                }
+                prose_parse::PmChild::Text { .. } => {}
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn every_mark_synonym_parses_to_the_editors_marks() {
+    let mut failures = Vec::new();
+    for case in load_synonym_cases() {
+        let blocks = prose_parse::html_to_blocks(&case.html);
+        if let Some(want) = case.blocks.filter(|want| *want != blocks.len()) {
+            failures.push(format!("{}: relay made {} blocks, editor {want}", case.name, blocks.len()));
+        }
+        let got = marks_on_x(&blocks);
+        let mut want = case.marks.clone();
+        want.sort();
+        if got.as_ref() != Some(&want) {
+            failures.push(format!(
+                "{}: relay {:?}, editor {:?}{}",
+                case.name,
+                got,
+                want,
+                case.why.as_deref().map(|w| format!(" — {w}")).unwrap_or_default()
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "relay and editor disagree:\n{}", failures.join("\n"));
+}
+
+/// Every tag the relay maps to a mark, canonical or synonym, must be pinned by
+/// a case, so a relay-only synonym cannot exist without being proven against
+/// the editor.
+#[test]
+fn every_relay_mark_tag_is_covered_by_a_synonym_case() {
+    let cases = load_synonym_cases();
+    let uncovered: Vec<&str> = super::prose_schema::MARKS
+        .iter()
+        .chain(super::prose_schema::MARK_TAG_SYNONYMS)
+        .map(|(_, tag)| *tag)
+        .filter(|tag| {
+            !cases
+                .iter()
+                .any(|c| c.html.contains(&format!("<{tag}>")) || c.html.contains(&format!("<{tag} ")))
+        })
+        .collect();
+    assert!(
+        uncovered.is_empty(),
+        "relay mark tags with no case in relay/tests/prose-fixtures/mark-synonyms.json: {uncovered:?}"
+    );
+}
+
+/// JP-514: the loss report must never fire on the relay's own stored HTML. A
+/// false alarm on our own output would teach writers to ignore `fixes`.
+#[test]
+fn no_canonical_case_reports_a_parse_loss() {
+    let mut failures = Vec::new();
+    for case in load_cases() {
+        let (_, losses) = prose_parse::html_to_blocks_with_losses(&case.html);
+        if !losses.is_empty() {
+            failures.push(format!("{}: {losses:?}", case.name));
+        }
+    }
+    assert!(failures.is_empty(), "the relay's own HTML reported losses:\n{}", failures.join("\n"));
+}

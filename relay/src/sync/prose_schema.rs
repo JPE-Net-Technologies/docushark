@@ -189,9 +189,27 @@ pub fn simple_block_pm(html_tag: &str) -> Option<&'static str> {
     SIMPLE_BLOCKS.iter().find(|(_, h)| *h == html_tag).map(|(p, _)| *p)
 }
 
-/// Mark name for an inline HTML tag (write side).
+/// Parse-only tag synonyms for the marks above (JP-514), mirroring the
+/// editor's Tiptap parse rules: `<b>`, `<i>`, `<del>` and `<strike>`. A `<b>`
+/// or `<i>` whose own style says `normal` applies no mark (see `prose_parse`).
+/// The serializer only ever writes the canonical tag from [`MARKS`], so stored
+/// HTML stays canonical. Pinned against the editor by
+/// `relay/tests/prose-fixtures/mark-synonyms.json`.
+pub const MARK_TAG_SYNONYMS: &[(&str, &str)] = &[
+    ("bold", "b"),
+    ("italic", "i"),
+    ("strike", "del"),
+    ("strike", "strike"),
+];
+
+/// Mark name for an inline HTML tag (write side), including the parse-only
+/// [`MARK_TAG_SYNONYMS`].
 pub fn mark_pm(html_tag: &str) -> Option<&'static str> {
-    MARKS.iter().find(|(_, h)| *h == html_tag).map(|(m, _)| *m)
+    MARKS
+        .iter()
+        .chain(MARK_TAG_SYNONYMS)
+        .find(|(_, h)| *h == html_tag)
+        .map(|(m, _)| *m)
 }
 
 /// Custom "prose-helper" leaf nodes — neither plain wrappers nor marks. Each

@@ -222,6 +222,15 @@ human `reason`:
 - prose heals (`unwrapped` / `rebuilt_table` / `stripped_children`) from the
   prose validator (set_prose / add_prose_page / edit_table — a legacy mangled
   table heals visibly on its first structural touch).
+- prose losses: HTML the editor has no equivalent for, reported by
+  `set_prose`, `insert_block` and `add_prose_page`. `unwrapped_element` (an
+  element such as `<kbd>` was replaced by its text, losing its formatting or
+  meaning), `removed_element` (an element that keeps no content, such as an
+  empty unknown element, `<script>` or `<style>`, was removed) and
+  `stripped_atom_text` (text written inside a field, citation, file or math
+  atom, which keeps its value in an attribute). `nodeType` names the element or
+  atom, `count` says how many times it happened, and `path` is the top-level
+  block of the first one.
 
 `add_shapes` tags each fix with the offending `shape` index. Read the array,
 correct the source, and re-send — nothing is silently lost. (Prefer authoring
@@ -300,8 +309,12 @@ current.
   are mirrored read-only; writes target relay documents only, and a write to a
   local id is refused with a clear message.
 - **Prose is HTML.** Markdown in is rendered (GFM tables / strikethrough /
-  task-lists on); HTML pass-through is re-parsed by the editor against its
-  schema on load, which drops anything unmodelled.
+  task-lists on). HTML is parsed with the editor's own rules: its synonyms
+  (`<b>`, `<i>`, `<del>`, `<strike>`), CSS styles on any element (as in a Google
+  Docs paste) and GFM checkbox task lists are accepted; anything unmodelled
+  degrades to its text and is reported in `fixes`. A shared fixture
+  (`relay/tests/prose-fixtures/mark-synonyms.json`) is run through both the
+  editor's schema and the relay's parser, so the two cannot drift.
 - **Prose write limits.** A single prose write's content is capped at **~1 MiB**
   (`set_prose`/`add_prose_page`/`insert_section`; over it → `ERR_PROSE_TOO_LARGE`,
   advertised as `maxLength`). Nesting deeper than **64** levels is truncated

@@ -55,9 +55,16 @@ pub use prose_validate::ProseFix;
 /// (empty when clean). The build/seed paths sanitize independently, so this is
 /// purely to surface "here's what was malformed and how it was healed" back to
 /// the MCP author.
+///
+/// JP-514: also reports what the HTML parse itself could not represent
+/// (unwrapped or removed elements, atom text), which the structural sanitizer
+/// cannot see because it only ever receives the parsed nodes.
 pub fn validate_prose_html(html: &str) -> Vec<ProseFix> {
-    let (_blocks, fixes) = prose_validate::sanitize_blocks(prose_parse::html_to_blocks(html));
-    fixes
+    let (blocks, losses) = prose_parse::html_to_blocks_with_losses(html);
+    let (_blocks, fixes) = prose_validate::sanitize_blocks(blocks);
+    let mut all = prose_validate::loss_fixes(&losses);
+    all.extend(fixes);
+    all
 }
 
 /// Error code for a whole-page prose write refused because the page changed
@@ -2742,6 +2749,32 @@ mod tests {
             !fixes.is_empty(),
             "a ragged table must be reported as a fix so the author sees the heal"
         );
+    }
+
+    #[test]
+    fn jp514_validate_reports_parse_losses_aggregated_with_counts() {
+        // What the parse could not represent reaches the writer as `fixes`,
+        // one entry per element with a count, located like a structural fix.
+        let fixes = super::validate_prose_html(concat!(
+            "<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd></p>",
+            "<p><span data-field data-name=\"owner\">typed</span></p>",
+        ));
+        let json = serde_json::to_value(&fixes).unwrap();
+        assert_eq!(json.as_array().map(Vec::len), Some(2), "{json}");
+        assert_eq!(json[0]["action"], "unwrapped_element");
+        assert_eq!(json[0]["nodeType"], "<kbd>");
+        assert_eq!(json[0]["count"], 2);
+        assert_eq!(json[0]["path"], "0/paragraph");
+        assert_eq!(json[1]["action"], "stripped_atom_text");
+        assert_eq!(json[1]["nodeType"], "fieldRef");
+        assert_eq!(json[1]["count"], 1);
+        assert_eq!(json[1]["path"], "1/paragraph");
+
+        // A structural fix is not aggregated, so it carries no count.
+        let structural =
+            super::validate_prose_html("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>");
+        let json = serde_json::to_value(&structural).unwrap();
+        assert!(json[0].get("count").is_none(), "{json}");
     }
 
     #[test]

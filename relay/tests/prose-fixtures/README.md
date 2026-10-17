@@ -2,8 +2,8 @@
 
 Cross-language golden cases for the **prose document model**. Loaded by both the
 Rust relay suite (`relay/src/sync/prose_fixture_tests.rs`) and the TypeScript
-editor suite (`src/ui/proseFixtures.test.ts`) so the two prose implementations
-cannot drift.
+editor suite (`src/ui/proseFixtures.test.ts`, and `src/ui/proseMarkSynonyms.test.ts`
+for `mark-synonyms.json`) so the two prose implementations cannot drift.
 
 Same idea as `../blob-ref-fixtures/` and `../protocol-fixtures/`.
 
@@ -108,6 +108,45 @@ Two tests keep the corpus from silently going hollow:
 - every declared atom must appear in at least one case's parsed tree, so the
   childless assertion cannot pass by never visiting the node.
 
+## `mark-synonyms.json`: the editor's mark rules (JP-514)
+
+`cases.json` pins the relay's canonical form. It cannot catch the other half of
+the contract: the **many** forms the editor accepts for one mark. Tiptap's Bold
+parses `<strong>`, `<b>` (unless its own style says `font-weight: normal`) and
+a `font-weight` style; Italic, Strike, Underline, Subscript and Superscript have
+their own synonyms and styles. The relay once accepted only the canonical tags,
+so an agent's `<b>`, `<del>`, styled span or nested `<i>a <b>X</b></i>` lost its
+formatting with `ok: true`, and the JP-432 contract test, which compares mark
+*names*, stayed green.
+
+Each case is an HTML snippet and the marks the text `X` must carry
+(`marks`), plus optionally the number of top-level blocks both sides must
+produce (`blocks`, for structural cases such as the Google Docs paste wrapper).
+
+- `src/ui/proseMarkSynonyms.test.ts` parses every case with the **real editor
+  schema** and requires the declared marks, so every expectation is the editor's
+  own behaviour, not a guess. It also requires every `parseDOM` rule (tag or
+  style) of every editor mark to be exercised by some case, so a new Tiptap rule
+  fails until a case covers it.
+- `relay/src/sync/prose_fixture_tests.rs` requires the relay parser to produce
+  the same marks and block counts, and every tag the relay maps to a mark
+  (canonical or synonym) to be covered by a case.
+
+Two details the cases pin, because they are easy to get wrong:
+
+- **ProseMirror order.** An element's style acts on the marks it inherits
+  first; then its tag adds its own mark. So `font-weight: 400` clears an outer
+  bold, while `<b style="font-weight: 400">` is still bold.
+- **Marks carry into blocks.** A mark tag or a styled element that wraps block
+  content (`<strong><p>a</p><p>b</p></strong>`, `<td style="font-weight: 700">`)
+  formats the inline content inside it, and its blocks stay blocks. Google Docs
+  wraps every paste in `<b style="font-weight:normal">`, which is neither bold
+  nor one paragraph.
+
+One normalization: the editor's TextStyle mark matches any `<span>` with a
+`style`, so it adds an attribute-less `textStyle` that the relay deliberately
+keeps out of the CRDT. That mark carries no formatting and is ignored.
+
 ## Adding a case
 
 Add it here, then run both suites — a case that only one side satisfies is the
@@ -115,7 +154,7 @@ drift this file exists to surface.
 
 ```bash
 cargo test --manifest-path relay/Cargo.toml --locked --lib sync::prose_fixture_tests
-bun run test --run src/ui/proseFixtures.test.ts
+bun run test --run src/ui/proseFixtures.test.ts src/ui/proseMarkSynonyms.test.ts
 ```
 
 **Verify the new case can fail.** Break the behaviour it covers and watch it go

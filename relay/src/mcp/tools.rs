@@ -663,7 +663,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
             name: "docushark_set_prose",
             hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. A whole-page write returns the page's new 'revision'; pass expectedRevision from your last read whenever the document may be open in an editor. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". The editor's other forms are accepted too (<b>, <i>, <del>, <strike>, styled spans as in a Google Docs paste, Markdown and GFM checkbox task lists); HTML the editor has no equivalent for degrades to its text and is reported in 'fixes'. For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. A whole-page write returns the page's new 'revision'; pass expectedRevision from your last read whenever the document may be open in an editor. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -11143,6 +11143,96 @@ mod tests {
             assert!(projected * 2 < compact, "projection {projected} B is not under half of {compact} B");
             assert!(projected <= 25_000, "projected read {projected} B over the 25 KB inline budget");
             assert!(summary < 300, "summary {summary} B");
+        }
+    }
+
+    /// JP-514 acceptance: every construct the 2026-09-16 audit lost now
+    /// survives a `set_prose` → `get_prose` round trip, on the cold (JSON) and
+    /// the live (Y.Doc) write path, in both formats; what the editor has no
+    /// equivalent for is reported in `fixes`.
+    mod audited_constructs {
+        use super::*;
+
+        fn call(f: &Fixture, tool: &str, args: Value) -> Value {
+            dispatch(&f.ctx(true), tool, &args)
+                .unwrap_or_else(|e| panic!("{tool} failed: {e}"))
+                .result
+        }
+
+        /// Write `content` as the whole page, then read it back.
+        fn round_trip(f: &Fixture, page: &str, content: &str, format: &str) -> (String, Value) {
+            let wrote = call(
+                f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "content": content, "format": format}),
+            );
+            let read = call(f, "docushark_get_prose", json!({"docId": "doc1", "pageId": page}));
+            (read["page"]["content"].as_str().unwrap().to_string(), wrote["fixes"].clone())
+        }
+
+        #[test]
+        fn every_audited_construct_round_trips_on_both_write_paths() {
+            let html_cases: &[(&str, &[&str])] = &[
+                ("<p><b>X</b></p>", &["<strong>X</strong>"]),
+                ("<p><i>X</i></p>", &["<em>X</em>"]),
+                ("<p><del>X</del></p>", &["<s>X</s>"]),
+                ("<p><strike>X</strike></p>", &["<s>X</s>"]),
+                (r#"<p><span style="font-weight: bold">X</span></p>"#, &["<strong>X</strong>"]),
+                (r#"<p><span style="font-style: italic">X</span></p>"#, &["<em>X</em>"]),
+                (r#"<p><span style="text-decoration: underline">X</span></p>"#, &["<u>X</u>"]),
+                (r#"<p><span style="text-decoration: line-through">X</span></p>"#, &["<s>X</s>"]),
+                (
+                    r#"<ul><li><input type="checkbox" checked> done</li></ul>"#,
+                    &[r#"data-type="taskItem" data-checked="true""#, "done"],
+                ),
+                ("<p><i>a <b>X</b></i></p>", &["<em>a </em>", "<strong>", "<em>X</em>"]),
+            ];
+            let markdown_cases: &[(&str, &[&str])] = &[
+                ("~~X~~", &["<s>X</s>"]),
+                ("- [x] done\n- [ ] next", &[r#"data-checked="true""#, r#"data-checked="false""#]),
+                ("- [x] loose\n\n- [ ] list", &[r#"data-checked="true""#, r#"data-checked="false""#]),
+            ];
+            for resident in [false, true] {
+                let dir = TempDir::new().unwrap();
+                let f = seed(&dir.path().to_path_buf());
+                let added = call(
+                    &f,
+                    "docushark_add_prose_page",
+                    json!({"docId": "doc1", "content": "<p>seed</p>", "format": "html"}),
+                );
+                let page = added["id"].as_str().unwrap().to_string();
+                if resident {
+                    f.make_resident("doc1");
+                }
+                for (format, cases) in [("html", html_cases), ("markdown", markdown_cases)] {
+                    for (content, wants) in cases {
+                        let (stored, fixes) = round_trip(&f, &page, content, format);
+                        for want in *wants {
+                            assert!(
+                                stored.contains(want),
+                                "{format} {content:?} (resident {resident}): want {want:?} in {stored}"
+                            );
+                        }
+                        assert!(fixes.is_null(), "{content:?} lost nothing, yet fixes = {fixes}");
+                    }
+                }
+
+                // No editor equivalent: degrades safely, and is reported.
+                let (stored, fixes) =
+                    round_trip(&f, &page, "<p>a<kbd>Ctrl</kbd>b<x-empty></x-empty></p>", "html");
+                assert!(stored.contains("aCtrlb"), "{stored}");
+                let reported: Vec<(&str, &str)> = fixes
+                    .as_array()
+                    .unwrap_or_else(|| panic!("no fixes reported: {fixes}"))
+                    .iter()
+                    .map(|f| (f["action"].as_str().unwrap(), f["nodeType"].as_str().unwrap()))
+                    .collect();
+                assert_eq!(
+                    reported,
+                    vec![("unwrapped_element", "<kbd>"), ("removed_element", "<x-empty>")],
+                    "resident {resident}"
+                );
+            }
         }
     }
 }
