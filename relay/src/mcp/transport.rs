@@ -38,7 +38,7 @@ use crate::server::{S3Backend, WorkspaceWriteLimiter};
 use super::config::McpFeatureConfigStore;
 use super::local_mirror::LocalDocumentMirror;
 use super::token::TokenStore;
-use super::tools::{descriptors, dispatch, ToolContext, ToolOutcome};
+use super::tools::{descriptors, dispatch, tool_hints, ToolContext, ToolOutcome};
 
 /// MCP protocol version this server implements. Update in lockstep with
 /// the spec the user's Claude Code client supports.
@@ -384,6 +384,20 @@ async fn authenticate(
     None
 }
 
+/// Server-level guidance returned by `initialize`. Clients show it to the model
+/// before any tool is chosen, so it carries only what agents get wrong without
+/// it; the full content contract stays in `docushark_get_skills` (JP-511).
+const SERVER_INSTRUCTIONS: &str = "DocuShark documents have canvas pages (diagrams) and prose pages (rich text). \
+Call docushark_get_skills before your first write: it returns the content contract and step-by-step recipes. \
+Canvas: a shape's x and y are its centre, not its top-left corner; set style.labelColor to \"auto\" so labels stay readable on any fill; \
+give shapes your own ids when a call might be retried, because an existing id is refused rather than duplicated. \
+docushark_generate_diagram is not idempotent: running it again adds a second copy, so read the page before retrying. \
+For a large canvas page, call docushark_get_page with summary:true first, then filter it (ids, kinds, text, region, fields) rather than reading every shape. \
+Prose: when a document may be open in an editor, change one block at a time with set_prose's id or anchor, or with insert_block, \
+rather than rewriting the whole page. When you do rewrite a whole page, or use insert_section, restructure_outline or edit_table, \
+pass the revision from your last read as expectedRevision; ERR_STALE_WRITE means the page changed, so re-read before retrying. \
+Name headings by their id from docushark_get_outline, not their index.";
+
 fn initialize_result() -> Value {
     json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -393,7 +407,8 @@ fn initialize_result() -> Value {
         "serverInfo": {
             "name": "docushark",
             "version": crate::build_info::VERSION
-        }
+        },
+        "instructions": SERVER_INSTRUCTIONS
     })
 }
 
@@ -405,32 +420,20 @@ fn tools_list_result() -> Value {
                 "name": d.name,
                 "description": d.description,
                 "inputSchema": d.input_schema,
+                "annotations": d.hints.annotations(),
             })
         })
         .collect();
     json!({"tools": tools})
 }
 
-/// Tool names that mutate the relay-document store. Kept in lockstep
-/// with `tools::dispatch` — reads pass through the rate limiter, only
-/// writes count against the per-workspace bucket. Phase 21.3.
+/// Whether a call draws from the per-workspace write bucket (shared with WS
+/// sync frames, Phase 21.3) instead of the MCP read bucket (JP-249). Derived
+/// from the tool's declared hints (JP-511): every tool that is not read-only is
+/// a write, and a name no descriptor carries is metered as a write, so a
+/// missing classification can never make a call cheaper.
 fn is_mcp_write_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "docushark_add_shape"
-            | "docushark_add_shapes"
-            | "docushark_add_file"
-            | "docushark_connect"
-            | "docushark_update_shape"
-            | "docushark_delete_shape"
-            | "docushark_delete_prose_page"
-            | "docushark_reorder_shapes"
-            | "docushark_reorder_prose_pages"
-            | "docushark_add_reference"
-            | "docushark_rename_document"
-            | "docushark_delete_document"
-            | "docushark_edit_table"
-    )
+    !tool_hints(name).is_some_and(|h| h.read_only)
 }
 
 /// Result of the JP-89 async DOI preflight for citation tools.
@@ -842,7 +845,10 @@ async fn handle_tools_call(
                 // hard-coded `single_tenant()` — correct on a public pod.
                 (state.on_doc_changed)(workspace, doc_id);
             }
-            let text = serde_json::to_string_pretty(&outcome.result).unwrap_or_else(|_| "{}".into());
+            // JP-512: compact. The text block is what most clients show the model,
+            // and pretty-printing nearly doubled its size on large reads; the
+            // same value is also returned as `structuredContent`.
+            let text = serde_json::to_string(&outcome.result).unwrap_or_else(|_| "{}".into());
             Json(rpc_result(
                 id,
                 json!({
@@ -1401,5 +1407,72 @@ mod tests {
         let body = body_json(resp).await;
         assert_eq!(body["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
         assert_eq!(body["result"]["serverInfo"]["name"], "docushark");
+        // JP-511: agents are pointed at the content contract before any tool call.
+        let instructions = body["result"]["instructions"].as_str().unwrap_or_default();
+        assert!(
+            instructions.contains("docushark_get_skills"),
+            "initialize must carry instructions naming get_skills; got {instructions:?}"
+        );
+    }
+
+    /// JP-511: before the hints existed, a hand-kept list metered 13 tools as
+    /// writes and these 17 fell through to the read bucket.
+    #[test]
+    fn every_tool_that_changes_state_is_metered_as_a_write() {
+        for name in [
+            "docushark_set_prose",
+            "docushark_add_prose_page",
+            "docushark_insert_block",
+            "docushark_delete_block",
+            "docushark_move_block",
+            "docushark_insert_section",
+            "docushark_restructure_outline",
+            "docushark_generate_diagram",
+            "docushark_create_document",
+            "docushark_set_fields",
+            "docushark_update_reference",
+            "docushark_delete_reference",
+            "docushark_add_canvas_page",
+            "docushark_rename_canvas_page",
+            "docushark_reorder_canvas_page",
+            "docushark_delete_canvas_page",
+            "docushark_rename_prose_page",
+        ] {
+            assert!(is_mcp_write_tool(name), "{name} must draw from the write bucket");
+        }
+        assert!(!is_mcp_write_tool("docushark_get_page"));
+        assert!(
+            is_mcp_write_tool("docushark_not_a_tool"),
+            "an unknown name must never be metered as a cheaper read"
+        );
+    }
+
+    #[test]
+    fn tools_list_annotations_agree_with_metering() {
+        let list = tools_list_result();
+        let tools = list["tools"].as_array().expect("tools array");
+        assert!(!tools.is_empty());
+        for tool in tools {
+            let name = tool["name"].as_str().expect("tool name");
+            let read_only = tool["annotations"]["readOnlyHint"]
+                .as_bool()
+                .unwrap_or_else(|| panic!("{name} carries no readOnlyHint"));
+            assert_eq!(read_only, !is_mcp_write_tool(name), "{name}");
+        }
+    }
+
+    /// JP-512: the text block is compact JSON carrying exactly the structured
+    /// result (pretty-printing nearly doubled large reads).
+    #[tokio::test]
+    async fn tool_result_text_is_compact_and_equals_structured_content() {
+        let dir = TempDir::new().unwrap();
+        let (state, token) = make_state(&dir);
+        seed_canvas_doc(&state, "cdoc", "p1");
+        let app = router(state);
+        let body = call_tool(app, &token, "docushark_get_document", json!({"docId": "cdoc"})).await;
+        let text = body["result"]["content"][0]["text"].as_str().expect("a text block");
+        assert!(!text.contains('\n'), "text must be compact: {text}");
+        let parsed: Value = serde_json::from_str(text).expect("the text is JSON");
+        assert_eq!(parsed, body["result"]["structuredContent"]);
     }
 }

@@ -1,0 +1,284 @@
+{
+  "why": "Every way the editor's Tiptap mark rules accept a mark — canonical tags, synonyms (<b>, <i>, <del>, <strike>) and CSS styles — with the marks the text X must carry. src/ui/proseMarkSynonyms.test.ts runs each case through the real editor schema and also requires every editor parse rule to be exercised; relay/src/sync/prose_fixture_tests.rs requires the relay parser to produce the same marks. A synonym on one side only is the drift this file catches (JP-514). A case may also declare `blocks`, the number of top-level blocks both sides must produce.",
+  "cases": [
+    {
+      "name": "strong",
+      "html": "<p><strong>X</strong></p>",
+      "marks": [
+        "bold"
+      ]
+    },
+    {
+      "name": "b",
+      "html": "<p><b>X</b></p>",
+      "marks": [
+        "bold"
+      ],
+      "why": "A synonym the relay used to unwrap: the agent's bold vanished with ok:true (JP-514)."
+    },
+    {
+      "name": "b_with_font_weight_normal_is_not_bold",
+      "html": "<p><b style=\"font-weight: normal\">X</b></p>",
+      "marks": [],
+      "why": "Google Docs wraps every paste in <b style=\"font-weight:normal\">; treating it as bold would make whole pastes bold."
+    },
+    {
+      "name": "b_with_font_weight_400_is_still_bold",
+      "html": "<p><b style=\"font-weight: 400\">X</b></p>",
+      "marks": [
+        "bold"
+      ],
+      "why": "ProseMirror applies an element's style to the inherited marks before the tag's own mark, so 400 clears nothing here."
+    },
+    {
+      "name": "span_font_weight_bold",
+      "html": "<p><span style=\"font-weight: bold\">X</span></p>",
+      "marks": [
+        "bold"
+      ]
+    },
+    {
+      "name": "span_font_weight_600",
+      "html": "<p><span style=\"font-weight: 600\">X</span></p>",
+      "marks": [
+        "bold"
+      ]
+    },
+    {
+      "name": "span_font_weight_300_is_not_bold",
+      "html": "<p><span style=\"font-weight: 300\">X</span></p>",
+      "marks": []
+    },
+    {
+      "name": "font_weight_400_clears_an_outer_bold",
+      "html": "<p><strong><span style=\"font-weight: 400\">X</span></strong></p>",
+      "marks": []
+    },
+    {
+      "name": "em",
+      "html": "<p><em>X</em></p>",
+      "marks": [
+        "italic"
+      ]
+    },
+    {
+      "name": "i",
+      "html": "<p><i>X</i></p>",
+      "marks": [
+        "italic"
+      ]
+    },
+    {
+      "name": "i_with_font_style_normal_is_not_italic",
+      "html": "<p><i style=\"font-style: normal\">X</i></p>",
+      "marks": []
+    },
+    {
+      "name": "span_font_style_italic",
+      "html": "<p><span style=\"font-style: italic\">X</span></p>",
+      "marks": [
+        "italic"
+      ]
+    },
+    {
+      "name": "font_style_normal_clears_an_outer_italic",
+      "html": "<p><em><span style=\"font-style: normal\">X</span></em></p>",
+      "marks": []
+    },
+    {
+      "name": "s",
+      "html": "<p><s>X</s></p>",
+      "marks": [
+        "strike"
+      ]
+    },
+    {
+      "name": "del",
+      "html": "<p><del>X</del></p>",
+      "marks": [
+        "strike"
+      ],
+      "why": "pulldown-cmark renders Markdown ~~strike~~ as <del>."
+    },
+    {
+      "name": "strike",
+      "html": "<p><strike>X</strike></p>",
+      "marks": [
+        "strike"
+      ]
+    },
+    {
+      "name": "span_line_through",
+      "html": "<p><span style=\"text-decoration: line-through\">X</span></p>",
+      "marks": [
+        "strike"
+      ]
+    },
+    {
+      "name": "u",
+      "html": "<p><u>X</u></p>",
+      "marks": [
+        "underline"
+      ]
+    },
+    {
+      "name": "span_underline",
+      "html": "<p><span style=\"text-decoration: underline\">X</span></p>",
+      "marks": [
+        "underline"
+      ]
+    },
+    {
+      "name": "span_underline_and_line_through",
+      "html": "<p><span style=\"text-decoration: underline line-through\">X</span></p>",
+      "marks": [
+        "strike",
+        "underline"
+      ]
+    },
+    {
+      "name": "sub",
+      "html": "<p><sub>X</sub></p>",
+      "marks": [
+        "subscript"
+      ]
+    },
+    {
+      "name": "span_vertical_align_sub",
+      "html": "<p><span style=\"vertical-align: sub\">X</span></p>",
+      "marks": [
+        "subscript"
+      ]
+    },
+    {
+      "name": "sup",
+      "html": "<p><sup>X</sup></p>",
+      "marks": [
+        "superscript"
+      ]
+    },
+    {
+      "name": "span_vertical_align_super",
+      "html": "<p><span style=\"vertical-align: super\">X</span></p>",
+      "marks": [
+        "superscript"
+      ]
+    },
+    {
+      "name": "code",
+      "html": "<p><code>X</code></p>",
+      "marks": [
+        "code"
+      ]
+    },
+    {
+      "name": "mark",
+      "html": "<p><mark>X</mark></p>",
+      "marks": [
+        "highlight"
+      ]
+    },
+    {
+      "name": "a",
+      "html": "<p><a href=\"https://example.com\">X</a></p>",
+      "marks": [
+        "link"
+      ]
+    },
+    {
+      "name": "span_color",
+      "html": "<p><span style=\"color: #ff0000\">X</span></p>",
+      "marks": [
+        "textStyle"
+      ]
+    },
+    {
+      "name": "style_on_a_mark_tag_adds_its_marks",
+      "html": "<p><strong style=\"font-style: italic\">X</strong></p>",
+      "marks": [
+        "bold",
+        "italic"
+      ]
+    },
+    {
+      "name": "nested_i_and_b",
+      "html": "<p><i>a <b>X</b></i></p>",
+      "marks": [
+        "bold",
+        "italic"
+      ],
+      "why": "Both marks were lost before JP-514."
+    },
+    {
+      "name": "google_docs_paste_wrapper",
+      "html": "<b style=\"font-weight:normal;\" id=\"docs-internal-guid-1\"><p><span style=\"font-weight:700\">X</span></p><p>y</p></b>",
+      "marks": [
+        "bold"
+      ],
+      "why": "A real Google Docs clipboard shape: the wrapper is not bold, the inner span is.",
+      "blocks": 2
+    },
+    {
+      "name": "google_docs_paste_wrapper_plain_text",
+      "html": "<b style=\"font-weight:normal;\" id=\"docs-internal-guid-2\"><p><span style=\"font-weight:400\">X</span></p></b>",
+      "marks": [],
+      "why": "The wrapper must not make a plain Google Docs paste bold.",
+      "blocks": 1
+    },
+    {
+      "name": "b_wrapping_a_paragraph",
+      "html": "<b><p>X</p></b>",
+      "marks": [
+        "bold"
+      ],
+      "why": "ProseMirror carries a mark tag's mark into the blocks inside it."
+    },
+    {
+      "name": "strong_wrapping_two_paragraphs",
+      "html": "<strong><p>a</p><p>X</p></strong>",
+      "marks": [
+        "bold"
+      ],
+      "why": "Before JP-514 the two paragraphs collapsed into one; the blocks and the bold must both survive.",
+      "blocks": 2
+    },
+    {
+      "name": "link_wrapping_a_paragraph",
+      "html": "<a href=\"https://example.com\"><p>X</p></a>",
+      "marks": [
+        "link"
+      ]
+    },
+    {
+      "name": "paragraph_font_weight_bold",
+      "html": "<p style=\"font-weight: bold\">X</p>",
+      "marks": [
+        "bold"
+      ],
+      "why": "Style rules apply on every element, block elements included."
+    },
+    {
+      "name": "table_cell_font_weight_700",
+      "html": "<table><tr><td style=\"font-weight: 700\">X</td></tr></table>",
+      "marks": [
+        "bold"
+      ],
+      "why": "Spreadsheet and Word tables put the weight on the cell."
+    },
+    {
+      "name": "code_excludes_an_outer_mark",
+      "html": "<p><strong><code>X</code></strong></p>",
+      "marks": [
+        "code"
+      ],
+      "why": "Tiptap's Code mark excludes every other mark, so inline code is never also bold."
+    },
+    {
+      "name": "code_excludes_an_inner_link",
+      "html": "<p><code><a href=\"https://example.com\">X</a></code></p>",
+      "marks": [
+        "code"
+      ]
+    }
+  ]
+}

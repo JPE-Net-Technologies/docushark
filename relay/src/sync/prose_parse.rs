@@ -42,7 +42,341 @@ pub struct PmMark {
 pub fn html_to_blocks(html: &str) -> Vec<PmNode> {
     let tokens = tokenize(html);
     let tree = build_tree(&tokens);
-    map_blocks(&lift_inline_images(tree))
+    map_blocks_at(&lift_inline_images(tree), &[], true)
+}
+
+// ---- JP-514: what the parse could not represent -----------------------------
+//
+// Unknown elements degrade to their text, by design. JP-514 makes that loss
+// visible: `validate_prose_html` parses with a collector active and reports each
+// loss back to the MCP writer as a `fixes` entry. The live write paths parse
+// with no collector, so they record nothing and allocate nothing extra.
+
+/// How a piece of input HTML was lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LossKind {
+    /// An element with no editor equivalent, replaced by its contents.
+    Unwrapped,
+    /// An element with no editor equivalent and no text, removed.
+    Removed,
+    /// Text inside an atom that the atom does not keep.
+    StrippedAtomText,
+}
+
+/// One loss: its kind, the element (`<kbd>`) or atom (`fieldRef`), and where:
+/// the top-level block it happened in, in the same `index/type` form the
+/// structural fixes use (`3/paragraph`), or empty when no block came of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseLoss {
+    pub kind: LossKind,
+    pub what: String,
+    pub path: String,
+}
+
+thread_local! {
+    static LOSSES: std::cell::RefCell<Option<Vec<ParseLoss>>> = const { std::cell::RefCell::new(None) };
+    /// The index of the top-level block being built, while collecting.
+    static LOSS_BLOCK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn collecting_losses() -> bool {
+    LOSSES.with(|cell| cell.borrow().is_some())
+}
+
+fn note_loss(kind: LossKind, what: String) {
+    LOSSES.with(|cell| {
+        if let Some(losses) = cell.borrow_mut().as_mut() {
+            // The block index for now; `html_to_blocks_with_losses` turns it
+            // into a path once the blocks exist.
+            let path = LOSS_BLOCK.with(std::cell::Cell::get).to_string();
+            losses.push(ParseLoss { kind, what, path });
+        }
+    });
+}
+
+/// Record an unknown element that was unwrapped, or removed when it held no
+/// text.
+fn note_element_loss(tag: &str, children: &[HtmlNode]) {
+    if collecting_losses() {
+        let kind = if text_content(children).trim().is_empty() {
+            LossKind::Removed
+        } else {
+            LossKind::Unwrapped
+        };
+        note_loss(kind, format!("<{tag}>"));
+    }
+}
+
+/// Record an atom whose element held text that its carrying attribute does not
+/// (the atom keeps the attribute; the text is dropped).
+fn note_atom_text(atom: &str, attrs: &[(String, String)], carrier: &str, children: &[HtmlNode]) {
+    if collecting_losses() {
+        let text = text_content(children);
+        let text = text.trim();
+        if !text.is_empty() && get_attr(attrs, carrier).map(str::trim) != Some(text) {
+            note_loss(LossKind::StrippedAtomText, atom.to_string());
+        }
+    }
+}
+
+/// [`html_to_blocks`], also returning what the parse could not represent, in
+/// document order (JP-514).
+pub fn html_to_blocks_with_losses(html: &str) -> (Vec<PmNode>, Vec<ParseLoss>) {
+    /// Clears the collector even if the parse panics, so a later write path on
+    /// this thread never records into a stale one.
+    struct Collecting;
+    impl Drop for Collecting {
+        fn drop(&mut self) {
+            LOSSES.with(|cell| *cell.borrow_mut() = None);
+        }
+    }
+    LOSSES.with(|cell| *cell.borrow_mut() = Some(Vec::new()));
+    LOSS_BLOCK.with(|cell| cell.set(0));
+    let _collecting = Collecting;
+    let blocks = html_to_blocks(html);
+    let mut losses = LOSSES.with(|cell| cell.borrow_mut().take()).unwrap_or_default();
+    for loss in &mut losses {
+        let block = loss.path.parse::<usize>().ok().and_then(|i| blocks.get(i).map(|b| (i, b)));
+        loss.path = block.map(|(i, b)| format!("{i}/{}", b.node_type)).unwrap_or_default();
+    }
+    (blocks, losses)
+}
+
+// ---- JP-514: the editor's mark parse rules -----------------------------------
+//
+// Mirrors `@tiptap/extension-{bold,italic,strike,underline,subscript,superscript}`
+// as ProseMirror applies them: an element's STYLE rules act on the marks it
+// inherits first, then its tag adds its own mark. So `font-weight: 400` clears
+// an outer bold, while `<b style="font-weight: 400">` is still bold. Pinned
+// against the real editor by `relay/tests/prose-fixtures/mark-synonyms.json`.
+
+/// The last value of CSS property `prop` in an element's `style` attribute,
+/// lowercased and without `!important`.
+fn style_value(attrs: &[(String, String)], prop: &str) -> Option<String> {
+    let style = get_attr(attrs, "style")?;
+    style
+        .split(';')
+        .filter_map(|decl| {
+            let (key, value) = decl.split_once(':')?;
+            if !key.trim().eq_ignore_ascii_case(prop) {
+                return None;
+            }
+            let value = value.trim().to_ascii_lowercase();
+            let value = value.trim_end_matches("!important").trim().to_string();
+            (!value.is_empty()).then_some(value)
+        })
+        .last()
+}
+
+/// Tiptap Bold's weight rule: `bold`, `bolder`, or a number from 500 up.
+fn is_bold_weight(value: &str) -> bool {
+    value == "bold"
+        || value == "bolder"
+        || (value.len() >= 3
+            && matches!(value.as_bytes()[0], b'5'..=b'9')
+            && value.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Add `mark` to `marks`, replacing a mark of the same name (ProseMirror marks
+/// of one type exclude each other).
+fn set_mark(marks: &mut Vec<PmMark>, mark: PmMark) {
+    marks.retain(|m| m.name != mark.name);
+    marks.push(mark);
+}
+
+fn set_bare_mark(marks: &mut Vec<PmMark>, name: &str) {
+    set_mark(marks, PmMark { name: name.to_string(), href: None, attrs: vec![] });
+}
+
+/// The marks an element's children inherit once its style is applied.
+fn apply_style_marks(marks: &[PmMark], attrs: &[(String, String)]) -> Vec<PmMark> {
+    let mut out = marks.to_vec();
+    if get_attr(attrs, "style").is_none() {
+        return out;
+    }
+    if let Some(weight) = style_value(attrs, "font-weight") {
+        if weight == "400" {
+            out.retain(|m| m.name != "bold");
+        } else if is_bold_weight(&weight) {
+            set_bare_mark(&mut out, "bold");
+        }
+    }
+    match style_value(attrs, "font-style").as_deref() {
+        Some("normal") => out.retain(|m| m.name != "italic"),
+        Some("italic") => set_bare_mark(&mut out, "italic"),
+        _ => {}
+    }
+    if let Some(decoration) = style_value(attrs, "text-decoration") {
+        if decoration.contains("line-through") {
+            set_bare_mark(&mut out, "strike");
+        }
+        if decoration.contains("underline") {
+            set_bare_mark(&mut out, "underline");
+        }
+    }
+    match style_value(attrs, "vertical-align").as_deref() {
+        Some("sub") => set_bare_mark(&mut out, "subscript"),
+        Some("super") => set_bare_mark(&mut out, "superscript"),
+        _ => {}
+    }
+    out
+}
+
+/// Whether a mark tag applies its mark. Tiptap refuses `<b>` whose own style
+/// says `font-weight: normal` and `<i>` with `font-style: normal` (Google Docs
+/// wraps every paste in `<b style="font-weight:normal">`).
+fn mark_applies(tag: &str, attrs: &[(String, String)]) -> bool {
+    match tag {
+        "b" => style_value(attrs, "font-weight").as_deref() != Some("normal"),
+        "i" => style_value(attrs, "font-style").as_deref() != Some("normal"),
+        _ => true,
+    }
+}
+
+/// The mark an element's tag applies to its content: a link for `<a>`, a mark
+/// tag's own mark unless its style refuses it ([`mark_applies`]), and a
+/// `textStyle` for a `<span>` only when it carries a recognized attribute.
+fn tag_mark(tag: &str, attrs: &[(String, String)]) -> Option<PmMark> {
+    if tag == "a" {
+        let href = get_attr(attrs, "href").map(str::to_string);
+        return Some(PmMark { name: "link".to_string(), href, attrs: vec![] });
+    }
+    let mark = prose_schema::mark_pm(tag)?;
+    if !mark_applies(tag, attrs) {
+        return None;
+    }
+    let mark_attrs = read_mark_attrs(mark, attrs);
+    // A `textStyle` `<span>` with no recognized attr is a plain span: no mark,
+    // which keeps the CRDT free of empty textStyle marks.
+    if mark == "textStyle" && mark_attrs.is_empty() {
+        return None;
+    }
+    Some(PmMark { name: mark.to_string(), href: None, attrs: mark_attrs })
+}
+
+/// The marks an element's content inherits, in ProseMirror's order: the
+/// element's style acts on the inherited `marks` first, then its tag adds its
+/// own mark. Also says whether the element contributed anything, so an
+/// element that changed nothing can be reported as lost.
+fn element_marks(tag: &str, attrs: &[(String, String)], marks: &[PmMark]) -> (Vec<PmMark>, bool) {
+    let mut inner = apply_style_marks(marks, attrs);
+    let styled = inner.as_slice() != marks;
+    match tag_mark(tag, attrs) {
+        Some(mark) => {
+            set_mark(&mut inner, mark);
+            (inner, true)
+        }
+        None => (inner, styled),
+    }
+}
+
+/// The marks a text run keeps. Tiptap's Code mark excludes every other mark
+/// (`excludes: '_'`), so inline code is never also bold or a link (JP-514).
+fn text_marks(marks: &[PmMark]) -> Vec<PmMark> {
+    match marks.iter().find(|m| m.name == "code") {
+        Some(code) => vec![code.clone()],
+        None => marks.to_vec(),
+    }
+}
+
+/// A `<span>` whose attributes carry nothing a writer could have meant.
+fn span_is_plain(attrs: &[(String, String)]) -> bool {
+    attrs
+        .iter()
+        .all(|(k, _)| matches!(k.as_str(), "class" | "id" | "dir" | "lang" | "title"))
+}
+
+/// Elements whose unwrapping loses nothing a writer meant, so it is not
+/// reported: pure layout containers, a plain `<span>`, and a mark tag that
+/// applies no mark.
+fn is_silent_container(tag: &str, attrs: &[(String, String)]) -> bool {
+    matches!(
+        tag,
+        "div"
+            | "section"
+            | "article"
+            | "main"
+            | "header"
+            | "footer"
+            | "aside"
+            | "nav"
+            | "body"
+            | "html"
+            | "thead"
+            | "tbody"
+            | "tfoot"
+            | "colgroup"
+            | "col"
+            | "meta"
+            | "link"
+            | "base"
+            | "wbr"
+    ) || (tag == "span" && span_is_plain(attrs))
+        || (prose_schema::mark_pm(tag).is_some() && !mark_applies(tag, attrs))
+}
+
+/// Tags that are block-level: ProseMirror's `blockTags`, plus the table
+/// structure and the block image the relay maps itself. Every other element is
+/// inline content, as in the editor. A mark tag that contains a block is a
+/// container, not inline content: wrapping it into a paragraph would collapse
+/// the blocks inside (a Google Docs paste is several paragraphs inside one
+/// `<b>`).
+fn is_block_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "p" | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "ul"
+            | "ol"
+            | "li"
+            | "table"
+            | "caption"
+            | "colgroup"
+            | "thead"
+            | "tbody"
+            | "tfoot"
+            | "tr"
+            | "td"
+            | "th"
+            | "blockquote"
+            | "pre"
+            | "hr"
+            | "img"
+            | "div"
+            | "section"
+            | "article"
+            | "header"
+            | "footer"
+            | "main"
+            | "aside"
+            | "nav"
+            | "hgroup"
+            | "figure"
+            | "figcaption"
+            | "dl"
+            | "dt"
+            | "dd"
+            | "details"
+            | "summary"
+            | "address"
+            | "canvas"
+            | "fieldset"
+            | "form"
+            | "output"
+            | "html"
+            | "body"
+    )
+}
+
+fn contains_block(nodes: &[HtmlNode]) -> bool {
+    nodes.iter().any(|n| match n {
+        HtmlNode::Element { tag, children, .. } => is_block_tag(tag) || contains_block(children),
+        HtmlNode::Text(_) => false,
+    })
 }
 
 // ---- JP-468: PM-parity image lift ------------------------------------------
@@ -200,12 +534,45 @@ enum Token {
     Text(String),
 }
 
-/// Tags that never have children / closing tags in our subset.
+/// Tags that never have children / closing tags: HTML's void elements.
 fn is_void(tag: &str) -> bool {
     // `input` is void — the checkbox chrome the editor's getHTML nests inside a
     // `<li data-type="taskItem">…<input type="checkbox">…` (JP-432). Without this
-    // the tokenizer opens it and mis-nests the rest of the item's content.
-    matches!(tag, "br" | "hr" | "img" | "input")
+    // the tokenizer opens it and mis-nests the rest of the item's content. The
+    // rest of the set (JP-514) has the same failure: `<meta charset>` leads every
+    // Google Docs clipboard payload and swallowed the whole paste, and a `<wbr>`
+    // swallowed the rest of its paragraph.
+    matches!(
+        tag,
+        "br" | "hr"
+            | "img"
+            | "input"
+            | "area"
+            | "base"
+            | "col"
+            | "embed"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// Elements whose content the editor drops entirely (ProseMirror's
+/// `ignoreTags`): style sheets, scripts and document metadata are not prose.
+/// They never break an inline run, as in the editor.
+fn is_ignored(tag: &str) -> bool {
+    matches!(tag, "head" | "title" | "script" | "style" | "noscript" | "object")
+}
+
+/// Drop an ignored element, reporting it unless it is the scaffolding every
+/// pasted page carries (`<head>`, `<title>`).
+fn note_ignored(tag: &str) {
+    if collecting_losses() && !matches!(tag, "head" | "title") {
+        note_loss(LossKind::Removed, format!("<{tag}>"));
+    }
 }
 
 fn tokenize(html: &str) -> Vec<Token> {
@@ -392,7 +759,7 @@ fn decode_attr_entities(s: &str) -> String {
 
 // ---- HTML tree ------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum HtmlNode {
     Element {
         tag: String,
@@ -462,10 +829,23 @@ fn build_tree(tokens: &[Token]) -> Vec<HtmlNode> {
 
 // ---- HTML tree → PM nodes -------------------------------------------------
 
-fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
+/// Map a sequence of HTML nodes to PM blocks. `marks` are the marks inherited
+/// from enclosing elements (JP-514): ProseMirror carries a mark tag's mark, and
+/// any element's style marks, down into the inline content of the blocks inside
+/// it, so `<strong><p>a</p><p>b</p></strong>` is two bold paragraphs.
+fn map_blocks(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmNode> {
+    map_blocks_at(nodes, marks, false)
+}
+
+/// [`map_blocks`]; `top` marks the document's own block list, whose index the
+/// loss collector records so a loss can say which block it happened in.
+fn map_blocks_at(nodes: &[HtmlNode], marks: &[PmMark], top: bool) -> Vec<PmNode> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < nodes.len() {
+        if top {
+            LOSS_BLOCK.with(|cell| cell.set(out.len()));
+        }
         // Whitespace text *between* blocks must not start an inline run (it would
         // bake a spurious whitespace paragraph). Skip it.
         if matches!(&nodes[i], HtmlNode::Text(s) if s.trim().is_empty()) {
@@ -484,7 +864,7 @@ fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
             while i < nodes.len() && is_inline_member(&nodes[i]) {
                 i += 1;
             }
-            if let Some(p) = paragraph_from_inline(&nodes[start..i]) {
+            if let Some(p) = paragraph_from_inline(&nodes[start..i], marks) {
                 out.push(p);
             }
             continue;
@@ -492,10 +872,18 @@ fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
         // A block-level element: map it, or unwrap an unknown tag's children
         // (never drop text).
         if let HtmlNode::Element { tag, attrs, children } = &nodes[i] {
-            if let Some(node) = map_block_element(tag, attrs, children) {
+            // ProseMirror order: the element's style acts on the inherited
+            // marks first, then its tag adds its own mark.
+            if let Some(node) = map_block_element(tag, attrs, children, &apply_style_marks(marks, attrs)) {
                 out.push(node);
             } else {
-                out.extend(map_blocks(children));
+                // Unwrap. A mark tag, link or styled element that holds blocks
+                // carries its formatting down into them, so it loses nothing.
+                let (inner, contributed) = element_marks(tag, attrs, marks);
+                if !contributed && !is_silent_container(tag, attrs) {
+                    note_element_loss(tag, children);
+                }
+                out.extend(map_blocks(children, &inner));
             }
         }
         i += 1;
@@ -506,9 +894,13 @@ fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
 /// Is `n` inline content that joins an inline run (wrapped into one paragraph by
 /// [`map_blocks`]), versus a block-level element that breaks the run? All text
 /// counts — interior whitespace keeps a run together, and an all-whitespace run
-/// is dropped by [`paragraph_from_inline`]. Among elements, marks, `<a>`, `<br>`,
-/// and the inline atoms (`fieldRef`/`citationInline` spans) are inline;
-/// everything else (known block, or unknown→unwrapped) breaks the run.
+/// is dropped by [`paragraph_from_inline`]. An element is inline unless it is a
+/// block tag ([`is_block_tag`]) or holds one, as in the editor: marks, `<a>`,
+/// `<br>`, the inline atoms (`fieldRef`/`citationInline` spans), and also an
+/// unknown inline element such as `<kbd>`, which [`collect_inline`] unwraps in
+/// place (JP-514; it used to break the run, so `<li>Press <kbd>Ctrl</kbd>
+/// now</li>` became three paragraphs). Ignored elements (`<script>`) join a
+/// run too and contribute nothing.
 ///
 /// This must mirror what [`collect_inline`] recognizes: an inline element that
 /// breaks the run is later treated as a block by [`map_blocks`], so `<span>`
@@ -519,17 +911,8 @@ fn map_blocks(nodes: &[HtmlNode]) -> Vec<PmNode> {
 fn is_inline_member(n: &HtmlNode) -> bool {
     match n {
         HtmlNode::Text(_) => true,
-        HtmlNode::Element { tag, attrs, .. } => {
-            prose_schema::mark_pm(tag).is_some()
-                || tag == "a"
-                || tag == "br"
-                || matches!(
-                    prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m)),
-                    Some("fieldRef")
-                        | Some("citationInline")
-                        | Some("mathInline")
-                        | Some("fileRef")
-                )
+        HtmlNode::Element { tag, children, .. } => {
+            is_ignored(tag) || (!is_block_tag(tag) && !contains_block(children))
         }
     }
 }
@@ -670,7 +1053,86 @@ fn math_block_node(attrs: &[(String, String)]) -> PmNode {
 }
 
 /// Map a known block-level HTML element to a PM node, else `None`.
-fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode]) -> Option<PmNode> {
+fn task_item(checked: bool, children: &[HtmlNode], marks: &[PmMark]) -> PmNode {
+    PmNode {
+        node_type: "taskItem".to_string(),
+        attrs: vec![("checked".to_string(), checked.to_string())],
+        children: map_blocks(children, marks).into_iter().map(PmChild::Node).collect(),
+    }
+}
+
+fn is_checkbox(node: &HtmlNode) -> Option<bool> {
+    match node {
+        HtmlNode::Element { tag, attrs, .. }
+            if tag == "input"
+                && get_attr(attrs, "type").is_some_and(|t| t.eq_ignore_ascii_case("checkbox")) =>
+        {
+            Some(has_attr(attrs, "checked"))
+        }
+        _ => None,
+    }
+}
+
+/// A task item's content without the editor's checkbox chrome
+/// (`<label><input type="checkbox"><span></span></label>`), which is not
+/// content and must not be reported as a loss.
+fn without_task_chrome(children: &[HtmlNode]) -> Vec<HtmlNode> {
+    children
+        .iter()
+        .filter(|c| {
+            !matches!(c, HtmlNode::Element { tag, .. } if tag == "label") && is_checkbox(c).is_none()
+        })
+        .cloned()
+        .collect()
+}
+
+/// A GFM task item's checked state and its content without the checkbox, or
+/// `None` unless the checkbox leads the item: directly in a tight list
+/// (`<li><input type="checkbox"> a`), or inside the item's first paragraph in
+/// a loose one (`<li><p><input type="checkbox"> a</p>`), which is how
+/// pulldown-cmark renders `- [x] a` items separated by blank lines.
+fn gfm_task_item(li: &[HtmlNode]) -> Option<(bool, Vec<HtmlNode>)> {
+    let first = li.iter().position(|n| !matches!(n, HtmlNode::Text(t) if t.trim().is_empty()))?;
+    if let Some(checked) = is_checkbox(&li[first]) {
+        let rest = li.iter().enumerate().filter(|(i, _)| *i != first).map(|(_, n)| n.clone()).collect();
+        return Some((checked, rest));
+    }
+    match &li[first] {
+        HtmlNode::Element { tag, attrs, children } if tag == "p" => {
+            let (checked, inner) = gfm_task_item(children)?;
+            let mut rest = li.to_vec();
+            rest[first] = HtmlNode::Element { tag: tag.clone(), attrs: attrs.clone(), children: inner };
+            Some((checked, rest))
+        }
+        _ => None,
+    }
+}
+
+/// The task items of a GFM task list, or `None` unless every `<li>` starts
+/// with a checkbox ([`gfm_task_item`]).
+fn gfm_task_items(children: &[HtmlNode], marks: &[PmMark]) -> Option<Vec<PmChild>> {
+    let mut items = Vec::new();
+    for child in children {
+        match child {
+            HtmlNode::Text(t) if t.trim().is_empty() => continue,
+            HtmlNode::Element { tag, attrs, children: li } if tag == "li" => {
+                let (checked, rest) = gfm_task_item(li)?;
+                items.push(PmChild::Node(task_item(checked, &rest, &apply_style_marks(marks, attrs))));
+            }
+            _ => return None,
+        }
+    }
+    (!items.is_empty()).then_some(items)
+}
+
+/// `marks` are the marks the element's inline content inherits, its own style
+/// already applied (see [`map_blocks`]).
+fn map_block_element(
+    tag: &str,
+    attrs: &[(String, String)],
+    children: &[HtmlNode],
+    marks: &[PmMark],
+) -> Option<PmNode> {
     // Math block atom: `<div data-math-block data-latex=…>`. Childless — the
     // LaTeX source lives in `data-latex`. A latex-less block is useless, so let
     // it fall through to the generic unwrap (keeping any text) instead.
@@ -703,7 +1165,7 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             Some("danger") => "danger",
             _ => "note",
         };
-        let mut kids: Vec<PmChild> = map_blocks(children).into_iter().map(PmChild::Node).collect();
+        let mut kids: Vec<PmChild> = map_blocks(children, marks).into_iter().map(PmChild::Node).collect();
         if kids.is_empty() {
             kids.push(PmChild::Node(PmNode {
                 node_type: "paragraph".to_string(),
@@ -744,7 +1206,7 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
             .iter()
             .filter_map(|c| match c {
                 HtmlNode::Element { tag: t, attrs: a, children: cc } if t == "img" => {
-                    map_block_element("img", a, cc).map(PmChild::Node)
+                    map_block_element("img", a, cc, &[]).map(PmChild::Node)
                 }
                 _ => None,
             })
@@ -779,7 +1241,7 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         return Some(PmNode {
             node_type: "taskList".to_string(),
             attrs: vec![],
-            children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
+            children: map_blocks(children, marks).into_iter().map(PmChild::Node).collect(),
         });
     }
     // Task item (JP-432): `<li data-type="taskItem" data-checked>`. The editor's
@@ -789,11 +1251,18 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
     // checked (mirrors TaskItem.parseHTML).
     if tag == "li" && get_attr(attrs, "data-type") == Some("taskItem") {
         let checked = matches!(get_attr(attrs, "data-checked"), Some("true") | Some(""));
-        return Some(PmNode {
-            node_type: "taskItem".to_string(),
-            attrs: vec![("checked".to_string(), checked.to_string())],
-            children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
-        });
+        return Some(task_item(checked, &without_task_chrome(children), marks));
+    }
+    // JP-514: a GFM / Markdown task list — a `<ul>` whose every item starts
+    // with `<input type="checkbox">`, which is how pulldown-cmark renders
+    // `- [x]`. The editor parses only its own `data-type` form (above), so
+    // without this the checked state was silently lost. Deliberately beyond
+    // editor parity: the intent is unambiguous and the result is the editor's
+    // own node.
+    if tag == "ul" {
+        if let Some(items) = gfm_task_items(children, marks) {
+            return Some(PmNode { node_type: "taskList".to_string(), attrs: vec![], children: items });
+        }
     }
     // Figure: `<figure><img …><figcaption>…</figcaption></figure>`. The client
     // content model is the strict `image figcaption`, so only emit a `figure`
@@ -807,9 +1276,9 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         for c in children {
             if let HtmlNode::Element { tag: t, attrs: a, children: cc } = c {
                 if t == "img" && image.is_none() {
-                    image = map_block_element("img", a, cc);
+                    image = map_block_element("img", a, cc, &[]);
                 } else if t == "figcaption" && caption.is_none() {
-                    caption = Some(collect_block_inline(cc));
+                    caption = Some(collect_block_inline(cc, &apply_style_marks(marks, a)));
                 }
             }
         }
@@ -835,14 +1304,14 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         return Some(PmNode {
             node_type: "heading".to_string(),
             attrs: a,
-            children: collect_block_inline(children),
+            children: collect_block_inline(children, marks),
         });
     }
     match tag {
         "p" => Some(PmNode {
             node_type: "paragraph".to_string(),
             attrs: read_block_attrs("paragraph", attrs), // JP-429: textAlign
-            children: collect_block_inline(children),
+            children: collect_block_inline(children, marks),
         }),
         "pre" => {
             // Code block content is plain text (unwrap any inner <code>). The
@@ -898,7 +1367,7 @@ fn map_block_element(tag: &str, attrs: &[(String, String)], children: &[HtmlNode
         _ => prose_schema::simple_block_pm(tag).map(|pm| PmNode {
             node_type: pm.to_string(),
             attrs: read_block_attrs(pm, attrs),
-            children: map_blocks(children).into_iter().map(PmChild::Node).collect(),
+            children: map_blocks(children, marks).into_iter().map(PmChild::Node).collect(),
         }),
     }
 }
@@ -909,7 +1378,7 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
     let mut out = Vec::new();
     for n in nodes {
         match n {
-            HtmlNode::Text(s) => out.push(PmChild::Text { text: s.clone(), marks: marks.to_vec() }),
+            HtmlNode::Text(s) => out.push(PmChild::Text { text: s.clone(), marks: text_marks(marks) }),
             HtmlNode::Element { tag, attrs, children } => {
                 if tag == "br" {
                     out.push(PmChild::Node(PmNode {
@@ -917,11 +1386,10 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                         attrs: vec![],
                         children: vec![],
                     }));
+                } else if is_ignored(tag) {
+                    note_ignored(tag);
                 } else if tag == "a" {
-                    let href = attrs.iter().find(|(k, _)| k == "href").map(|(_, v)| v.clone());
-                    let mut m = marks.to_vec();
-                    m.push(PmMark { name: "link".to_string(), href, attrs: vec![] });
-                    out.extend(collect_inline(children, &m));
+                    out.extend(collect_inline(children, &element_marks(tag, attrs, marks).0));
                 } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
                     == Some("citationInline")
                     && get_attr(attrs, "data-ref-id").is_some()
@@ -930,6 +1398,7 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // the text content is the cached projection, kept in `label`.
                     // Require `data-ref-id` — a refId-less citation is useless, so
                     // fall through to the unwrap below and keep the text instead.
+                    note_atom_text("citationInline", attrs, "data-label", children);
                     out.push(PmChild::Node(citation_node(attrs)));
                 } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
                     == Some("fieldRef")
@@ -938,6 +1407,7 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // Inline field atom (Phase 3c). Require a non-empty `data-name`
                     // — a nameless field reference is useless, so fall through to
                     // the unwrap below and keep the text instead.
+                    note_atom_text("fieldRef", attrs, "data-label", children);
                     out.push(PmChild::Node(field_node(attrs)));
                 } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
                     == Some("fileRef")
@@ -949,6 +1419,7 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                     // `data-blob-ref` — a chip with no blob addresses nothing, so
                     // fall through to the unwrap below and keep its text (the
                     // filename) instead.
+                    note_atom_text("fileRef", attrs, "data-file-name", children);
                     out.push(PmChild::Node(file_ref_node(attrs)));
                 } else if prose_schema::custom_node_pm(tag, |m| has_attr(attrs, m))
                     == Some("mathInline")
@@ -956,23 +1427,25 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
                 {
                     // Inline math atom. Require `data-latex` — a latex-less math
                     // span is useless, so fall through to the unwrap and keep text.
+                    note_atom_text("mathInline", attrs, "data-latex", children);
                     out.push(PmChild::Node(math_inline_node(attrs)));
-                } else if let Some(mark) = prose_schema::mark_pm(tag) {
-                    let mark_attrs = read_mark_attrs(mark, attrs);
-                    // A `textStyle` `<span>` with no recognized attr is a plain
-                    // span — unwrap it (preserve the empty-span degrade contract;
-                    // keep the CRDT free of empty textStyle marks). All the other
-                    // marks are bare tags carrying no attrs.
-                    if mark == "textStyle" && mark_attrs.is_empty() {
-                        out.extend(collect_inline(children, marks));
-                    } else {
-                        let mut m = marks.to_vec();
-                        m.push(PmMark { name: mark.to_string(), href: None, attrs: mark_attrs });
-                        out.extend(collect_inline(children, &m));
+                } else if prose_schema::mark_pm(tag).is_some() {
+                    // JP-514: style first, then the tag's own mark. A styled
+                    // `<span>` the editor has no mark or attribute for changes
+                    // nothing, which is a loss; a plain `<span>` and a `<b>` its
+                    // own style refuses are not (see `is_silent_container`).
+                    let (inner, contributed) = element_marks(tag, attrs, marks);
+                    if !contributed && !is_silent_container(tag, attrs) {
+                        note_element_loss(tag, children);
                     }
+                    out.extend(collect_inline(children, &inner));
                 } else {
-                    // Unknown inline tag → unwrap (keep text + current marks).
-                    out.extend(collect_inline(children, marks));
+                    // Unknown inline tag → unwrap (keep text + current marks, plus
+                    // any marks its style adds, as the editor would).
+                    if !is_silent_container(tag, attrs) {
+                        note_element_loss(tag, children);
+                    }
+                    out.extend(collect_inline(children, &apply_style_marks(marks, attrs)));
                 }
             }
         }
@@ -980,8 +1453,8 @@ fn collect_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
     out
 }
 
-fn paragraph_from_inline(nodes: &[HtmlNode]) -> Option<PmNode> {
-    let children = collect_block_inline(nodes);
+fn paragraph_from_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Option<PmNode> {
+    let children = collect_block_inline(nodes, marks);
     if children.is_empty() {
         return None;
     }
@@ -993,8 +1466,8 @@ fn paragraph_from_inline(nodes: &[HtmlNode]) -> Option<PmNode> {
 /// ProseMirror (`whitespace: "normal"`) would — see [`normalize_inline_ws`].
 /// Use this at block boundaries; the recursive [`collect_inline`] calls (marks,
 /// links) stay raw so normalization runs once over the whole run.
-fn collect_block_inline(nodes: &[HtmlNode]) -> Vec<PmChild> {
-    normalize_inline_ws(collect_inline(nodes, &[]))
+fn collect_block_inline(nodes: &[HtmlNode], marks: &[PmMark]) -> Vec<PmChild> {
+    normalize_inline_ws(collect_inline(nodes, marks))
 }
 
 /// Normalize the whitespace of a fully-collected inline run before it reaches
@@ -1634,6 +2107,242 @@ mod tests {
                 "markdown and html paths disagree on {src}"
             );
         }
+    }
+
+    // ---- JP-514: synonyms, inherited marks, task lists, loss reports --------
+
+    /// Each text run of a block as (text, sorted mark names).
+    fn runs(block: &PmNode) -> Vec<(String, Vec<String>)> {
+        block
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                PmChild::Text { text, marks } => {
+                    let mut names: Vec<String> = marks.iter().map(|m| m.name.clone()).collect();
+                    names.sort();
+                    Some((text.clone(), names))
+                }
+                PmChild::Node(_) => None,
+            })
+            .collect()
+    }
+
+    fn run(text: &str, marks: &[&str]) -> (String, Vec<String>) {
+        (text.to_string(), marks.iter().map(|m| m.to_string()).collect())
+    }
+
+    fn losses(html: &str) -> Vec<(LossKind, String, String)> {
+        html_to_blocks_with_losses(html).1.into_iter().map(|l| (l.kind, l.what, l.path)).collect()
+    }
+
+    fn child_node(node: &PmNode, i: usize) -> &PmNode {
+        match &node.children[i] {
+            PmChild::Node(n) => n,
+            other => panic!("expected a node, got {other:?}"),
+        }
+    }
+
+    /// `checked` and text of each task item of a task list.
+    fn task_items(list: &PmNode) -> Vec<(String, String)> {
+        assert_eq!(list.node_type, "taskList", "{list:?}");
+        list.children
+            .iter()
+            .map(|c| {
+                let PmChild::Node(item) = c else { panic!("expected a task item") };
+                assert_eq!(item.node_type, "taskItem");
+                let checked = item.attrs.iter().find(|(k, _)| k == "checked").map(|(_, v)| v.clone());
+                (checked.unwrap_or_default(), text_of(&[child_node(item, 0).clone()]).trim().to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn jp514_google_docs_paste_keeps_its_paragraphs_and_only_its_real_formatting() {
+        // The real clipboard shape: a `<meta>`, then every paragraph inside one
+        // `<b style="font-weight:normal">`. Before JP-514 the `<meta>` swallowed
+        // the paste and a mark tag holding blocks collapsed them into one
+        // paragraph; treating the wrapper as bold would bold the whole paste.
+        let html = concat!(
+            r#"<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-9f1">"#,
+            r#"<p dir="ltr" style="line-height:1.38;margin-top:0pt;margin-bottom:0pt;">"#,
+            r#"<span style="font-size:11pt;font-weight:700;white-space:pre-wrap;">Bold</span>"#,
+            r#"<span style="font-size:11pt;font-weight:400;white-space:pre-wrap;"> plain</span></p>"#,
+            r#"<p dir="ltr"><span style="font-size:11pt;font-style:italic;">Second</span></p></b>"#,
+        );
+        let (blocks, lost) = html_to_blocks_with_losses(html);
+        assert_eq!(blocks.len(), 2, "{blocks:?}");
+        assert_eq!(runs(&blocks[0]), vec![run("Bold", &["bold"]), run(" plain", &[])]);
+        assert_eq!(runs(&blocks[1]), vec![run("Second", &["italic"])]);
+        // The wrapper and the metadata are not losses. The span whose only
+        // effect was a font size is: the editor cannot keep a font size.
+        let what: Vec<&str> = lost.iter().map(|l| l.what.as_str()).collect();
+        assert_eq!(what, vec!["<span>"], "{lost:?}");
+    }
+
+    #[test]
+    fn jp514_a_mark_tag_holding_blocks_keeps_the_blocks_and_carries_its_mark_down() {
+        let blocks = html_to_blocks("<strong><p>a</p><p>b</p></strong>");
+        assert_eq!(blocks.len(), 2, "{blocks:?}");
+        assert_eq!(runs(&blocks[0]), vec![run("a", &["bold"])]);
+        assert_eq!(runs(&blocks[1]), vec![run("b", &["bold"])]);
+
+        let blocks = html_to_blocks(r#"<a href="https://x.test"><p>go</p></a>"#);
+        let PmChild::Text { marks, .. } = &blocks[0].children[0] else { panic!("expected text") };
+        assert_eq!(marks[0].name, "link");
+        assert_eq!(marks[0].href.as_deref(), Some("https://x.test"));
+
+        // Carried down, so nothing was lost by unwrapping the tag.
+        assert_eq!(losses("<strong><p>a</p></strong>"), vec![]);
+    }
+
+    #[test]
+    fn jp514_block_styles_reach_inline_content_but_not_a_code_block() {
+        let blocks = html_to_blocks(r#"<table><tr><td style="font-weight:700">X</td></tr></table>"#);
+        let paragraph = child_node(child_node(child_node(&blocks[0], 0), 0), 0);
+        assert_eq!(runs(paragraph), vec![run("X", &["bold"])]);
+
+        let blocks = html_to_blocks(r#"<h2 style="font-style:italic">T</h2>"#);
+        assert_eq!(runs(&blocks[0]), vec![run("T", &["italic"])]);
+
+        // A code block takes no marks, in the editor or here.
+        let blocks = html_to_blocks(r#"<b><pre><code>x</code></pre></b>"#);
+        assert_eq!(blocks[0].node_type, "codeBlock");
+        assert_eq!(runs(&blocks[0]), vec![run("x", &[])]);
+    }
+
+    #[test]
+    fn jp514_gfm_task_lists_become_task_items_with_their_checked_state() {
+        let (blocks, lost) = html_to_blocks_with_losses(
+            r#"<ul><li><input type="checkbox" checked disabled> done</li><li><input type="checkbox"> todo</li></ul>"#,
+        );
+        assert_eq!(
+            task_items(&blocks[0]),
+            vec![("true".to_string(), "done".to_string()), ("false".to_string(), "todo".to_string())]
+        );
+        assert_eq!(lost, vec![], "the checkbox became the checked state, so nothing was lost");
+    }
+
+    #[test]
+    fn jp514_markdown_task_lists_and_strikethrough_survive() {
+        let html = crate::mcp::tools::markdown_to_html_for_tests("- [x] shipped\n- [ ] next\n\n~~gone~~\n");
+        let (blocks, lost) = html_to_blocks_with_losses(&html);
+        assert_eq!(
+            task_items(&blocks[0]),
+            vec![("true".to_string(), "shipped".to_string()), ("false".to_string(), "next".to_string())],
+            "{html}"
+        );
+        assert_eq!(runs(&blocks[1]), vec![run("gone", &["strike"])], "{html}");
+        assert_eq!(lost, vec![], "{html}");
+    }
+
+    #[test]
+    fn jp514_loose_markdown_task_lists_keep_their_checked_state() {
+        // Items separated by blank lines render with the checkbox inside a
+        // paragraph: `<li><p><input type="checkbox" checked=""/> a</p></li>`.
+        let html = crate::mcp::tools::markdown_to_html_for_tests("- [x] a\n\n- [ ] b\n");
+        let (blocks, lost) = html_to_blocks_with_losses(&html);
+        assert_eq!(
+            task_items(&blocks[0]),
+            vec![("true".to_string(), "a".to_string()), ("false".to_string(), "b".to_string())],
+            "{html}"
+        );
+        assert_eq!(lost, vec![], "{html}");
+    }
+
+    #[test]
+    fn jp514_a_list_that_is_not_all_tasks_stays_a_bullet_list_and_reports_the_checkbox() {
+        let (blocks, lost) =
+            html_to_blocks_with_losses(r#"<ul><li><input type="checkbox" checked> a</li><li>b</li></ul>"#);
+        assert_eq!(blocks[0].node_type, "bulletList");
+        assert_eq!(
+            lost,
+            vec![ParseLoss { kind: LossKind::Removed, what: "<input>".into(), path: "0/bulletList".into() }]
+        );
+    }
+
+    #[test]
+    fn jp514_losses_name_the_kind_the_element_and_the_block() {
+        let html = concat!(
+            "<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd></p>",
+            "<p>x<kbd></kbd></p>",
+            r#"<p><span data-field data-name="owner">Alice</span></p>"#,
+            "<script>alert(1)</script>",
+        );
+        assert_eq!(
+            losses(html),
+            vec![
+                (LossKind::Unwrapped, "<kbd>".to_string(), "0/paragraph".to_string()),
+                (LossKind::Unwrapped, "<kbd>".to_string(), "0/paragraph".to_string()),
+                (LossKind::Removed, "<kbd>".to_string(), "1/paragraph".to_string()),
+                (LossKind::StrippedAtomText, "fieldRef".to_string(), "2/paragraph".to_string()),
+                // Nothing came of it, so there is no block to point at.
+                (LossKind::Removed, "<script>".to_string(), String::new()),
+            ]
+        );
+        // And the script's text is not kept as prose, as in the editor.
+        assert!(!text_of(&html_to_blocks(html)).contains("alert"));
+    }
+
+    #[test]
+    fn jp514_nothing_the_relay_or_the_editor_writes_is_reported_as_a_loss() {
+        for html in [
+            "<div><section><p>wrapped</p></section></div>",
+            r#"<p><span class="x" id="y" dir="ltr">plain span</span></p>"#,
+            // The relay's own field spans (`field_span_html`), labelled and not.
+            r#"<p><span data-field data-name="owner" data-label="A &amp; B">A &amp; B</span></p>"#,
+            r#"<p><span data-field data-name="owner"></span></p>"#,
+            // The editor's task item chrome.
+            concat!(
+                r#"<ul data-type="taskList"><li data-type="taskItem" data-checked="true">"#,
+                r#"<label><input type="checkbox" checked="checked"><span></span></label>"#,
+                "<div><p>done</p></div></li></ul>",
+            ),
+            "<p><b><b>twice</b></b></p>",
+            r#"<b style="font-weight:normal"><p>pasted</p></b>"#,
+            r#"<meta charset="utf-8"><p>a<wbr>b</p>"#,
+            "<html><head><title>T</title><style>p{}</style></head><body><p>x</p></body></html>",
+            "<table><colgroup><col><col></colgroup><tbody><tr><td>a</td><td>b</td></tr></tbody></table>",
+        ] {
+            assert_eq!(losses(html), vec![], "{html}");
+        }
+    }
+
+    #[test]
+    fn jp514_void_tags_no_longer_swallow_what_follows() {
+        let blocks = html_to_blocks(r#"<meta charset="utf-8"><p>one</p><p>two</p>"#);
+        assert_eq!(blocks.len(), 2, "{blocks:?}");
+        // A void element the editor cannot keep is reported as removed, and no
+        // longer takes the following block with it (it was "unwrapped" around
+        // the paragraph after it).
+        let (blocks, lost) = html_to_blocks_with_losses(r#"<embed src="x.swf"><p>after</p>"#);
+        assert_eq!(runs(&blocks[0]), vec![run("after", &[])]);
+        assert_eq!(
+            lost,
+            vec![ParseLoss { kind: LossKind::Removed, what: "<embed>".into(), path: "0/paragraph".into() }]
+        );
+        let blocks = html_to_blocks("<ul><li>long<wbr>word <b>bold</b></li></ul>");
+        let paragraph = child_node(child_node(&blocks[0], 0), 0);
+        assert_eq!(child_node(&blocks[0], 0).children.len(), 1, "one paragraph: {blocks:?}");
+        assert_eq!(text_of(&[paragraph.clone()]), "longword bold");
+    }
+
+    #[test]
+    fn jp514_an_unknown_inline_element_stays_in_its_paragraph() {
+        // Loose inline content in a list item or cell is one paragraph in the
+        // editor; an unknown inline element used to split it into three.
+        let blocks = html_to_blocks("<ul><li>Press <kbd>Ctrl</kbd> now</li></ul>");
+        let item = child_node(&blocks[0], 0);
+        assert_eq!(item.children.len(), 1, "{blocks:?}");
+        assert_eq!(text_of(&[child_node(item, 0).clone()]), "Press Ctrl now");
+    }
+
+    #[test]
+    fn jp514_only_the_validation_parse_collects_losses() {
+        let (_, lost) = html_to_blocks_with_losses("<p><kbd>x</kbd></p>");
+        assert_eq!(lost.len(), 1);
+        assert!(!collecting_losses(), "the collector must be cleared after the validation parse");
+        let _ = html_to_blocks("<p><kbd>x</kbd></p>");
+        assert!(!collecting_losses(), "a live write parse must not start collecting");
     }
 
 }

@@ -86,13 +86,13 @@ All tools are namespaced `docushark_*`.
 | -- | -- |
 | `list_documents` | List documents in the workspace (`id`, `name`, `modifiedAt`, `source`, and page counts). `pageCount` is the **canvas + prose total**; `canvasPageCount` and `prosePageCount` give the breakdown (a document has a diagram canvas and a separate prose body). |
 | `get_document` | Document metadata + canvas `pages` summary + `prosePages` summary + `fields` (the document's `{{name}}` values). The map of what exists. |
-| `get_page` | The shapes on one canvas page, as DSL objects. |
+| `get_page` | The shapes on one canvas page, as DSL objects in z-order; coordinates are shape centres, rounded to 2 decimals. Optional filters combine: `ids`, `kinds`, `text` (case-insensitive substring) and `region` (`{minX, minY, maxX, maxY}`; connectors attached to a selected shape come along). `fields` projects each shape to the listed keys (`id` is always kept), and `summary: true` returns the matching count by kind and bounding box instead of the shapes. Read a large page summary-first. |
 | `get_shape` | One shape on a page, by id, as a DSL object (the read-one companion to `get_page`). |
-| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`. Embedded images appear as `blob://<hash>` references — list them with `list_files`, fetch bytes with `get_file`. |
+| `get_prose` | All prose pages (or one, with `pageId`): `id`, `name`, `order`, HTML `content`, and `revision` (a hash of that content, for the whole-page writers' `expectedRevision`). Embedded images appear as `blob://<hash>` references — list them with `list_files`, fetch bytes with `get_file`. |
 | `list_files` | Every file attached to the document: canvas file shapes (`fileName`, `mimeType`, `sizeBytes`, `fileCategory`) and prose-embedded images, each with its `blobRef` (content hash) and whether the bytes are `inStore` on this relay. |
 | `get_file` | Fetch an attached file's bytes by `blobRef`. Object-storage backend → a short-lived presigned `url` to GET directly (`expiresAtMs`); filesystem backend → `base64` inline (small files only). The blob must be referenced by the given document. |
-| `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }`. `index` is used by the structural tools; `id` is the heading's durable block id (`null` when absent), usable in the block tools and `docushark://heading/<pageId>/id:<blockId>` links. |
-| `get_table` | A prose-page table as its resolved **span-aware grid** — `rows`/`cols` plus per-cell `{ row, col, tag, colspan, rowspan, text, colwidth, backgroundColor, align, scope, id }` (0-based slots; a merged cell is addressable through any slot it covers; `id` is the cell's first block's durable id, for `set_prose` text edits). Select with `tableIndex` or an `anchor`/`id` inside the table; omit both for a sole table. The coordinate model `edit_table` addresses — read this first. |
+| `get_outline` | A prose page's heading outline: ordered `{ index, level, title, id }`, plus the page's `revision`. `id` is the heading's durable block id (`null` when absent): name headings by it in the structural tools (an `index` shifts when a heading is added above it), the block tools, and `docushark://heading/<pageId>/id:<blockId>` links. |
+| `get_table` | A prose-page table as its resolved **span-aware grid** — `rows`/`cols` plus per-cell `{ row, col, tag, colspan, rowspan, text, colwidth, backgroundColor, align, scope, id }` (0-based slots; a merged cell is addressable through any slot it covers; `id` is the cell's first block's durable id, for `set_prose` text edits). Select with `tableIndex` or an `anchor`/`id` inside the table; omit both for a sole table. The coordinate model `edit_table` addresses — read this first. Also returns the page's `revision` for `edit_table`'s `expectedRevision`. |
 | `list_references` | The document's reference library as CSL-JSON in display order, plus the active `style`. |
 | `resolve_doi` | Resolve a `doi` to a CSL-JSON reference via doi.org content negotiation, **without** writing — preview before `add_reference`. |
 | `list_fields` | The document's fields (reusable `{{name}}` values) in display order, each `{ name, value }`. |
@@ -112,7 +112,7 @@ All tools are namespaced `docushark_*`.
 | Tool | Purpose |
 | -- | -- |
 | `add_prose_page` | Append a prose page. Markdown by default. |
-| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a line) and/or `id` (the block's durable id) to replace **only that block** — a single bullet, table cell, heading, or paragraph anywhere on the page, with its container + siblings untouched. A rewrite keeps the block's id (continuity), so links/addresses pointing at it survive. Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type), inline formatting (highlight + text colour, marks), task lists, and a code block's language all round-trip, so they're settable via `format:"html"`. Markdown by default. |
+| `set_prose` | Write a prose page. Replaces the whole body by default; pass `anchor` (the current text of a line) and/or `id` (the block's durable id) to replace **only that block** — a single bullet, table cell, heading, or paragraph anywhere on the page, with its container + siblings untouched. A rewrite keeps the block's id (continuity), so links/addresses pointing at it survive. Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type), inline formatting (highlight + text colour, marks), task lists, and a code block's language all round-trip, so they're settable via `format:"html"`. Markdown by default. A whole-page write returns the page's new `revision` and accepts `expectedRevision` (refused with `ERR_STALE_WRITE` if the page changed after that read; not accepted with `anchor`/`id`, which already check their block). |
 | `insert_block` | Insert a **new** block beside an existing one without rewriting the page — the additive companion to `set_prose`'s anchored edit (`set_prose`+`anchor`/`id` **changes** a block; `insert_block` **adds** one). Address the neighbor by `anchor` and/or `id`. Anchor a bullet → the content becomes a sibling bullet (a task item under a task list); anchor a top-level block, or a line inside a blockquote/cell → inserted at that level. `side` is `before`/`after` (default `after`). Markdown by default. |
 | `delete_block` | Delete a whole block by `anchor` and/or `id` — a bullet (and its nested sub-items), paragraph, heading, or table-cell line — removing the entire structural unit, not just its text. Deleting the last bullet removes the now-empty list; the page never goes truly empty. |
 | `move_block` | Reorder a block — address the block to move (`anchor`/`id`) plus a target (`targetAnchor`/`targetId`), `side` before/after — to reposition a bullet within or across lists, or reorder top-level blocks (the whole unit moves, nested sub-items included). Same-kind only for now (bullet↔bullet, or top-level↔top-level); bullet↔top-level (lift/sink) is refused. |
@@ -122,9 +122,9 @@ All tools are namespaced `docushark_*`.
 
 | Tool | Purpose |
 | -- | -- |
-| `insert_section` | Insert a heading (+ optional body) at `start`/`end` or after a heading `index`. |
-| `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to a new index. |
-| `edit_table` | One structural table operation per call, addressed by `get_table`'s grid coordinates: `addRow`/`addColumn` (a merged cell spanning the boundary grows through it), `deleteRow`/`deleteColumn` (spans shrink; the last row/column is refused), `mergeCells`/`splitCell` (prosemirror parity — partial-span rectangles refused, content concatenates onto the top-left anchor), `setCellAttrs`, `moveRow`/`moveColumn` (refused on merged tables), `toggleHeaderRow`/`toggleHeaderColumn`, `setColumnWidth`. Returns the post-op grid; stale coordinates fail with `ERR_CELL_RANGE` (re-read, never guess). Cell **text** edits belong to `set_prose` by the cell's block id. Reads and rewrites the whole page (same read-modify-write granularity as `restructure_outline`); the live write is a surgical diff, so only the edited table's window is replaced. |
+| `insert_section` | Insert a heading (+ optional body) at `start`/`end`, or after a heading named by `afterId` (preferred) or `afterIndex`. Returns the new section, the outline and the page's new `revision`; accepts `expectedRevision`. |
+| `restructure_outline` | `promote`/`demote` a heading's level, or `move` a section to the position another heading holds now. Name headings by `id`/`toId` (preferred) or `index`/`toIndex`; giving both requires them to agree (`ERR_ID_INDEX_MISMATCH`). Returns the affected section, the outline and the page's new `revision`; accepts `expectedRevision`. |
+| `edit_table` | One structural table operation per call, addressed by `get_table`'s grid coordinates: `addRow`/`addColumn` (a merged cell spanning the boundary grows through it), `deleteRow`/`deleteColumn` (spans shrink; the last row/column is refused), `mergeCells`/`splitCell` (prosemirror parity — partial-span rectangles refused, content concatenates onto the top-left anchor), `setCellAttrs`, `moveRow`/`moveColumn` (refused on merged tables), `toggleHeaderRow`/`toggleHeaderColumn`, `setColumnWidth`. Returns the post-op grid; stale coordinates fail with `ERR_CELL_RANGE` (re-read, never guess). Cell **text** edits belong to `set_prose` by the cell's block id. Reads and rewrites the whole page (same read-modify-write granularity as `restructure_outline`); the live write is a surgical diff, so only the edited table's window is replaced. Returns the page's new `revision`; accepts `expectedRevision`. |
 
 ### Diagram (write)
 
@@ -167,12 +167,18 @@ icons directly — build those with `add_shape(s)`.
 | `update_reference` | Repair an existing entry. `id` + `item` (CSL-JSON); fields **merge** by default (an explicit `null` clears one), `replace: true` swaps the whole item. The `id` is the library key and cannot change — renaming it would orphan every citation pointing at it. Fails on an unknown id. |
 | `delete_reference` | Remove an entry from the library and the bibliography. **Refuses while the reference is still cited inline**, naming the page/block sites and the count; `force: true` deletes anyway and leaves those citations unresolved. |
 
-This populates the **library** only — it doesn't yet insert an inline citation
-or bibliography into the prose (do that in the editor). The library is stored as
-the document's top-level `references` field and round-trips durably; a *connected*
-editor sees new references on reload, as references aren't live-synced yet.
-Formatting (CSL → APA/MLA/Chicago/Vancouver) is done in the editor, not the
-relay — the MCP surface only reads and writes CSL-JSON.
+These tools manage the **library** only; they don't write into the prose. To cite
+inline, write
+`<span data-citation data-ref-id="<id>" data-label="(Author, Year)">(Author, Year)</span>`
+with `set_prose` (`format: "html"`). To add the reference list, place an empty
+`<div data-bibliography></div>` where it belongs, in Markdown or HTML. The library
+is stored as the document's top-level `references` field and round-trips durably;
+a *connected* editor sees new references on reload, as references aren't
+live-synced yet. Formatting (CSL → APA/MLA/Chicago/Vancouver) is done in the
+editor, not the relay — the MCP surface only reads and writes CSL-JSON — so the
+editor renders a placed bibliography and caches the result in the node. Until an
+editor has opened the document once, an export or `get_prose` shows the
+bibliography node without a list.
 
 ### Fields (write)
 
@@ -182,9 +188,15 @@ relay — the MCP surface only reads and writes CSL-JSON.
 
 A *field* is a `name → value` pair that propagates everywhere it's referenced. To
 **reference** a field in prose, write `{{name}}` in Markdown via
-`set_prose`/`add_prose_page` — it becomes a live field placeholder (`<span
-data-field data-name="name">`) that renders the current value and updates when the
-value changes. (`{{name}}` inside inline code or a code block stays literal.)
+`set_prose`/`add_prose_page`. The value is resolved at write time, so the stored
+HTML carries it (`<span data-field data-name="name" data-label="value">value</span>`)
+and an export, `get_prose`, or a non-collaborative open shows the value without the
+document ever being opened in an editor; a connected editor still re-derives it
+live when the value changes. A name with no matching field stays an unresolved
+placeholder (`<span data-field data-name="name">`) for a live editor to fill.
+`{{name}}` also works inside a link or image destination, where the value replaces
+the token in the URL itself. (`{{name}}` inside inline code or a code block stays
+literal.)
 
 Fields are stored as the document's top-level `fields` object —
 `{ fields: { "<name>": { name, value } }, order: [...] }` — and round-trip
@@ -210,6 +222,15 @@ human `reason`:
 - prose heals (`unwrapped` / `rebuilt_table` / `stripped_children`) from the
   prose validator (set_prose / add_prose_page / edit_table — a legacy mangled
   table heals visibly on its first structural touch).
+- prose losses: HTML the editor has no equivalent for, reported by
+  `set_prose`, `insert_block` and `add_prose_page`. `unwrapped_element` (an
+  element such as `<kbd>` was replaced by its text, losing its formatting or
+  meaning), `removed_element` (an element that keeps no content, such as an
+  empty unknown element, `<script>` or `<style>`, was removed) and
+  `stripped_atom_text` (text written inside a field, citation, file or math
+  atom, which keeps its value in an attribute). `nodeType` names the element or
+  atom, `count` says how many times it happened, and `path` is the top-level
+  block of the first one.
 
 `add_shapes` tags each fix with the offending `shape` index. Read the array,
 correct the source, and re-send — nothing is silently lost. (Prefer authoring
@@ -240,6 +261,18 @@ reload):
   compare-and-swap refuses stale targets outright. (A new `add_prose_page`
   page's *tab* may lag until the prose page list syncs; its content lands
   immediately.)
+- **Revisions and stale writes.** Every prose read (`get_prose`, `get_outline`,
+  `get_table`) returns the page's `revision`, a hash of its content. Pass it as
+  `expectedRevision` to a whole-page writer (`set_prose` without `anchor`/`id`,
+  `insert_section`, `restructure_outline`, `edit_table`) and the write lands
+  only if the page is unchanged since that read: the check is atomic with the
+  write, live or cold. Otherwise the write is refused with `ERR_STALE_WRITE`
+  and nothing is written; re-read and apply the change to the current content.
+  Even without `expectedRevision`, `insert_section`, `restructure_outline` and
+  `edit_table` never overwrite a concurrent change: if the page changes between
+  their own read and write, they re-read and recompute. Name headings by `id`
+  rather than `index` in the outline tools, since an index shifts when a
+  heading is added above it.
 - **Anchored prose edits** (`set_prose` with `anchor`) are the *targeted* path:
   the anchor matches the smallest text-bearing line — a paragraph, heading, or a
   single bullet/table-cell line **anywhere** on the page (the walk descends through
@@ -276,8 +309,12 @@ current.
   are mirrored read-only; writes target relay documents only, and a write to a
   local id is refused with a clear message.
 - **Prose is HTML.** Markdown in is rendered (GFM tables / strikethrough /
-  task-lists on); HTML pass-through is re-parsed by the editor against its
-  schema on load, which drops anything unmodelled.
+  task-lists on). HTML is parsed with the editor's own rules: its synonyms
+  (`<b>`, `<i>`, `<del>`, `<strike>`), CSS styles on any element (as in a Google
+  Docs paste) and GFM checkbox task lists are accepted; anything unmodelled
+  degrades to its text and is reported in `fixes`. A shared fixture
+  (`relay/tests/prose-fixtures/mark-synonyms.json`) is run through both the
+  editor's schema and the relay's parser, so the two cannot drift.
 - **Prose write limits.** A single prose write's content is capped at **~1 MiB**
   (`set_prose`/`add_prose_page`/`insert_section`; over it → `ERR_PROSE_TOO_LARGE`,
   advertised as `maxLength`). Nesting deeper than **64** levels is truncated
@@ -295,11 +332,26 @@ current.
   editor re-routes connectors with the same algorithm when shapes move.
   Connectors route around nodes, not around each other — heavily parallel
   edges can still overlap. Node caps: 500 nodes / 1000 edges per call.
-- **Rate limits (per workspace).** Writes draw from the shared write bucket
-  (`[tenancy.limits] writes_per_sec`/`writes_burst`, shared with WS sync); reads
-  draw from a **separate** bucket (`reads_per_sec`/`reads_burst`, `0` =
-  unlimited). Over the bucket → HTTP `429` with `ERR_RATE_LIMIT`. Tunable via
-  `RELAY_*` env on Cloud pods.
+- **Tool results.** Every result is returned twice: as `structuredContent` and as a
+  text block holding the same JSON, compact. Some clients cap how much of a result
+  they show the model inline, and a full `get_page` of a diagram with about 100
+  shapes is near such limits: read large pages with `summary: true` first, then
+  filter and project.
+- **Rate limits (per workspace).** Every tool that can change a document (any
+  tool whose `tools/list` annotations do not say `readOnlyHint: true`) draws from
+  the shared write bucket (`[tenancy.limits] writes_per_sec`/`writes_burst`,
+  shared with WS sync); read-only tools draw from a **separate** bucket
+  (`reads_per_sec`/`reads_burst`, `0` = unlimited). Over the bucket → HTTP `429`
+  with `ERR_RATE_LIMIT`. Tunable via `RELAY_*` env on Cloud pods.
+- **Tool annotations and server instructions.** Every tool in `tools/list`
+  carries MCP annotations: `readOnlyHint` and `openWorldHint` on all tools, plus
+  `destructiveHint` and `idempotentHint` on tools that write. A client can use
+  them to confirm destructive calls and to avoid blindly retrying
+  non-idempotent ones such as `generate_diagram`. `initialize` returns short
+  `instructions`: call `get_skills` before the first write, shape coordinates
+  are centres, `labelColor: "auto"` keeps labels readable, caller-chosen shape
+  ids make retries safe, and documents that may be open should be edited one
+  block at a time.
 - **Storage limits.** Document writes share the workspace storage meter with
   files (see `get_storage`). A write that would *grow* the workspace past its
   quota fails with `ERR_STORAGE_QUOTA` — shrinking edits and deletes always

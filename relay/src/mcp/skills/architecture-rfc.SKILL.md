@@ -43,8 +43,8 @@ local documents).
    compare-and-swap; if it matches none/several you get an `ERR_ANCHOR_*` error —
    read the page with `get_prose` and copy the block text). Use
    `insert_section(docId, prosePageId, level, title, body)` to add a heading+body,
-   and `restructure_outline` (`promote`/`demote`/`move` by heading index from
-   `get_outline`) to reorganize.
+   and `restructure_outline` (`promote`/`demote`/`move`, naming headings by
+   their `id` from `get_outline`) to reorganize.
 
 5. **Build the system diagram.** Call `generate_diagram(docId, canvasPageId, nodes, edges)`:
    - `nodes`: `[{ id, label, kind }]` — `id` is your logical id, `label` is the text,

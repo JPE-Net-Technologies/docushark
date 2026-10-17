@@ -24,10 +24,18 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 
 ## Prose (set_prose / add_prose_page / insert_section)
 - Pass Markdown by default, or well-formed HTML with format:"html".
+- A document may be open in someone's editor while you write. Change one block at
+  a time (set_prose with an id or anchor, insert_block, delete_block, move_block).
+  When you rewrite a whole page, or use insert_section / restructure_outline /
+  edit_table, pass the `revision` from your last read as `expectedRevision`: if
+  the page changed since, the write is refused with ERR_STALE_WRITE and nothing
+  is written, so re-read and apply your change to the current content. Name
+  headings by their `id` from get_outline, not their index.
 - Allowed block types only: paragraph, heading (h1-h6), bulletList/orderedList
   (with listItem), blockquote, codeBlock, table, horizontalRule, image, figure
   (with figcaption), callout, gallery, math block, task list (with checkable
-  taskItem children). Anything else is unwrapped to its text.
+  taskItem children). Anything else is unwrapped to its text and reported in
+  fixes.
 - Atoms carry NO children: image, horizontalRule, hardBreak, an inline citation,
   a field reference, an inline/block math node. Never nest content inside them.
 - LaTeX math: write `$$ … $$` on its own line for a block (display) equation, or
@@ -43,8 +51,9 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   `<span data-citation data-ref-id="<id>" data-label="(Author, Year)">(Author, Year)</span>`
   (format:"html"), where `<id>` is a library id you added. **For any researched or
   scholarly content, cite real sources this way — don't hand-type a "References"
-  list.** The formatted bibliography (`<div data-bibliography>`) is generated in
-  the editor from the library, so you don't emit it yourself.
+  list.** For the reference list, place an empty `<div data-bibliography></div>`
+  where it belongs (Markdown or format:"html"): the editor renders the formatted
+  list from the library and caches it in the node, so you never type the entries.
 - `data-label` is a CACHE, not the source of truth. A connected editor recomputes
   it from the library entry in the active citation style and writes the result
   back over whatever you wrote. So a citation that renders as the title instead
@@ -54,10 +63,11 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   `delete_reference` removes an entry, and refuses while it is still cited unless
   you pass `force`.
 - Fields: define a reusable value with `set_fields`, then reference it as `{{name}}`
-  (Markdown). If the doc won't be opened in an editor before you hand it off (e.g.
-  export), bake the value into the stored HTML directly with
-  `<span data-field data-name="name" data-label="value">value</span>` (format:"html")
-  so it isn't blank.
+  (Markdown). The value is resolved at write time, so the field reads correctly in
+  an export, in `get_prose`, and on a non-collaborative open — you do not need to
+  hand-write the span. A name with no matching field stays an unresolved
+  placeholder for a live editor to fill. `{{name}}` also works inside a link or
+  image destination, where the value replaces the token in the URL itself.
 - Character entities: with format:"markdown" (the default) and format:"html",
   named entities (`&mdash;`, `&le;`, `&aacute;`) and numeric ones (`&#275;`,
   `&#x2014;`) both decode to the character. Literal Unicode is always safe too.
@@ -84,8 +94,13 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
   (<mark style="background-color: …">) and text colour (<span style="color: …">),
   alongside the marks bold/italic/underline/strike/code/sub/sup and links. A code
   block keeps its language: <pre><code class="language-rust">…</code></pre>.
+  The editor's other forms work too: <b>, <i>, <del>, <strike>, and a style on
+  any element (font-weight, font-style, text-decoration, vertical-align), so a
+  Google Docs paste keeps its formatting.
 - Task lists are checkable: <ul data-type="taskList"><li data-type="taskItem"
-  data-checked="true"><p>…</p></li></ul> (write with format:"html").
+  data-checked="true"><p>…</p></li></ul> (write with format:"html"). Markdown
+  `- [x] done` and a list whose every item starts with <input type="checkbox">
+  become task lists too.
 - To change ONE line without rewriting the page, use set_prose with anchor = that
   line's current text — it reaches a single bullet, table cell, heading, or
   paragraph anywhere on the page, leaving its list/table/quote and siblings intact.
@@ -109,15 +124,22 @@ pub const CONTENT_CONTRACT: &str = r#"# DocuShark content contract (read before 
 - Styling is inline per shape ({fill,stroke,strokeWidth,labelColor} or "AUTO").
 - Use the exact field names — an unrecognized key (e.g. fillColor for style.fill)
   is dropped, and an out-of-range value (heading level, labelPosition) is clamped.
+- Reading a big diagram: call get_page with summary:true first (counts by kind
+  and the bounding box), then read only what you need with ids, kinds, text,
+  region and fields. A full read of a 100-shape page costs about 25k tokens.
 - Files attach via add_file (never add_shape): it uploads the bytes (base64 /
   url / an existing blobRef) and places a file card on a canvas page. Read
   attachments with list_files + get_file; check headroom with get_storage.
 
 If a write reports a `fixes` array, the relay adjusted your input: it healed
 malformed prose, **dropped** an unrecognized/invalid field (`dropped_unknown` /
-`dropped_invalid`), or **clamped** a value (`clamped`). Each entry has an
-`action` + `reason` (shape fixes also name the `field`). Read it, correct the
-source, and re-send so nothing is silently lost."#;
+`dropped_invalid`), or **clamped** a value (`clamped`). Prose HTML the editor
+has no equivalent for is reported too: `unwrapped_element` (replaced by its
+text), `removed_element` (kept nothing) and `stripped_atom_text` (text inside a
+field, citation, file or math atom, which keeps its value in an attribute),
+each with the element in `nodeType` and a `count`. Each entry has an `action` +
+`reason` (shape fixes also name the `field`). Read it, correct the source, and
+re-send so nothing is silently lost."#;
 
 /// `(slug, when-to-use, full SKILL.md body)`. Bodies embedded at compile time —
 /// a fixed set, so `skill_body` can only ever return one of these (no fs lookup).

@@ -32,6 +32,16 @@ pub enum FixAction {
     RebuiltTable,
     /// Illegal children stripped off an atom (leaf) node.
     StrippedChildren,
+    /// JP-514: an HTML element the editor has no node or mark for, replaced by
+    /// its contents (its text is kept; its formatting or meaning is not).
+    UnwrappedElement,
+    /// JP-514: an HTML element the editor has no node or mark for and keeps
+    /// none of the content of (an empty unknown element, `<script>`, `<style>`),
+    /// removed.
+    RemovedElement,
+    /// JP-514: text written inside an atom that the atom does not keep (an atom
+    /// stores its value in an attribute).
+    StrippedAtomText,
 }
 
 /// One healed structural defect, surfaced to the writer + logged on self-heal.
@@ -43,6 +53,47 @@ pub struct ProseFix {
     pub node_type: String,
     pub action: FixAction,
     pub reason: &'static str,
+    /// How many times this happened, for fixes aggregated by element (JP-514).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+}
+
+/// Turn what the HTML parse could not represent (JP-514) into fixes, one per
+/// kind and element in first-seen order, with a count. `path` is where the
+/// first one happened: the top-level block, in the structural fixes' form.
+pub fn loss_fixes(losses: &[super::prose_parse::ParseLoss]) -> Vec<ProseFix> {
+    use super::prose_parse::LossKind;
+    let mut fixes: Vec<ProseFix> = Vec::new();
+    for loss in losses {
+        let (action, reason) = match loss.kind {
+            LossKind::Unwrapped => (
+                FixAction::UnwrappedElement,
+                "the editor has no node or mark for this element, so it was replaced by its \
+                 contents and its formatting or meaning is lost",
+            ),
+            LossKind::Removed => (
+                FixAction::RemovedElement,
+                "the editor has no node or mark for this element and keeps none of its content, so \
+                 it was removed",
+            ),
+            LossKind::StrippedAtomText => (
+                FixAction::StrippedAtomText,
+                "this atom keeps its value in an attribute; text written inside the element was \
+                 not kept",
+            ),
+        };
+        match fixes.iter_mut().find(|f| f.action == action && f.node_type == loss.what) {
+            Some(fix) => fix.count = fix.count.map(|n| n + 1),
+            None => fixes.push(ProseFix {
+                path: loss.path.clone(),
+                node_type: loss.what.clone(),
+                action,
+                reason,
+                count: Some(1),
+            }),
+        }
+    }
+    fixes
 }
 
 /// Node types the client schema (`sharedProseExtensions` + StarterKit + tables)
@@ -160,6 +211,7 @@ fn sanitize_node(
     // Depth bound (defense in depth alongside the parser's): drop the deep tail.
     if depth > prose_schema::MAX_PROSE_DEPTH {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: node.node_type.clone(),
             action: FixAction::Dropped,
@@ -171,6 +223,7 @@ fn sanitize_node(
     // Unknown type → unwrap to children (keep text by wrapping it in a paragraph).
     if !is_known_type(&node.node_type) {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: node.node_type.clone(),
             action: FixAction::Unwrapped,
@@ -184,6 +237,7 @@ fn sanitize_node(
         match attr(&node, "src").filter(|s| !s.is_empty()) {
             None => {
                 fixes.push(ProseFix {
+                    count: None,
                     path: path.to_string(),
                     node_type: "image".to_string(),
                     action: FixAction::Dropped,
@@ -222,6 +276,7 @@ fn sanitize_node(
     // demote to a paragraph carrying its inline content.
     if node.node_type == "figcaption" {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "figcaption".to_string(),
             action: FixAction::Unwrapped,
@@ -243,6 +298,7 @@ fn sanitize_node(
 fn strip_children_if_any(mut node: PmNode, path: &str, fixes: &mut Vec<ProseFix>) -> PmNode {
     if has_node_children(&node) {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: node.node_type.clone(),
             action: FixAction::StrippedChildren,
@@ -338,6 +394,7 @@ fn normalize_gallery(
     }
     if images.is_empty() {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "gallery".to_string(),
             action: FixAction::Unwrapped,
@@ -347,6 +404,7 @@ fn normalize_gallery(
     }
     if had_foreign {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "gallery".to_string(),
             action: FixAction::StrippedChildren,
@@ -405,6 +463,7 @@ fn normalize_figure(
     }
     let Some(image) = image else {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "figure".to_string(),
             action: FixAction::Unwrapped,
@@ -420,6 +479,7 @@ fn normalize_figure(
     };
     if had_foreign {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "figure".to_string(),
             action: FixAction::StrippedChildren,
@@ -459,6 +519,7 @@ fn normalize_table(node: PmNode, path: &str, depth: usize, fixes: &mut Vec<Prose
 
     if rows.is_empty() {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "table".to_string(),
             action: FixAction::Dropped,
@@ -477,6 +538,7 @@ fn normalize_table(node: PmNode, path: &str, depth: usize, fixes: &mut Vec<Prose
 
     if changed {
         fixes.push(ProseFix {
+            count: None,
             path: path.to_string(),
             node_type: "table".to_string(),
             action: FixAction::RebuiltTable,

@@ -40,19 +40,22 @@ by the document's reference library — rather than a hand-typed list. Work in o
    ## Method
    ## Results         (a table; stats inline as $F(2,57)=8.1,\ p<.01$)
    ## Discussion
-   ## References      (leave this heading empty — the bibliography is generated)
+   ## References      (place the bibliography node here — see step 6)
    ```
 
-   Set field values with `set_fields`. If the doc won't be opened in an editor
-   before you hand it off, bake fields as
-   `<span data-field data-name="Author" data-label="…">…</span>` so they aren't blank.
+   Set field values with `set_fields`, then reference them as `{{Author}}`. The
+   value is resolved at write time, so a field is not blank in an export even if
+   the document is never opened in an editor.
 
 5. **(Optional) Add a figure.** Use `generate_diagram(docId, canvasPageId, nodes,
    edges)` for a study-design or concept diagram, and refer to it from the prose.
 
-6. **Leave the bibliography to the editor.** You populate the library and place the
-   inline citations; the formatted `<div data-bibliography>` reference list is
-   generated in the editor. Don't hand-type it.
+6. **Place the bibliography; never type it.** Under the References heading, write
+   `<div data-bibliography></div>` — it works in Markdown or `format:"html"`. That
+   empty node is all you place: the editor renders the formatted list from the
+   library in the active citation style and caches it in the node. Until an editor
+   has opened the document once, an export or `get_prose` shows the node without a
+   list yet.
 
 7. **Confirm.** Call `get_document(docId)` — check the prose page and any canvas
    `shapeCount`. Give the user the document `id`/name.

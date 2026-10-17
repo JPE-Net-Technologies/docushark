@@ -31,8 +31,8 @@ use crate::sync::{DocHandle, DocRegistry};
 
 use super::DocDeletedSink;
 use super::adapter::{
-    apply_dsl_patch, dsl_fixes, dsl_patch_fixes, dsl_to_shape_json, shape_json_to_dsl, DslPatch,
-    DslShape, FixAction, ShapeFix,
+    apply_dsl_patch, dsl_fixes, dsl_patch_fixes, dsl_to_shape_json, round2, shape_json_to_dsl,
+    DslPatch, DslShape, FixAction, ShapeFix,
 };
 use super::local_mirror::LocalDocumentMirror;
 use super::outline::{clamp_level, escape_html, Outline, Section};
@@ -267,11 +267,177 @@ fn tool_required_permission(name: &str) -> Option<crate::server::permissions::Pe
     }
 }
 
-/// A single MCP tool descriptor (name, description, input schema).
+/// A single MCP tool descriptor (name, hints, description, input schema).
 pub struct ToolDescriptor {
     pub name: &'static str,
+    /// What the tool does to relay state. Required, so a new tool cannot be
+    /// added without deciding: the rate-limit bucket and the MCP annotations
+    /// both derive from it (JP-511).
+    pub hints: ToolHints,
     pub description: &'static str,
     pub input_schema: Value,
+}
+
+/// What a tool does to relay state. The single source for the MCP tool
+/// annotations in `tools/list` and for the rate-limit bucket: any tool that is
+/// not `read_only` draws from the per-workspace write bucket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolHints {
+    /// Never changes a document, a page, a file or the workspace.
+    pub read_only: bool,
+    /// May remove or overwrite existing content. Meaningful only for writes.
+    pub destructive: bool,
+    /// Repeating the call with the same arguments has no further effect.
+    pub idempotent: bool,
+    /// Reaches a service outside the relay (a DOI lookup).
+    pub open_world: bool,
+}
+
+impl ToolHints {
+    pub const READ: Self = Self {
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+    };
+    pub const READ_OPEN_WORLD: Self = Self {
+        open_world: true,
+        ..Self::READ
+    };
+    /// Adds content; repeating the call adds it again.
+    pub const WRITE: Self = Self {
+        read_only: false,
+        destructive: false,
+        idempotent: false,
+        open_world: false,
+    };
+    pub const WRITE_OPEN_WORLD: Self = Self {
+        open_world: true,
+        ..Self::WRITE
+    };
+    /// Sets a value or position; repeating the call changes nothing further.
+    pub const WRITE_IDEMPOTENT: Self = Self {
+        idempotent: true,
+        ..Self::WRITE
+    };
+    pub const DESTRUCTIVE: Self = Self {
+        destructive: true,
+        ..Self::WRITE
+    };
+    pub const DESTRUCTIVE_IDEMPOTENT: Self = Self {
+        destructive: true,
+        idempotent: true,
+        ..Self::WRITE
+    };
+
+    /// MCP `ToolAnnotations` (protocol 2025-06-18). `destructiveHint` and
+    /// `idempotentHint` carry meaning only when `readOnlyHint` is false.
+    pub fn annotations(&self) -> Value {
+        if self.read_only {
+            json!({"readOnlyHint": true, "openWorldHint": self.open_world})
+        } else {
+            json!({
+                "readOnlyHint": false,
+                "destructiveHint": self.destructive,
+                "idempotentHint": self.idempotent,
+                "openWorldHint": self.open_world,
+            })
+        }
+    }
+}
+
+/// The declared hints for a tool, by advertised name, or `None` for a name no
+/// descriptor carries. Built once from `descriptors()` so the rate limiter and
+/// `tools/list` can never disagree.
+pub fn tool_hints(name: &str) -> Option<ToolHints> {
+    static HINTS: std::sync::OnceLock<std::collections::HashMap<&'static str, ToolHints>> =
+        std::sync::OnceLock::new();
+    HINTS
+        .get_or_init(|| descriptors().into_iter().map(|d| (d.name, d.hints)).collect())
+        .get(name)
+        .copied()
+}
+
+#[cfg(test)]
+mod tool_hint_tests {
+    use super::*;
+    use crate::server::permissions::Permission;
+
+    /// JP-511 guard. The hint decides the rate-limit bucket, so the dangerous
+    /// mistake is a tool that changes state marked read-only: it would draw
+    /// from the read bucket, which is unlimited on loopback and self-host.
+    /// Read tools are named get_/list_/resolve_ and nothing else is, so the
+    /// name and the hint must agree.
+    #[test]
+    fn read_only_hint_matches_the_read_naming_convention() {
+        for d in descriptors() {
+            let verb = d.name.trim_start_matches("docushark_");
+            let reads_by_name = ["get_", "list_", "resolve_"]
+                .iter()
+                .any(|prefix| verb.starts_with(prefix));
+            assert_eq!(
+                d.hints.read_only, reads_by_name,
+                "{}: the read_only hint disagrees with the tool's name",
+                d.name
+            );
+        }
+    }
+
+    /// A tool that needs less than Editor access on a private document must not
+    /// change it. `create_document` is the one ungated write: there is no
+    /// document to hold access to yet.
+    #[test]
+    fn tools_callable_without_editor_access_are_read_only() {
+        for d in descriptors() {
+            let below_editor = matches!(
+                tool_required_permission(d.name),
+                None | Some(Permission::Viewer)
+            );
+            if below_editor && d.name != "docushark_create_document" {
+                assert!(
+                    d.hints.read_only,
+                    "{} is callable without Editor access but is not read-only",
+                    d.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deletes_are_destructive_writes() {
+        for d in descriptors().into_iter().filter(|d| d.name.contains("_delete_")) {
+            assert!(
+                !d.hints.read_only && d.hints.destructive,
+                "{} deletes content but is not marked destructive",
+                d.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_descriptor_resolves_its_own_hints() {
+        for d in &descriptors() {
+            assert_eq!(tool_hints(d.name), Some(d.hints), "{}", d.name);
+        }
+        assert_eq!(tool_hints("docushark_not_a_tool"), None);
+    }
+
+    #[test]
+    fn annotations_carry_write_hints_only_for_writes() {
+        assert_eq!(
+            ToolHints::READ.annotations(),
+            json!({"readOnlyHint": true, "openWorldHint": false})
+        );
+        assert_eq!(
+            ToolHints::DESTRUCTIVE_IDEMPOTENT.annotations(),
+            json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": true,
+                "openWorldHint": false
+            })
+        );
+    }
 }
 
 /// Return the list of foundation tools advertised via `tools/list`.
@@ -279,6 +445,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
     vec![
         ToolDescriptor {
             name: "docushark_list_documents",
+            hints: ToolHints::READ,
             description:
                 "List DocuShark relay documents stored on this host. Returns id, name, modifiedAt, and page counts for each: pageCount (canvas + prose total), with canvasPageCount and prosePageCount giving the breakdown (a document has a diagram canvas and a separate prose body).",
             input_schema: json!({
@@ -289,6 +456,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_document",
+            hints: ToolHints::READ,
             description:
                 "Return a document by id: top-level metadata plus a list of pages with their ids and names.",
             input_schema: json!({
@@ -302,13 +470,31 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_page",
+            hints: ToolHints::READ,
             description:
-                "Return the shapes on a single page as DSL objects. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form.",
+                "Return the shapes on a single page as DSL objects, in z-order. Coordinates are shape centres, rounded to 2 decimals. Shape kinds outside the foundation set (rectangle/ellipse/text) are returned in a generic form. A large page is expensive to read whole: call with summary:true first (counts by kind and the bounding box), then read only what you need with ids, kinds, text, region and fields. Filters combine.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
-                    "pageId": {"type": "string"}
+                    "pageId": {"type": "string"},
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "Only these shape ids."},
+                    "kinds": {"type": "array", "items": {"type": "string"}, "description": "Only shapes of these kinds (rectangle, ellipse, text, connector, file, or a library kind)."},
+                    "text": {"type": "string", "description": "Only shapes whose text contains this, ignoring case."},
+                    "region": {
+                        "type": "object",
+                        "description": "Only shapes whose bounds intersect this rectangle, plus connectors attached to them.",
+                        "properties": {
+                            "minX": {"type": "number"},
+                            "minY": {"type": "number"},
+                            "maxX": {"type": "number"},
+                            "maxY": {"type": "number"}
+                        },
+                        "required": ["minX", "minY", "maxX", "maxY"],
+                        "additionalProperties": false
+                    },
+                    "fields": {"type": "array", "items": {"type": "string"}, "description": "Return only these keys of each shape, e.g. [\"kind\", \"text\", \"x\", \"y\"]. id is always included."},
+                    "summary": {"type": "boolean", "description": "Return the matching shapes' count by kind and bounding box instead of the shapes."}
                 },
                 "required": ["docId", "pageId"],
                 "additionalProperties": false
@@ -316,6 +502,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_shape",
+            hints: ToolHints::READ,
             description:
                 "Return a single shape (by id) on a page as a DSL object — the read-one companion to get_page. Useful to inspect a shape before update_shape/delete_shape.",
             input_schema: json!({
@@ -331,6 +518,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_files",
+            hints: ToolHints::READ,
             description:
                 "List every file attached to a document: canvas file shapes (name, MIME type, size, category) and images embedded in prose pages. Each entry carries a blobRef — the content hash to pass to get_file for the bytes. inStore=false means the bytes are not on this relay (e.g. a local-only attachment that was never uploaded).",
             input_schema: json!({
@@ -344,6 +532,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_file",
+            hints: ToolHints::READ,
             description:
                 "Fetch an attached file's bytes by blobRef (from list_files or a file shape). Returns either a short-lived download URL to GET directly (object-storage backend) or the base64 bytes inline (filesystem backend, small files only). The blob must be referenced by the given document.",
             input_schema: json!({
@@ -358,6 +547,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_storage",
+            hints: ToolHints::READ,
             description:
                 "Workspace storage stats: bytes used by stored files, the storage quota (null = unlimited), and the per-file size ceiling. Check before large add_file uploads.",
             input_schema: json!({
@@ -368,6 +558,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_file",
+            hints: ToolHints::WRITE,
             description:
                 "Upload a file and attach it to a document as a canvas file card. Provide exactly one source: url (fetched server-side; https-only and the host must be on the relay's ingest allowlist), base64 (small files — the request body caps around 8 MB), or blobRef (attach a file already in the workspace store, e.g. from list_files or a previous upload). The relay stores the bytes content-addressed, enforces the workspace storage quota, and returns the new shape id + blobRef.",
             input_schema: json!({
@@ -393,6 +584,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_create_document",
+            hints: ToolHints::WRITE,
             description:
                 "Create a new, empty DocuShark document in the current workspace and return its id. The document starts with one blank canvas page (for diagrams) and one blank prose page (for text) — use add_shapes/connect to draw and the prose tools to write. This is the entry point for an agent authoring a document from scratch.",
             input_schema: json!({
@@ -408,6 +600,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_rename_document",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Rename a document (set its title). Updates the document name live for anyone who has it open. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -422,6 +615,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_document",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Permanently delete a document and all its pages, prose, and blobs. This cannot be undone on the server; anyone currently viewing it has it moved to their local Trash. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -435,8 +629,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_prose",
+            hints: ToolHints::READ,
             description:
-                "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML.",
+                "Read a document's prose (the written body, separate from the diagram canvas). With no pageId, returns every prose page (id, name, order, HTML content); with a pageId, returns just that page. Prose is stored as HTML. Each page carries a 'revision': pass it as expectedRevision to a whole-page write (set_prose without anchor or id, insert_section, restructure_outline, edit_table) so the write is refused if the page changed after this read.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -449,6 +644,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_prose_page",
+            hints: ToolHints::WRITE,
             description:
                 "Add a new prose page to a document and return its id. Content is Markdown by default (set format:\"html\" to pass HTML through). Use this to start a new section/chapter of the written document. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
@@ -465,8 +661,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_set_prose",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
-                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
+                "Write a prose page. By default replaces the entire page body with 'content'. For a TARGETED edit, pass 'anchor' — the current text of the line you want to change — and/or 'id' — the block's durable id (the id=\"blk-…\" attribute get_prose returns; survives text edits): 'content' then replaces only that block, leaving the rest of the page (and all its formatting) untouched. This reaches a single bullet, numbered item, table cell, heading, or paragraph anywhere on the page (the surrounding list/table/quote passes through) — strongly preferred over rewriting the whole page. The anchor must match exactly one line (it doubles as a confirmation lock; none or several → an ERR_ANCHOR_* error, so read the page first and copy the line's text; whitespace is normalized and styling/marks are ignored); with both 'id' and 'anchor', they must agree. A rewrite keeps the block's id (continuity), so links keep working. Content is Markdown by default (set format:\"html\"). Block formatting (cell colour/alignment, heading/paragraph alignment, ordered-list start/type) round-trips — as do table cell spans + column widths (colspan/rowspan/colwidth), inline highlight + text colour (<mark style=\"background-color:…\">, <span style=\"color:…\">), task lists (<ul data-type=\"taskList\">), and a code block's language — so you set them by writing the styled HTML with format:\"html\". The editor's other forms are accepted too (<b>, <i>, <del>, <strike>, styled spans as in a Google Docs paste, Markdown and GFM checkbox task lists); HTML the editor has no equivalent for degrades to its text and is reported in 'fixes'. For STRUCTURAL table changes (rows/columns/merges/headers/widths) prefer get_table + edit_table over rewriting table HTML. A whole-page write returns the page's new 'revision'; pass expectedRevision from your last read whenever the document may be open in an editor. Refuses local (renderer-owned) documents. Unsure what valid content looks like? Call get_skills first for the content contract.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -477,7 +674,8 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "anchor": {"type": "string", "description": "Optional. The current text of the line to replace — a single bullet, table cell, heading, or paragraph, anywhere on the page (its container passes through). Must match exactly one line; whitespace is normalized and styling/marks are ignored. Omit (and omit 'id') to replace the whole page."},
                     "id": {"type": "string", "description": "Optional. The target block's durable id (the id=\"blk-…\" you saw in get_prose / get_outline) — drift-proof addressing that survives text edits. Alone, or WITH 'anchor' as a content check: both must then resolve to the same block (ERR_ID_ANCHOR_MISMATCH otherwise). A stale id fails hard (ERR_ID_NOT_FOUND) — re-read the page rather than guessing."},
                     "anchorUntil": {"type": "string", "description": "Optional. With 'anchor'/'id', replace the inclusive span of sibling lines (same parent block) from the target through the line matching this text."},
-                    "untilId": {"type": "string", "description": "Optional. The span end's durable id — the id twin of 'anchorUntil'."}
+                    "untilId": {"type": "string", "description": "Optional. The span end's durable id — the id twin of 'anchorUntil'."},
+                    "expectedRevision": {"type": "string", "description": "Optional, whole-page writes only. The page's 'revision' from your last read: if the page has changed since, the write is refused with ERR_STALE_WRITE and nothing is written. Not accepted with anchor or id, which already check the target block."}
                 },
                 "required": ["docId", "pageId", "content"],
                 "additionalProperties": false
@@ -485,6 +683,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_insert_block",
+            hints: ToolHints::WRITE,
             description:
                 "Insert a NEW block beside an existing one without rewriting the page — the additive companion to set_prose's anchored edit (use this to ADD a bullet/paragraph/heading; use set_prose+anchor to CHANGE one). Pass 'anchor' — the current text of a block you can see — and the new 'content'; it's placed as a structural sibling of that block. Anchoring a bullet makes the new content a sibling bullet (a task item under a task list); anchoring a top-level paragraph/heading inserts at the top level; anchoring a line inside a blockquote/table cell inserts within it. 'side' is \"before\" or \"after\" (default \"after\"). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Content is Markdown by default (set format:\"html\"). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -504,6 +703,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_block",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a whole block by anchoring it — remove a bullet (and its nested sub-items), a paragraph, a heading, or a table cell's line, without rewriting the page. Pass 'anchor' — the current text of the block. Removes the entire structural unit, not just its text: deleting the last bullet removes the now-empty list, and the page never goes truly empty (a last-block delete leaves one empty paragraph). The anchor must match exactly one line (else an ERR_ANCHOR_* error). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -520,6 +720,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_move_block",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Move a block to a new position by anchoring both it and a target — reorder bullets within or across lists, or reorder top-level blocks, without rewriting the page. Pass 'anchor' (the block to move) and 'targetAnchor' (the block to move it next to), with 'side' \"before\"/\"after\" (default \"after\"). Moves the whole structural unit — a bullet keeps its nested sub-items. Same-kind only for now: anchor and target must both be bullets, or both top-level blocks; moving a bullet to the top level (or vice versa — the lift/sink case) is refused with ERR_MOVE_CROSS_CONTEXT. Also refuses self-moves and moving a block into its own subtree. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -539,6 +740,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_rename_prose_page",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Rename a prose page. Refuses local documents.",
             input_schema: json!({
@@ -554,6 +756,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_canvas_page",
+            hints: ToolHints::WRITE,
             description:
                 "Add a new (blank) canvas page to a document and return its id. Use this to start a second diagram in the same document; target it with the returned id in add_shape(s)/generate_diagram. Refuses local documents.",
             input_schema: json!({
@@ -568,6 +771,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_rename_canvas_page",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Rename a canvas page. Refuses local documents.",
             input_schema: json!({
@@ -583,6 +787,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_reorder_canvas_page",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set the order of a document's canvas pages. 'order' must be a permutation of the current canvas page ids. Refuses local documents.",
             input_schema: json!({
@@ -597,6 +802,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_canvas_page",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a canvas page by id. Refuses to delete the last remaining canvas page. Repoints the active page if the deleted one was active. Refuses local documents.",
             input_schema: json!({
@@ -611,8 +817,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_outline",
+            hints: ToolHints::READ,
             description:
-                "Return the heading outline of a prose page as an ordered list of { index, level, title }. 'index' is the 0-based heading position used by insert_section and restructure_outline. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
+                "Return the heading outline of a prose page as an ordered list of { index, level, title, id }, plus the page's 'revision'. Address a heading by its 'id' (its durable block id) in insert_section and restructure_outline: an index shifts when a heading is added above it, an id does not. Sections are flat: nesting is conveyed by 'level' (1–6), not containment.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -625,8 +832,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_insert_section",
+            hints: ToolHints::WRITE,
             description:
-                "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it with position:\"start\"|\"end\" (default \"end\"), or afterIndex to drop it right after an existing heading's section. Refuses local documents.",
+                "Insert a new section (a heading plus optional body) into a prose page. Body is Markdown by default (set format:\"html\"). Place it right after an existing section with afterId (that heading's id from get_outline; preferred) or afterIndex, or at position:\"start\"|\"end\" (default \"end\"). Returns the new section, the updated outline and the page's new revision. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -636,8 +844,10 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "title": {"type": "string", "description": "Heading text (plain)."},
                     "body": {"type": "string", "description": "Optional section body below the heading."},
                     "format": {"type": "string", "enum": ["markdown", "html"], "description": "Interpretation of body. Default: \"markdown\"."},
-                    "position": {"type": "string", "enum": ["start", "end"], "description": "Where to insert when afterIndex is absent. Default: \"end\"."},
-                    "afterIndex": {"type": "integer", "minimum": 0, "description": "Insert after the section at this 0-based heading index (takes precedence over position)."}
+                    "position": {"type": "string", "enum": ["start", "end"], "description": "Where to insert when neither afterId nor afterIndex is given. Default: \"end\"."},
+                    "afterId": {"type": "string", "description": "Insert after the section whose heading has this durable id (from get_outline). Takes precedence over position."},
+                    "afterIndex": {"type": "integer", "minimum": 0, "description": "Insert after the section at this 0-based heading index. Prefer afterId: an index shifts when a heading is added above it. With afterId, both must name the same heading."},
+                    "expectedRevision": expected_revision_schema()
                 },
                 "required": ["docId", "pageId", "level", "title"],
                 "additionalProperties": false
@@ -645,25 +855,30 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_restructure_outline",
+            hints: ToolHints::WRITE,
             description:
-                "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to toIndex. 'index' is the 0-based heading index from get_outline. Returns the updated outline. Refuses local documents.",
+                "Restructure a prose page's outline. op=\"promote\" makes a heading more prominent (level −1), \"demote\" less (level +1), \"move\" relocates a section to the position another heading holds now. Name the heading by 'id' (its durable block id from get_outline; preferred) or 'index', and the move destination by 'toId' or 'toIndex'. Returns the affected section, the updated outline and the page's new revision. Refuses local documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
                     "op": {"type": "string", "enum": ["promote", "demote", "move"]},
-                    "index": {"type": "integer", "minimum": 0, "description": "0-based heading index to act on."},
-                    "toIndex": {"type": "integer", "minimum": 0, "description": "Target section index for op=\"move\"."}
+                    "id": {"type": "string", "description": "The heading's durable block id from get_outline. Preferred over index: it still names the same heading after others are added above it."},
+                    "index": {"type": "integer", "minimum": 0, "description": "0-based heading index from get_outline. With id, both must name the same heading."},
+                    "toId": {"type": "string", "description": "For op=\"move\": the heading whose current position the section moves to."},
+                    "toIndex": {"type": "integer", "minimum": 0, "description": "For op=\"move\": the 0-based position the section moves to. With toId, both must name the same heading."},
+                    "expectedRevision": expected_revision_schema()
                 },
-                "required": ["docId", "pageId", "op", "index"],
+                "required": ["docId", "pageId", "op"],
                 "additionalProperties": false
             }),
         },
         ToolDescriptor {
             name: "docushark_get_table",
+            hints: ToolHints::READ,
             description:
-                "Read a prose-page table as a resolved, span-aware grid — the coordinate model edit_table addresses. Returns rows/cols and one entry per cell: its 0-based grid slot (row, col — a merged cell is addressable through ANY slot it covers), tag (th/td), colspan/rowspan, text, colwidth, styling, and the first in-cell block's durable id (edit that cell's text via set_prose with that id). Select the table with tableIndex (0-based, document order) or an anchor/id of content inside it; omit both when the page has one table. Always read this before edit_table — its coordinates are the ones ops take.",
+                "Read a prose-page table as a resolved, span-aware grid — the coordinate model edit_table addresses. Returns rows/cols and one entry per cell: its 0-based grid slot (row, col — a merged cell is addressable through ANY slot it covers), tag (th/td), colspan/rowspan, text, colwidth, styling, and the first in-cell block's durable id (edit that cell's text via set_prose with that id). Select the table with tableIndex (0-based, document order) or an anchor/id of content inside it; omit both when the page has one table. Always read this before edit_table — its coordinates are the ones ops take. Also returns the page's 'revision' for edit_table's expectedRevision.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -679,8 +894,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_edit_table",
+            hints: ToolHints::DESTRUCTIVE,
             description:
-                "Structural table surgery — one operation per call, addressed by get_table's 0-based span-aware grid coordinates (read it first; stale coordinates fail with ERR_CELL_RANGE, never guess). Ops: addRow/addColumn (at 'row'/'col', side before/after — a merged cell spanning the boundary grows instead of splitting), deleteRow/deleteColumn (spans shrink; the last row/column is refused), mergeCells (fromRow/fromCol → toRow/toCol rectangle; contents concatenate onto the top-left cell; a rectangle cutting through a merged cell is refused), splitCell (row/col; content stays on the anchor), setCellAttrs (row/col + backgroundColor/align/scope, empty string clears; scope is header-only), moveRow/moveColumn (from/to; refused on tables with merged cells), toggleHeaderRow/toggleHeaderColumn (row 0 / column 0), setColumnWidth (col + width px; omit width to clear). Returns the post-op grid. Writes the whole page (same granularity as restructure_outline). Refuses local documents. Table cell TEXT edits don't need this — use set_prose with the cell's block id.",
+                "Structural table surgery — one operation per call, addressed by get_table's 0-based span-aware grid coordinates (read it first; stale coordinates fail with ERR_CELL_RANGE, never guess). Ops: addRow/addColumn (at 'row'/'col', side before/after — a merged cell spanning the boundary grows instead of splitting), deleteRow/deleteColumn (spans shrink; the last row/column is refused), mergeCells (fromRow/fromCol → toRow/toCol rectangle; contents concatenate onto the top-left cell; a rectangle cutting through a merged cell is refused), splitCell (row/col; content stays on the anchor), setCellAttrs (row/col + backgroundColor/align/scope, empty string clears; scope is header-only), moveRow/moveColumn (from/to; refused on tables with merged cells), toggleHeaderRow/toggleHeaderColumn (row 0 / column 0), setColumnWidth (col + width px; omit width to clear). Returns the post-op grid. Writes the whole page (same granularity as restructure_outline) and returns its new revision; pass expectedRevision from your last read so the write is refused if the page changed. Refuses local documents. Table cell TEXT edits don't need this — use set_prose with the cell's block id.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -702,7 +918,8 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "backgroundColor": {"type": "string", "description": "setCellAttrs: CSS colour; \"\" clears."},
                     "align": {"type": "string", "description": "setCellAttrs: text-align (left/center/right); \"\" clears."},
                     "scope": {"type": "string", "description": "setCellAttrs: header scope (col/row); \"\" clears; header cells only."},
-                    "width": {"type": "integer", "minimum": 0, "description": "setColumnWidth: pixels; omit or 0 to clear."}
+                    "width": {"type": "integer", "minimum": 0, "description": "setColumnWidth: pixels; omit or 0 to clear."},
+                    "expectedRevision": expected_revision_schema()
                 },
                 "required": ["docId", "pageId", "op"],
                 "additionalProperties": false
@@ -710,6 +927,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_generate_diagram",
+            hints: ToolHints::WRITE,
             description:
                 "Generate a whole diagram in one call from a graph of nodes and edges. Each node becomes a labelled shape (rectangle by default, or ellipse); each edge becomes a connector between two nodes. The relay auto-positions everything: \"layered\" (top-down by edge direction with crossing minimization, good for flow/architecture diagrams; the default when edges exist) or \"grid\". Connectors attach to typed anchors and by default are routed orthogonally around intervening shapes with explicit waypoints; pass routing \"straight\" for plain anchor-to-anchor lines. Reference nodes in edges by their caller-supplied 'id'. Returns the map of node id → created shape id, plus the connector ids. Refuses local documents.",
             input_schema: json!({
@@ -753,12 +971,14 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_shape",
+            hints: ToolHints::WRITE,
             description:
                 "Add a single shape (rectangle, ellipse, text, or connector) to a page. Returns the id assigned. Warns if the document is locked by another user. Refuses local (renderer-owned) documents — those are read-only via MCP.",
             input_schema: dsl_shape_input_schema(),
         },
         ToolDescriptor {
             name: "docushark_add_shapes",
+            hints: ToolHints::WRITE,
             description:
                 "Add multiple shapes to a page in a single call. All-or-nothing: if any shape is invalid the whole batch is rejected and nothing is written. Returns the assigned ids in order.",
             input_schema: json!({
@@ -778,6 +998,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_connect",
+            hints: ToolHints::WRITE,
             description:
                 "Convenience over add_shape for connectors: creates a connector between two existing shapes on the same page. Anchors default to 'center'. Returns the new connector id.",
             input_schema: json!({
@@ -785,11 +1006,11 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                 "properties": {
                     "docId": {"type": "string"},
                     "pageId": {"type": "string"},
-                    "fromId": {"type": "string"},
-                    "toId": {"type": "string"},
-                    "fromAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
-                    "toAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
-                    "label": {"type": "string"}
+                    "fromId": {"type": "string", "description": "Id of the shape the connector starts at."},
+                    "toId": {"type": "string", "description": "Id of the shape the connector ends at."},
+                    "fromAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Side of the start shape to attach to. \"center\" (the default) aims at the shape's centre and stops at its edge."},
+                    "toAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Side of the end shape to attach to. \"center\" (the default) aims at the shape's centre and stops at its edge."},
+                    "label": {"type": "string", "description": "Optional text shown on the connector. Keep it short: a label longer than the connector overlaps the shapes it joins."}
                 },
                 "required": ["docId", "pageId", "fromId", "toId"],
                 "additionalProperties": false
@@ -797,6 +1018,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_update_shape",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Apply a partial DSL patch to an existing shape. Any subset of x, y, w, h, text, style, and icon fields (iconId/iconDisplayMode/iconSize) may be supplied; absent fields are left untouched. An empty iconId clears the icon. Refuses local documents.",
             input_schema: json!({
@@ -808,11 +1030,11 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
                     "patch": {
                         "type": "object",
                         "properties": {
-                            "x": {"type": "number"},
-                            "y": {"type": "number"},
-                            "w": {"type": "number"},
-                            "h": {"type": "number"},
-                            "text": {"type": "string"},
+                            "x": {"type": "number", "description": "New centre x in canvas units."},
+                            "y": {"type": "number", "description": "New centre y in canvas units."},
+                            "w": {"type": "number", "description": "New width. For an ellipse, the horizontal diameter."},
+                            "h": {"type": "number", "description": "New height. For an ellipse, the vertical diameter."},
+                            "text": {"type": "string", "description": "New label (rectangle, ellipse, connector) or content (text shape)."},
                             "iconId": {"type": "string", "description": "Icon-library id from docushark_list_icons. Empty string clears the icon."},
                             "iconDisplayMode": {"type": "string", "enum": ["inside","badge","icon-only"]},
                             "iconSize": {"type": "number"},
@@ -827,6 +1049,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_shape",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a shape by id. Connectors attached to it (start or end) are removed too, so no dangling connectors are left. Returns the ids actually deleted. Refuses local documents.",
             input_schema: json!({
@@ -842,6 +1065,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_prose_page",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Delete a prose page by id. Refuses to delete the last remaining prose page (a document always has at least one). Note: in a connected editor the page's tab may persist until reload (the prose page list isn't yet live-synced); its content is removed immediately. Refuses local documents.",
             input_schema: json!({
@@ -856,6 +1080,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_reorder_shapes",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set the z-order (front-to-back stacking) of a page's shapes. 'order' must be a permutation of the page's current shape ids — every id present, none added or duplicated (read get_page first). Later ids render on top. Refuses local documents.",
             input_schema: json!({
@@ -875,6 +1100,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_reorder_prose_pages",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set the order of a document's prose pages. 'order' must be a permutation of the current prose page ids (read get_prose first). Note: in a connected editor the tab order may update only on reload (the prose page list isn't yet live-synced). Refuses local documents.",
             input_schema: json!({
@@ -893,6 +1119,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_references",
+            hints: ToolHints::READ,
             description:
                 "Return a document's reference library (citations) as CSL-JSON items in display order, plus the active citation style. Read-only.",
             input_schema: json!({
@@ -906,6 +1133,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_resolve_doi",
+            hints: ToolHints::READ_OPEN_WORLD,
             description:
                 "Resolve a DOI to a CSL-JSON reference via doi.org content negotiation, WITHOUT modifying any document. Use it to preview a reference before add_reference. Returns the CSL item.",
             input_schema: json!({
@@ -919,8 +1147,9 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_add_reference",
+            hints: ToolHints::WRITE_OPEN_WORLD,
             description:
-                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The data-label is a CACHE, not the source of truth: a connected editor recomputes it from the library entry in the active citation style and writes the result back, so a label that renders wrong means the LIBRARY ENTRY is wrong — most often a missing author, which makes the formatter fall back to a title-first form. Repair it with update_reference; rewriting the label alone will be overwritten. The formatted bibliography (<div data-bibliography>) is generated in the editor from the library. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
+                "Add one or more references (citations) to a document's reference library. Supply EITHER 'doi' (resolved via doi.org to CSL-JSON) OR 'items' (raw CSL-JSON object(s)). Deduplicates by DOI then id; returns the ids added and how many were skipped as duplicates. This populates the library. To CITE a reference inline, write <span data-citation data-ref-id=\"<id>\" data-label=\"(Author, Year)\">(Author, Year)</span> via set_prose (format:\"html\"), where <id> is an id returned here — for scholarly or researched content, prefer real citations over a hand-typed reference list. The data-label is a CACHE, not the source of truth: a connected editor recomputes it from the library entry in the active citation style and writes the result back, so a label that renders wrong means the LIBRARY ENTRY is wrong — most often a missing author, which makes the formatter fall back to a title-first form. Repair it with update_reference; rewriting the label alone will be overwritten. To add the reference list, place an empty <div data-bibliography></div> via set_prose (Markdown or HTML format); the editor renders the formatted list from the library and caches it in the node, so never type the entries. A connected editor sees new references on reload (references aren't live-synced yet). Refuses local (renderer-owned) documents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -938,6 +1167,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_update_reference",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Repair an existing reference in a document's library. Supply 'id' (the library key) and 'item' (CSL-JSON). By default the fields you supply are MERGED into the existing entry, and an explicit null clears a field; pass replace:true to swap the whole item instead. The 'id' cannot be changed here — renaming it would orphan every inline citation pointing at it. Fails if 'id' is not already in the library; use add_reference to create one. This is the tool for an inline citation that renders with the wrong text: the inline data-label is a cache the editor recomputes from the library, so fixing the entry here is what changes what readers see. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -954,6 +1184,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_delete_reference",
+            hints: ToolHints::DESTRUCTIVE_IDEMPOTENT,
             description:
                 "Remove a reference from a document's library, and from the bibliography generated off it. REFUSES by default when the reference is still cited inline, naming where (page id and block id) and how many, so the blast radius is visible before you act; pass force:true to delete anyway, which leaves those inline citations unresolved. To repair a wrong entry rather than remove it, use update_reference. Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -969,6 +1200,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_fields",
+            hints: ToolHints::READ,
             description:
                 "Return a document's fields (reusable named values like \"Company\" or \"Version\") in display order, each as {name, value}. Read-only.",
             input_schema: json!({
@@ -982,6 +1214,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_set_fields",
+            hints: ToolHints::WRITE_IDEMPOTENT,
             description:
                 "Set or update one or more document fields (reusable named values). Each field is upserted by name: a new name is created, an existing name has its value replaced. Returns the names written and which were newly added. To reference a field in prose, write {{name}} in Markdown via set_prose/add_prose_page (it becomes a live field placeholder). Refuses local (renderer-owned) documents.",
             input_schema: json!({
@@ -1008,6 +1241,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_get_skills",
+            hints: ToolHints::READ,
             description:
                 "Learn how to drive DocuShark before writing. With no arguments, returns the content contract (the rules for valid prose + shapes, so your writes aren't malformed) and a catalogue of recipes. Pass {skill:\"<slug>\"} for a recipe's full steps. Call this first if you're unsure how a tool expects its input.",
             input_schema: json!({
@@ -1020,6 +1254,7 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
         },
         ToolDescriptor {
             name: "docushark_list_icons",
+            hints: ToolHints::READ,
             description:
                 "Discover icon IDs to put on shapes. Returns {id, name, category} entries plus the total match count and the available categories. Filter with `query` (substring over id + name) and/or `category` — the cloud sets are large, so always filter or page with `limit`. Apply an icon by setting `iconId` (with `iconDisplayMode`) on a shape via add_shape/add_shapes/update_shape. Read-only.",
             input_schema: json!({
@@ -1035,14 +1270,24 @@ pub fn descriptors() -> Vec<ToolDescriptor> {
     ]
 }
 
+/// Schema for the optional revision precondition on the whole-page prose
+/// writers (JP-513).
+fn expected_revision_schema() -> Value {
+    json!({
+        "type": "string",
+        "description": "Optional. The page's 'revision' from your last read (get_prose, get_outline or get_table). If the page has changed since, the write is refused with ERR_STALE_WRITE and nothing is written. Pass it whenever the document may be open in an editor."
+    })
+}
+
 fn dsl_style_schema_inline() -> Value {
     json!({
         "type": "object",
+        "description": "Colours and outline. Only these four keys take effect; any other key is dropped and reported in fixes.",
         "properties": {
-            "fill": {"type": "string"},
-            "stroke": {"type": "string"},
-            "strokeWidth": {"type": "number"},
-            "labelColor": {"type": "string"}
+            "fill": {"type": "string", "description": "Fill colour: a CSS colour such as \"#1e3a5f\", or \"auto\"."},
+            "stroke": {"type": "string", "description": "Outline colour: a CSS colour, or \"auto\"."},
+            "strokeWidth": {"type": "number", "description": "Outline width in canvas units."},
+            "labelColor": {"type": "string", "description": "Text colour: a CSS colour, or \"auto\" to pick a colour that contrasts with the fill. Left unset, labels use a dark default that is hard to read on dark fills."}
         },
         "additionalProperties": false
     })
@@ -1052,17 +1297,17 @@ fn dsl_shape_schema_inline() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "kind": {"type": "string", "enum": ["rectangle", "ellipse", "text", "connector"]},
-            "x": {"type": "number"},
-            "y": {"type": "number"},
-            "w": {"type": "number"},
-            "h": {"type": "number"},
-            "text": {"type": "string"},
-            "id": {"type": "string"},
-            "startShapeId": {"type": "string"},
-            "endShapeId": {"type": "string"},
-            "startAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
-            "endAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"]},
+            "kind": {"type": "string", "enum": ["rectangle", "ellipse", "text", "connector"], "description": "What to draw. A connector joins two existing shapes named by startShapeId and endShapeId."},
+            "x": {"type": "number", "description": "Centre x in canvas units. Shapes are positioned by their centre, not their top-left corner."},
+            "y": {"type": "number", "description": "Centre y in canvas units; y grows downward."},
+            "w": {"type": "number", "description": "Width in canvas units. For an ellipse, the horizontal diameter."},
+            "h": {"type": "number", "description": "Height in canvas units. For an ellipse, the vertical diameter."},
+            "text": {"type": "string", "description": "The label of a rectangle, ellipse or connector, or the content of a text shape."},
+            "id": {"type": "string", "description": "Optional id of your choosing, unique within the page. An id that already exists is refused, so a retried call cannot duplicate the shape."},
+            "startShapeId": {"type": "string", "description": "Connector-only. Id of the shape the connector starts at."},
+            "endShapeId": {"type": "string", "description": "Connector-only. Id of the shape the connector ends at."},
+            "startAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Connector-only. Side of the start shape to attach to. \"center\" aims at the shape's centre and stops at its edge."},
+            "endAnchor": {"type": "string", "enum": ["center","top","right","bottom","left"], "description": "Connector-only. Side of the end shape to attach to. \"center\" aims at the shape's centre and stops at its edge."},
             "startArrowStyle": {
                 "type": "string",
                 "enum": ["none","triangle","open","diamond"],
@@ -1432,12 +1677,166 @@ struct GetPageArgs {
     doc_id: DocId,
     #[serde(rename = "pageId")]
     page_id: String,
+    /// JP-512: read less of a large page. All optional and AND-combined.
+    ids: Option<Vec<String>>,
+    kinds: Option<Vec<String>>,
+    text: Option<String>,
+    region: Option<Region>,
+    fields: Option<Vec<String>>,
+    summary: Option<bool>,
+}
+
+/// An axis-aligned rectangle in canvas units (JP-512 `get_page` region).
+#[derive(Deserialize)]
+struct Region {
+    #[serde(rename = "minX")]
+    min_x: f64,
+    #[serde(rename = "minY")]
+    min_y: f64,
+    #[serde(rename = "maxX")]
+    max_x: f64,
+    #[serde(rename = "maxY")]
+    max_y: f64,
+}
+
+/// Every key a DSL shape read can carry, for validating a `fields` projection
+/// (JP-512): an unknown name is refused rather than silently returning shapes
+/// without it.
+const DSL_FIELDS: &[&str] = &[
+    "id", "kind", "x", "y", "w", "h", "text", "style", "iconId", "iconDisplayMode", "iconSize",
+    "startShapeId", "endShapeId", "startAnchor", "endAnchor", "routingMode", "waypoints",
+    "labelPosition", "fileName", "mimeType", "fileSize", "fileCategory", "blobRef", "label",
+    "_unmapped",
+];
+
+/// A DSL shape's bounds as `(minX, minY, maxX, maxY)`: its centre plus or
+/// minus half its size, or just the centre when it has no size.
+fn dsl_bounds(shape: &Value) -> Option<(f64, f64, f64, f64)> {
+    let x = shape["x"].as_f64()?;
+    let y = shape["y"].as_f64()?;
+    let half_w = shape["w"].as_f64().unwrap_or(0.0) / 2.0;
+    let half_h = shape["h"].as_f64().unwrap_or(0.0) / 2.0;
+    Some((x - half_w, y - half_h, x + half_w, y + half_h))
+}
+
+/// Apply `get_page`'s optional filters (JP-512), keeping z-order. Filters
+/// combine. A region selects shapes by their bounds; a connector has no
+/// reliable geometry of its own, so it joins a region selection when either
+/// end is a shape the region selected.
+fn filter_page_shapes(shapes: Vec<Value>, args: &GetPageArgs) -> Vec<Value> {
+    let needle = args.text.as_ref().map(|t| t.to_lowercase());
+    let basic = |shape: &Value| {
+        let id = shape["id"].as_str().unwrap_or_default();
+        let kind = shape["kind"].as_str().unwrap_or_default();
+        args.ids.as_ref().map_or(true, |ids| ids.iter().any(|i| i == id))
+            && args.kinds.as_ref().map_or(true, |kinds| kinds.iter().any(|k| k == kind))
+            && needle.as_ref().map_or(true, |n| {
+                shape["text"].as_str().is_some_and(|t| t.to_lowercase().contains(n.as_str()))
+            })
+    };
+    let Some(region) = &args.region else {
+        return shapes.into_iter().filter(|s| basic(s)).collect();
+    };
+    let selected: std::collections::HashSet<String> = shapes
+        .iter()
+        .filter(|s| s["kind"] != "connector")
+        .filter(|s| {
+            dsl_bounds(s).is_some_and(|(x0, y0, x1, y1)| {
+                x0 <= region.max_x && x1 >= region.min_x && y0 <= region.max_y && y1 >= region.min_y
+            })
+        })
+        .filter_map(|s| s["id"].as_str().map(String::from))
+        .collect();
+    shapes
+        .into_iter()
+        .filter(|s| {
+            let in_region = if s["kind"] == "connector" {
+                [&s["startShapeId"], &s["endShapeId"]]
+                    .iter()
+                    .any(|end| end.as_str().is_some_and(|id| selected.contains(id)))
+            } else {
+                s["id"].as_str().is_some_and(|id| selected.contains(id))
+            };
+            in_region && basic(s)
+        })
+        .collect()
+}
+
+/// `get_page` summary mode (JP-512): how many shapes match, by kind, and the
+/// bounding box of the non-connector ones (`null` when there are none).
+fn summarize_page_shapes(shapes: &[Value]) -> Value {
+    let mut by_kind = serde_json::Map::new();
+    let mut bounds: Option<(f64, f64, f64, f64)> = None;
+    for shape in shapes {
+        let kind = shape["kind"].as_str().unwrap_or("unknown").to_string();
+        let n = by_kind.get(&kind).and_then(Value::as_u64).unwrap_or(0);
+        by_kind.insert(kind, json!(n + 1));
+        if shape["kind"] == "connector" {
+            continue;
+        }
+        if let Some((x0, y0, x1, y1)) = dsl_bounds(shape) {
+            bounds = Some(match bounds {
+                None => (x0, y0, x1, y1),
+                Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+            });
+        }
+    }
+    json!({
+        "count": shapes.len(),
+        "byKind": by_kind,
+        "bounds": bounds.map(|(a, b, c, d)| json!({
+            "minX": round2(a), "minY": round2(b), "maxX": round2(c), "maxY": round2(d),
+        })),
+    })
+}
+
+/// Keep only the requested keys of a DSL shape (JP-512); `id` always stays.
+fn project_shape(shape: Value, fields: &[String]) -> Value {
+    match shape {
+        Value::Object(obj) => Value::Object(
+            obj.into_iter()
+                .filter(|(key, _)| key == "id" || fields.iter().any(|f| f == key))
+                .collect(),
+        ),
+        other => other,
+    }
 }
 
 fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: GetPageArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
+    if let Some(bad) = parsed
+        .fields
+        .iter()
+        .flatten()
+        .find(|f| !DSL_FIELDS.contains(&f.as_str()))
+    {
+        return Err(format!(
+            "Unknown field '{bad}' in fields; a shape read can carry: {}",
+            DSL_FIELDS.join(", ")
+        ));
+    }
+    let (shapes, source) = read_page_shapes(ctx, &parsed)?;
+    let shapes = filter_page_shapes(shapes, &parsed);
+    let result = if parsed.summary == Some(true) {
+        json!({"summary": summarize_page_shapes(&shapes), "source": source.wire()})
+    } else {
+        let shapes: Vec<Value> = match &parsed.fields {
+            Some(fields) => shapes.into_iter().map(|s| project_shape(s, fields)).collect(),
+            None => shapes,
+        };
+        json!({"shapes": shapes, "source": source.wire()})
+    };
+    Ok(ToolOutcome {
+        result,
+        changed_doc_id: None,
+        change_detail: None,
+    })
+}
 
+/// Every shape on a page as DSL objects in z-order, and where they were read
+/// from.
+fn read_page_shapes(ctx: &ToolContext, parsed: &GetPageArgs) -> Result<(Vec<Value>, DocSource), String> {
     // JP-251/JP-340: resident-accurate when the doc is hot — reads the live
     // Y.Doc the write path mutates (JP-35) for THIS page's surface
     // (`shapes:<pageId>`), so a write-then-read round-trip is consistent on any
@@ -1456,11 +1855,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .filter_map(|id| shapes_map.get(id))
         .map(shape_to_dsl_or_generic)
         .collect();
-        return Ok(ToolOutcome {
-            result: json!({"shapes": shapes, "source": DocSource::Relay.wire()}),
-            changed_doc_id: None,
-            change_detail: None,
-        });
+        return Ok((shapes, DocSource::Relay));
     }
 
     let (doc, source) = fetch_doc(ctx, &parsed.doc_id)?;
@@ -1482,12 +1877,7 @@ fn get_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         .filter_map(|id| shapes_obj.get(id))
         .map(shape_to_dsl_or_generic)
         .collect();
-
-    Ok(ToolOutcome {
-        result: json!({"shapes": shapes, "source": source.wire()}),
-        changed_doc_id: None,
-        change_detail: None,
-    })
+    Ok((shapes, source))
 }
 
 /// A shape's DSL form, or a generic descriptor for kinds the foundation adapter
@@ -1499,14 +1889,16 @@ fn shape_to_dsl_or_generic(shape: &Value) -> Value {
         // metadata read-only here (NOT in the bidirectional DSL adapter —
         // agents must not author file shapes via add_shape; bytes are fetched
         // with get_file).
+        // JP-512: coordinates rounded like every other DSL read.
+        let rounded = |key: &str| shape.get(key).and_then(Value::as_f64).map(round2);
         if shape.get("type").and_then(|v| v.as_str()) == Some("file") {
             return json!({
                 "id": shape.get("id"),
                 "kind": "file",
-                "x": shape.get("x"),
-                "y": shape.get("y"),
-                "w": shape.get("width"),
-                "h": shape.get("height"),
+                "x": rounded("x"),
+                "y": rounded("y"),
+                "w": rounded("width"),
+                "h": rounded("height"),
                 "fileName": shape.get("fileName"),
                 "mimeType": shape.get("mimeType"),
                 "fileSize": shape.get("fileSize"),
@@ -1518,8 +1910,8 @@ fn shape_to_dsl_or_generic(shape: &Value) -> Value {
         json!({
             "id": shape.get("id"),
             "kind": shape.get("type"),
-            "x": shape.get("x"),
-            "y": shape.get("y"),
+            "x": rounded("x"),
+            "y": rounded("y"),
             "_unmapped": true,
         })
     })
@@ -2267,8 +2659,41 @@ pub(crate) fn markdown_to_html_for_tests(md: &str) -> String {
     markdown_to_html(md)
 }
 
+/// Render Markdown with no field library, so `{{name}}` tokens become
+/// label-less placeholders the editor resolves live.
+///
+/// Test-only: every production write resolves fields first and calls
+/// [`markdown_to_html_with_fields`] directly. This exists because the adapter
+/// suite and the JP-468 round-trip hook assert Markdown-shape behaviour that has
+/// nothing to do with fields, and threading an empty map through each of them
+/// would add noise to ~15 call sites without adding coverage.
+#[cfg(test)]
 fn markdown_to_html(md: &str) -> String {
-    use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
+    markdown_to_html_with_fields(md, &FieldMap::new())
+}
+
+/// Render Markdown to the HTML TipTap persists, resolving `{{name}}` against
+/// `fields`.
+///
+/// ## A field token appears in two contexts; only one of them used to work
+///
+/// **In text** it becomes a `fieldRef` span, and the value is baked in as
+/// `data-label` plus the span's text child — matching what
+/// `prose_html::field_html` promises static consumers and what the editor's
+/// `renderHTML` emits.
+///
+/// **In a link or image destination** a span is impossible, because an `href`
+/// holds a URL, so the resolved value is substituted into the destination
+/// itself. Missing this second context produced silently dead links: `dest_url`
+/// lives on `Tag::Link`, not an `Event::Text`, so `[click]({{unsubscribe_link}})`
+/// fell through to `push_html`, which percent-encoded the braces into
+/// `%7B%7B…%7D%7D`. That fails in the worst direction — a reader sees an
+/// ordinary link and gets a 404 — which is how it survived in a real document.
+///
+/// An unresolvable name is left exactly as written in both contexts rather than
+/// guessed at.
+fn markdown_to_html_with_fields(md: &str, fields: &FieldMap) -> String {
+    use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -2293,7 +2718,30 @@ fn markdown_to_html(md: &str) -> String {
                 events.push(Event::End(TagEnd::CodeBlock));
             }
             Event::Text(t) if in_code_block == 0 && t.contains("{{") => {
-                expand_field_tokens(&t, &mut events);
+                expand_field_tokens(&t, fields, &mut events);
+            }
+            // Destinations are carried on the tag, not as text, so the pass
+            // above can never reach them. Code spans are unaffected: pulldown
+            // does not parse a link inside one.
+            Event::Start(Tag::Link { link_type, dest_url, title, id })
+                if dest_url.contains("{{") =>
+            {
+                events.push(Event::Start(Tag::Link {
+                    link_type,
+                    dest_url: CowStr::from(substitute_field_tokens(&dest_url, fields)),
+                    title,
+                    id,
+                }));
+            }
+            Event::Start(Tag::Image { link_type, dest_url, title, id })
+                if dest_url.contains("{{") =>
+            {
+                events.push(Event::Start(Tag::Image {
+                    link_type,
+                    dest_url: CowStr::from(substitute_field_tokens(&dest_url, fields)),
+                    title,
+                    id,
+                }));
             }
             other => events.push(other),
         }
@@ -2469,11 +2917,14 @@ fn try_parse_field_token(s: &str) -> Option<(&str, usize)> {
 }
 
 /// Split `text` on `{{name}}` tokens, pushing literal stretches as `Event::Text`
-/// and each token as an `Event::InlineHtml` `<span data-field data-name="name">`
-/// (no `data-label` — the editor's nodeView fills the live value). A malformed
-/// `{{…` with no valid close stays literal. (LaTeX math is handled earlier, on
-/// the raw Markdown, by [`protect_math`].)
-fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>) {
+/// and each token as an `Event::InlineHtml` `fieldRef` span. A malformed `{{…`
+/// with no valid close stays literal. (LaTeX math is handled earlier, on the raw
+/// Markdown, by [`protect_math`].)
+fn expand_field_tokens<'a>(
+    text: &str,
+    fields: &FieldMap,
+    out: &mut Vec<pulldown_cmark::Event<'a>>,
+) {
     use pulldown_cmark::{CowStr, Event};
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -2482,8 +2933,7 @@ fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>)
         if bytes[i] == b'{' && bytes[i + 1] == b'{' {
             if let Some((name, consumed)) = try_parse_field_token(&text[i + 2..]) {
                 flush_literal(text, literal_start, i, out);
-                let span = format!("<span data-field data-name=\"{}\"></span>", escape_field_attr(name));
-                out.push(Event::InlineHtml(CowStr::from(span)));
+                out.push(Event::InlineHtml(CowStr::from(field_span_html(name, fields))));
                 i += 2 + consumed;
                 literal_start = i;
                 continue;
@@ -2492,6 +2942,29 @@ fn expand_field_tokens<'a>(text: &str, out: &mut Vec<pulldown_cmark::Event<'a>>)
         i += 1;
     }
     flush_literal(text, literal_start, text.len(), out);
+}
+
+/// The `fieldRef` span for `name`, baked with its value when `fields` has one.
+///
+/// Baking is what makes the field visible to everything that is not a live
+/// editor. The write path used to emit the label-less form unconditionally,
+/// trusting the editor's nodeView to fill the value in — but that only happens
+/// once a human opens the document, so PDF export, MCP `get_prose` and any
+/// non-collaborative open rendered an agent-authored field as nothing at all.
+/// An unknown (or empty) name still emits the label-less form: the editor can
+/// resolve it live, and `field_html` omits an empty label anyway, so writing one
+/// would add noise without adding meaning.
+fn field_span_html(name: &str, fields: &FieldMap) -> String {
+    let attr = escape_field_attr(name);
+    match fields.get(name) {
+        Some(value) if !value.is_empty() => format!(
+            "<span data-field data-name=\"{}\" data-label=\"{}\">{}</span>",
+            attr,
+            escape_field_attr(value),
+            escape_html(value)
+        ),
+        _ => format!("<span data-field data-name=\"{}\"></span>", attr),
+    }
 }
 
 /// Push `text[start..end]` as an `Event::Text` if non-empty.
@@ -2559,14 +3032,82 @@ fn check_prose_size(content: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A document's field values by name, resolved once per write. Empty values are
+/// dropped so "present but blank" and "absent" behave alike — `field_html` omits
+/// an empty label too, and agreeing with it keeps one rule instead of two.
+type FieldMap = std::collections::BTreeMap<String, String>;
+
+/// Read the document's field library for a prose write.
+///
+/// Live-then-resident, the same order `list_fields` uses: the Y.Doc library is
+/// fresher than the snapshot whenever the document is open. **Best-effort by
+/// design** — a prose write must never fail because fields could not be read,
+/// and an empty map reproduces exactly the previous label-less behaviour, so the
+/// worst case is the bug this replaces rather than a lost write.
+fn resolve_field_values(ctx: &ToolContext, doc_id: &DocId) -> FieldMap {
+    let raw = if let Some(handle) = resident_handle(ctx, doc_id) {
+        handle.fields_json()
+    } else {
+        match fetch_doc(ctx, doc_id) {
+            Ok((doc, _)) => doc
+                .get("fields")
+                .and_then(|f| f.get("fields"))
+                .and_then(|m| m.as_object())
+                .cloned()
+                .unwrap_or_default(),
+            Err(_) => serde_json::Map::new(),
+        }
+    };
+    raw.into_iter()
+        .filter_map(|(name, field)| {
+            let value = field.get("value")?.as_str()?;
+            (!value.is_empty()).then(|| (name, value.to_string()))
+        })
+        .collect()
+}
+
+/// Replace every `{{name}}` in `s` that `fields` resolves, leaving anything it
+/// does not resolve exactly as written. Used for link and image destinations,
+/// where a `fieldRef` span cannot go and only the value itself will do.
+fn substitute_field_tokens(s: &str, fields: &FieldMap) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut literal_start = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'{' && bytes[i + 1] == b'{' {
+            if let Some((name, consumed)) = try_parse_field_token(&s[i + 2..]) {
+                if let Some(value) = fields.get(name).filter(|v| !v.is_empty()) {
+                    out.push_str(&s[literal_start..i]);
+                    out.push_str(value);
+                    i += 2 + consumed;
+                    literal_start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&s[literal_start..]);
+    out
+}
+
 /// Turn agent-supplied content into the HTML stored on a prose page.
 /// Markdown is the default (agents produce it reliably); `html` is a
 /// pass-through escape hatch. The editor re-parses this HTML against the
 /// ProseMirror schema on load, which silently drops anything the schema
 /// doesn't model — a natural sanitizer for pass-through HTML.
-fn content_to_html(content: &str, format: Option<&str>) -> Result<String, String> {
+///
+/// `fields` resolves `{{name}}` at write time. Pass-through `html` is left
+/// alone: an author writing raw HTML has already chosen their own markup, and
+/// rewriting it would make the escape hatch less of one.
+fn content_to_html(
+    content: &str,
+    format: Option<&str>,
+    fields: &FieldMap,
+) -> Result<String, String> {
     match format.unwrap_or("markdown") {
-        "markdown" | "md" => Ok(markdown_to_html(content)),
+        "markdown" | "md" => Ok(markdown_to_html_with_fields(content, fields)),
         "html" => Ok(content.to_string()),
         other => Err(format!(
             "Unknown content format '{}'; expected 'markdown' or 'html'",
@@ -2603,8 +3144,16 @@ fn get_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     // Live Y.Doc content overlaid on the JSON page list when the doc is
     // resident (JP-201), so an agent sees prose a connected editor just typed.
     let resolved = resolve_prose_pages(ctx, &parsed.doc_id, &doc);
+    // JP-513: each page's revision is the hash of exactly the content returned
+    // here, so it can be passed back as a whole-page write's precondition.
     let render = |id: &str, name: &Value, order: &Value, content: &str| {
-        json!({"id": id, "name": name, "order": order, "content": content})
+        json!({
+            "id": id,
+            "name": name,
+            "order": order,
+            "content": content,
+            "revision": crate::sync::prose_revision(content),
+        })
     };
 
     if let Some(page_id) = parsed.page_id {
@@ -2647,10 +3196,11 @@ fn add_prose_page(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
 
     // Render once, outside the retry loop — deterministic and lets a bad
     // format fail fast before we touch the store.
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
     let html = match &parsed.content {
         Some(c) => {
             check_prose_size(c)?;
-            content_to_html(c, parsed.format.as_deref())?
+            content_to_html(c, parsed.format.as_deref(), &fields)?
         }
         None => String::new(),
     };
@@ -2756,18 +3306,33 @@ struct SetProseArgs {
     /// JP-432 Pillar C: the span end's durable id (the id twin of `anchorUntil`).
     #[serde(rename = "untilId")]
     until_id: Option<String>,
+    /// JP-513: whole-page writes only — refuse unless the page is still at
+    /// this revision (from `get_prose` / `get_outline` / `get_table`).
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let parsed: SetProseArgs =
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
+    let targeted = parsed.anchor.is_some() || parsed.id.is_some();
+    if targeted && parsed.expected_revision.is_some() {
+        // Refused rather than ignored: silently dropping a precondition would
+        // let the caller believe the write was guarded.
+        return Err("expectedRevision applies to whole-page writes only: an anchored or id-addressed \
+            write already checks the target block's current text and id. Drop expectedRevision, or \
+            omit anchor and id to replace the whole page."
+            .into());
+    }
     check_prose_size(&parsed.content)?;
-    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
+    let html = content_to_html(&parsed.content, parsed.format.as_deref(), &fields)?;
     // JP-328: report what the structural gate healed, so the author sees it.
     let fixes = crate::sync::validate_prose_html(&html);
 
-    if parsed.anchor.is_some() || parsed.id.is_some() {
+    let mut revision = None;
+    if targeted {
         // JP-239: anchored, block-level replace — only the matched block(s)
         // change. Target = anchor and/or durable id (JP-432 Pillar C).
         let target =
@@ -2785,23 +3350,31 @@ fn set_prose(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         // unless this write would become the deterministic first seed (JP-338;
         // see fill_ids_for_page_write).
         let html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &html);
-        write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &html, |doc| {
-            let now = now_ms();
-            let rtp = rich_text_pages_mut(doc)?;
-            let page = rtp
-                .get_mut("pages")
-                .and_then(|v| v.as_object_mut())
-                .and_then(|pages| pages.get_mut(&parsed.page_id))
-                .and_then(|p| p.as_object_mut())
-                .ok_or_else(|| format!("Prose page '{}' not found", parsed.page_id))?;
-            page.insert("content".into(), json!(html));
-            page.insert("modifiedAt".into(), json!(now));
-            stamp_doc_modified(doc, now);
-            Ok(())
-        })?
+        // JP-513: with expectedRevision, the write lands only if the page is
+        // still at that revision.
+        let fallback;
+        let check = match parsed.expected_revision.as_deref() {
+            Some(expected) => {
+                // An empty live fragment reads as the JSON projection.
+                let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
+                fallback = read_prose_content(&doc_json, &parsed.page_id).unwrap_or_default();
+                Some(crate::sync::RevisionCheck { expected, empty_fallback: &fallback })
+            }
+            None => None,
+        };
+        revision = Some(write_prose_page_checked(
+            ctx,
+            &parsed.doc_id,
+            &parsed.page_id,
+            &html,
+            check,
+        )?);
     }
 
     let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    if let Some(revision) = revision {
+        result["revision"] = json!(revision);
+    }
     if !fixes.is_empty() {
         result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
     }
@@ -2850,7 +3423,8 @@ fn insert_block(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> 
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
     check_prose_size(&parsed.content)?;
-    let html = content_to_html(&parsed.content, parsed.format.as_deref())?;
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
+    let html = content_to_html(&parsed.content, parsed.format.as_deref(), &fields)?;
     // JP-328: same structural gate as set_prose, so the author sees what healed.
     let fixes = crate::sync::validate_prose_html(&html);
     let side = match parsed.side.as_deref() {
@@ -3339,7 +3913,11 @@ fn get_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let content = resolve_prose_content(ctx, &parsed.doc_id, &doc, &parsed.page_id)?;
     let outline = Outline::parse(&content);
     Ok(ToolOutcome {
-        result: json!({"outline": outline_summary(&outline), "source": source.wire()}),
+        result: json!({
+            "outline": outline_summary(&outline),
+            "revision": crate::sync::prose_revision(&content),
+            "source": source.wire(),
+        }),
         changed_doc_id: None,
         change_detail: None,
     })
@@ -3356,8 +3934,14 @@ struct InsertSectionArgs {
     body: Option<String>,
     format: Option<String>,
     position: Option<String>,
+    /// JP-513: insert after the section whose heading has this durable id.
+    #[serde(rename = "afterId")]
+    after_id: Option<String>,
     #[serde(rename = "afterIndex")]
     after_index: Option<usize>,
+    /// JP-513: refuse the write unless the page is still at this revision.
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -3381,41 +3965,73 @@ fn insert_section(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String
     let title = parsed.title.trim().to_string();
     let inner_html = escape_html(&title);
     // Render the body once, up front, so a bad format fails before any write.
+    let fields = resolve_field_values(ctx, &parsed.doc_id);
     let body_html = match &parsed.body {
         Some(b) => {
             check_prose_size(b)?;
-            content_to_html(b, parsed.format.as_deref())?
+            content_to_html(b, parsed.format.as_deref(), &fields)?
         }
         None => String::new(),
     };
 
     // Read the current page content (live if resident, else JSON), apply the
-    // insert, then write the whole page back live-or-JSON (JP-238).
-    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
-    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
-    let mut outline = Outline::parse(&current);
-    let len = outline.sections.len();
-    let pos = match parsed.after_index {
-        Some(ai) => (ai + 1).min(len),
-        None => match parsed.position.as_deref() {
-            Some("start") => 0,
-            _ => len,
+    // insert, then write the whole page back live-or-JSON (JP-238) — conditioned
+    // on the revision read, so nothing written in between is lost (JP-513).
+    let (revision, (summary, pos)) = modify_prose_page(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        parsed.expected_revision.as_deref(),
+        |current| {
+            let mut outline = Outline::parse(current);
+            let len = outline.sections.len();
+            let pos = if parsed.after_id.is_some() {
+                let after = resolve_heading(
+                    &outline,
+                    parsed.after_id.as_deref(),
+                    parsed.after_index,
+                    "afterId",
+                    "afterIndex",
+                )?;
+                after + 1
+            } else {
+                match parsed.after_index {
+                    Some(ai) => (ai + 1).min(len),
+                    None => match parsed.position.as_deref() {
+                        Some("start") => 0,
+                        _ => len,
+                    },
+                }
+            };
+            // The new heading's durable id arrives via the whole-page fill below
+            // (it also back-fills any legacy id-less heading on the page).
+            outline.sections.insert(
+                pos,
+                Section {
+                    level,
+                    attrs_html: String::new(),
+                    id: None,
+                    inner_html: inner_html.clone(),
+                    title: title.clone(),
+                    body_html: body_html.clone(),
+                },
+            );
+            let new_html =
+                fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+            // Summarise AFTER the fill, so the new heading's id reaches the caller.
+            let summary = outline_summary(&Outline::parse(&new_html));
+            Ok((new_html, (summary, pos)))
         },
-    };
-    // The new heading's durable id arrives via the whole-page fill below (it
-    // also back-fills any legacy id-less heading on the page).
-    outline.sections.insert(
-        pos,
-        Section { level, attrs_html: String::new(), id: None, inner_html, title, body_html },
-    );
-    let new_html =
-        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+    )?;
 
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
-        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
-    })?;
-
-    let mut result = json!({"pageId": parsed.page_id, "ok": true});
+    let section = summary[pos].clone();
+    let mut result = json!({
+        "pageId": parsed.page_id,
+        "ok": true,
+        "section": section,
+        "outline": summary,
+        "revision": revision,
+    });
     attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
         result,
@@ -3431,9 +4047,18 @@ struct RestructureOutlineArgs {
     #[serde(rename = "pageId")]
     page_id: String,
     op: String,
-    index: usize,
+    /// JP-513: the heading's durable block id; with `index`, both must agree.
+    id: Option<String>,
+    index: Option<usize>,
+    /// JP-513: for "move", the heading whose current position the section
+    /// moves to; with `toIndex`, both must agree.
+    #[serde(rename = "toId")]
+    to_id: Option<String>,
     #[serde(rename = "toIndex")]
     to_index: Option<usize>,
+    /// JP-513: refuse the write unless the page is still at this revision.
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
@@ -3441,58 +4066,75 @@ fn restructure_outline(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, S
         serde_json::from_value(args.clone()).map_err(|e| format!("Invalid arguments: {}", e))?;
     reject_if_local(ctx, &parsed.doc_id)?;
 
-    // Read current content (live if resident, else JSON), apply the op, then
-    // write the whole page back live-or-JSON (JP-238).
-    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
-    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
-    let mut outline = Outline::parse(&current);
-    let n = outline.sections.len();
-    if parsed.index >= n {
+    if !matches!(parsed.op.as_str(), "promote" | "demote" | "move") {
         return Err(format!(
-            "No section at index {} — the page has {} heading(s)",
-            parsed.index, n
+            "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
+            parsed.op
         ));
     }
+
+    // Read current content (live if resident, else JSON), apply the op, then
+    // write the whole page back live-or-JSON (JP-238) — conditioned on the
+    // revision read, so nothing written in between is lost (JP-513).
     let mut fixes = Vec::new();
-    match parsed.op.as_str() {
-        "promote" => {
-            let lvl = outline.sections[parsed.index].level as i64;
-            let new = clamp_level(lvl - 1);
-            if i64::from(new) == lvl {
-                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
-            }
-            outline.sections[parsed.index].level = new;
-        }
-        "demote" => {
-            let lvl = outline.sections[parsed.index].level as i64;
-            let new = clamp_level(lvl + 1);
-            if i64::from(new) == lvl {
-                fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
-            }
-            outline.sections[parsed.index].level = new;
-        }
-        "move" => {
-            let to = parsed.to_index.ok_or("op 'move' requires 'toIndex'")?.min(n - 1);
-            let section = outline.sections.remove(parsed.index);
-            outline.sections.insert(to, section);
-        }
-        other => {
-            return Err(format!(
-                "Unknown op '{}'; expected 'promote', 'demote', or 'move'",
-                other
-            ))
-        }
-    }
-    let new_html =
-        fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
-    // Summarise AFTER the fill, so back-filled heading ids reach the caller.
-    let summary = outline_summary(&Outline::parse(&new_html));
+    let (revision, (summary, affected)) = modify_prose_page(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        parsed.expected_revision.as_deref(),
+        |current| {
+            fixes.clear();
+            let mut outline = Outline::parse(current);
+            let index =
+                resolve_heading(&outline, parsed.id.as_deref(), parsed.index, "id", "index")?;
+            let affected = match parsed.op.as_str() {
+                "promote" | "demote" => {
+                    let lvl = outline.sections[index].level as i64;
+                    let step = if parsed.op == "promote" { -1 } else { 1 };
+                    let new = clamp_level(lvl + step);
+                    if i64::from(new) == lvl {
+                        fixes.push(boundary_noop_fix(parsed.op.as_str(), lvl));
+                    }
+                    outline.sections[index].level = new;
+                    index
+                }
+                _ => {
+                    // "move": the section ends up at the position the destination
+                    // heading holds now (the toIndex meaning, addressed by id).
+                    let to = if parsed.to_id.is_some() {
+                        resolve_heading(
+                            &outline,
+                            parsed.to_id.as_deref(),
+                            parsed.to_index,
+                            "toId",
+                            "toIndex",
+                        )?
+                    } else {
+                        parsed
+                            .to_index
+                            .ok_or("op 'move' requires 'toId' or 'toIndex'")?
+                            .min(outline.sections.len() - 1)
+                    };
+                    let section = outline.sections.remove(index);
+                    outline.sections.insert(to, section);
+                    to
+                }
+            };
+            let new_html =
+                fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outline.to_html());
+            // Summarise AFTER the fill, so back-filled heading ids reach the caller.
+            let summary = outline_summary(&Outline::parse(&new_html));
+            Ok((new_html, (summary, affected)))
+        },
+    )?;
 
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
-        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
-    })?;
-
-    let mut result = json!({"pageId": parsed.page_id, "outline": summary});
+    let section = summary[affected].clone();
+    let mut result = json!({
+        "pageId": parsed.page_id,
+        "section": section,
+        "outline": summary,
+        "revision": revision,
+    });
     attach_fixes(&mut result, &fixes);
     Ok(ToolOutcome {
         result,
@@ -3545,6 +4187,9 @@ struct EditTableArgs {
     align: Option<String>,
     scope: Option<String>,
     width: Option<u32>,
+    /// JP-513: refuse the write unless the page is still at this revision.
+    #[serde(rename = "expectedRevision")]
+    expected_revision: Option<String>,
 }
 
 /// The table selector shared by `get_table`/`edit_table`: an explicit index,
@@ -3649,6 +4294,7 @@ fn get_table(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
         result: json!({
             "pageId": parsed.page_id,
             "table": serde_json::to_value(&grid).map_err(|e| e.to_string())?,
+            "revision": crate::sync::prose_revision(&current),
         }),
         changed_doc_id: None,
         change_detail: None,
@@ -3667,28 +4313,35 @@ fn edit_table(ctx: &ToolContext, args: &Value) -> Result<ToolOutcome, String> {
     let op = parse_table_op(&parsed)?;
     let sel = table_sel(parsed.table_index, &parsed.id, &parsed.anchor)?;
 
-    let (doc_json, _) = fetch_doc(ctx, &parsed.doc_id)?;
-    let current = resolve_prose_content(ctx, &parsed.doc_id, &doc_json, &parsed.page_id)?;
-    let outcome = crate::sync::edit_table_in_html(&current, &sel, &op)?;
-    let new_html = fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outcome.html);
-    // Re-grid AFTER the fill so back-filled cell ids reach the caller (the
-    // restructure_outline convention); the index is stable across the fill.
-    let grid = crate::sync::table_grid_in_html(
-        &new_html,
-        &crate::sync::TableSel::Index(outcome.grid.table_index),
+    // Conditioned on the revision read, so nothing written in between is lost
+    // (JP-513).
+    let (revision, (grid, fixes)) = modify_prose_page(
+        ctx,
+        &parsed.doc_id,
+        &parsed.page_id,
+        parsed.expected_revision.as_deref(),
+        |current| {
+            let outcome = crate::sync::edit_table_in_html(current, &sel, &op)?;
+            let new_html =
+                fill_ids_for_page_write(ctx, &parsed.doc_id, &parsed.page_id, &outcome.html);
+            // Re-grid AFTER the fill so back-filled cell ids reach the caller (the
+            // restructure_outline convention); the index is stable across the fill.
+            let grid = crate::sync::table_grid_in_html(
+                &new_html,
+                &crate::sync::TableSel::Index(outcome.grid.table_index),
+            )?;
+            Ok((new_html, (grid, outcome.fixes)))
+        },
     )?;
-
-    write_prose_page_live_or_json(ctx, &parsed.doc_id, &parsed.page_id, &new_html, |doc| {
-        write_prose_content(doc, &parsed.page_id, new_html.clone(), now_ms())
-    })?;
 
     let mut result = json!({
         "pageId": parsed.page_id,
         "ok": true,
         "table": serde_json::to_value(&grid).map_err(|e| e.to_string())?,
+        "revision": revision,
     });
-    if !outcome.fixes.is_empty() {
-        result["fixes"] = serde_json::to_value(&outcome.fixes).unwrap_or(Value::Null);
+    if !fixes.is_empty() {
+        result["fixes"] = serde_json::to_value(&fixes).unwrap_or(Value::Null);
     }
     Ok(ToolOutcome {
         result,
@@ -4099,24 +4752,120 @@ fn broadcast_canvas_page_meta(ctx: &ToolContext, doc_id: &DocId, page_id: &str) 
     }
 }
 
-/// Write a prose page's full HTML to the **live** Y.Doc fragment when the doc is
-/// resident — broadcasting the CRDT delta so connected editors update live
-/// (JP-238, whole-page replace) — else fall back to the JSON path. The live path
-/// leaves durability to the JP-36/JP-201 snapshot flatten (which projects prose
-/// into the JSON), exactly like the JP-35 shape write path.
-fn write_prose_page_live_or_json(
+/// Write a whole prose page (JP-238) and return its revision afterwards
+/// (JP-513). A resident document is written to its **live** Y.Doc fragment and
+/// the CRDT delta broadcast, so connected editors update live; durability is
+/// left to the JP-36/JP-201 snapshot flatten, as on the JP-35 shape write path.
+/// A closed document's JSON content is rewritten under optimistic concurrency.
+///
+/// With a `check`, the write lands only if the page is still at
+/// `check.expected`: for a resident document the comparison runs inside the
+/// write transaction, for a closed one inside the optimistic-concurrency
+/// retry, so a concurrent edit can never land between the check and the write.
+fn write_prose_page_checked(
     ctx: &ToolContext,
     doc_id: &DocId,
     page_id: &str,
     html: &str,
-    json_fallback: impl FnMut(&mut Value) -> Result<(), String>,
-) -> Result<(), String> {
+    check: Option<crate::sync::RevisionCheck<'_>>,
+) -> Result<String, String> {
     if let Some(handle) = resident_handle(ctx, doc_id) {
-        let framed = handle.replace_prose(page_id, html)?;
+        let (framed, revision) = handle.replace_prose_checked(page_id, html, check.as_ref())?;
         ctx.broadcast_update(doc_id, framed);
-        Ok(())
-    } else {
-        mutate_with_retry(ctx, doc_id, json_fallback).map(|_| ())
+        return Ok(revision);
+    }
+    mutate_with_retry(ctx, doc_id, |doc| {
+        if let Some(check) = &check {
+            let current = read_prose_content(doc, page_id)?;
+            if crate::sync::prose_revision(&current) != check.expected {
+                return Err(crate::sync::stale_write_error(check.expected));
+            }
+        }
+        write_prose_content(doc, page_id, html.to_string(), now_ms())
+    })?;
+    Ok(crate::sync::prose_revision(html))
+}
+
+/// Attempts for a structural whole-page edit whose page changed between its
+/// own read and its write (JP-513); each attempt re-reads and recomputes.
+const MODIFY_PAGE_ATTEMPTS: usize = 3;
+
+/// Read a prose page, transform it and write the result back without losing
+/// anything written to the page in between (JP-513). The write is conditioned
+/// on the revision this call read; if the page changed meanwhile, the read and
+/// the transform run again. With a caller `expected` revision, a page that no
+/// longer matches it is refused instead: the caller's own view is stale.
+/// Returns the page's new revision and the transform's extra output.
+fn modify_prose_page<T>(
+    ctx: &ToolContext,
+    doc_id: &DocId,
+    page_id: &str,
+    expected: Option<&str>,
+    mut transform: impl FnMut(&str) -> Result<(String, T), String>,
+) -> Result<(String, T), String> {
+    for _ in 0..MODIFY_PAGE_ATTEMPTS {
+        let (doc_json, _) = fetch_doc(ctx, doc_id)?;
+        let current = resolve_prose_content(ctx, doc_id, &doc_json, page_id)?;
+        let read_revision = crate::sync::prose_revision(&current);
+        if let Some(expected) = expected {
+            if expected != read_revision {
+                return Err(crate::sync::stale_write_error(expected));
+            }
+        }
+        let (new_html, extra) = transform(&current)?;
+        // An empty live fragment reads as the JSON projection.
+        let fallback = read_prose_content(&doc_json, page_id).unwrap_or_default();
+        let check = crate::sync::RevisionCheck { expected: &read_revision, empty_fallback: &fallback };
+        match write_prose_page_checked(ctx, doc_id, page_id, &new_html, Some(check)) {
+            Ok(revision) => return Ok((revision, extra)),
+            Err(e) if expected.is_none() && crate::sync::is_stale_write(&e) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!(
+        "{}: the page kept changing while this edit was applied, so nothing was written. Try again.",
+        crate::sync::ERR_STALE_WRITE
+    ))
+}
+
+/// Resolve a heading named by its durable `id` and/or 0-based `index`
+/// (JP-513). An id is looked up in the current outline, so it still names the
+/// same heading after others are added above it; with both, they must agree.
+fn resolve_heading(
+    outline: &Outline,
+    id: Option<&str>,
+    index: Option<usize>,
+    id_field: &str,
+    index_field: &str,
+) -> Result<usize, String> {
+    let n = outline.sections.len();
+    match (id, index) {
+        (None, None) => Err(format!(
+            "ERR_TARGET_MISSING: pass {id_field} (the heading's id from get_outline) or {index_field}"
+        )),
+        (Some(id), index) => {
+            let found = outline
+                .sections
+                .iter()
+                .position(|s| s.id.as_deref() == Some(id))
+                .ok_or_else(|| {
+                    format!(
+                        "ERR_ID_NOT_FOUND: no heading carries id \"{id}\" — it may have been \
+                         deleted, or the heading has no id yet; re-read the page with get_outline"
+                    )
+                })?;
+            match index {
+                Some(i) if i != found => Err(format!(
+                    "ERR_ID_INDEX_MISMATCH: heading id \"{id}\" is at index {found}, not {i} — \
+                     re-read the page with get_outline"
+                )),
+                _ => Ok(found),
+            }
+        }
+        (None, Some(i)) if i >= n => {
+            Err(format!("No section at index {i} — the page has {n} heading(s)"))
+        }
+        (None, Some(i)) => Ok(i),
     }
 }
 
@@ -8082,7 +8831,7 @@ mod tests {
             &json!({"docId":"doc1","pageId":page_id,"op":"move","index":0}),
         )
         .unwrap_err();
-        assert!(no_to.contains("requires 'toIndex'"));
+        assert!(no_to.contains("requires 'toId' or 'toIndex'"));
     }
 
     #[test]
@@ -8761,6 +9510,76 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_can_place_an_empty_bibliography_in_html() {
+        // JP-448 #3a. The formatted reference list is rendered by the editor
+        // from the library and written back into `bibHtml`, so an agent only has
+        // to place the node. This pins that an EMPTY node, with no cached
+        // `data-bib-html`, survives the whole write path, including the JP-328
+        // structural gate, instead of being dropped as contentless. The agent
+        // guidance that tells them to do this is only true while this passes.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        let pid = page_id.as_str();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": pid, "format": "html",
+                "content": "<h2>References</h2><div data-bibliography></div>"}),
+        )
+        .unwrap();
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": pid}),
+        )
+        .unwrap();
+        let body = serde_json::to_string(&out.result).unwrap();
+        assert!(body.contains("<div data-bibliography"), "bibliography node dropped: {body}");
+        assert!(!body.contains("&lt;div data-bibliography"), "stored as text, not a node: {body}");
+    }
+
+    #[test]
+    fn an_agent_can_place_an_empty_bibliography_in_markdown() {
+        // The same guarantee from the default Markdown format. CommonMark reads a
+        // line opening with `<div` as a raw HTML block and passes it through, so
+        // an agent can place the node inside ordinary Markdown output without
+        // switching the whole page to HTML.
+        let dir = TempDir::new().unwrap();
+        let f = seed(&dir.path().to_path_buf());
+        let page = dispatch(
+            &f.ctx(true),
+            "docushark_add_prose_page",
+            &json!({"docId": "doc1", "content": "seed"}),
+        )
+        .unwrap();
+        let page_id = page.result["id"].as_str().unwrap().to_string();
+        let pid = page_id.as_str();
+        dispatch(
+            &f.ctx(true),
+            "docushark_set_prose",
+            &json!({"docId": "doc1", "pageId": pid,
+                "content": "## References\n\n<div data-bibliography></div>\n"}),
+        )
+        .unwrap();
+        let out = dispatch(
+            &f.ctx(true),
+            "docushark_get_prose",
+            &json!({"docId": "doc1", "pageId": pid}),
+        )
+        .unwrap();
+        let body = serde_json::to_string(&out.result).unwrap();
+        assert!(body.contains("<div data-bibliography"), "bibliography node dropped: {body}");
+        assert!(!body.contains("&lt;div data-bibliography"), "stored as text, not a node: {body}");
+    }
+
+    #[test]
     fn add_reference_dedups_against_existing_library() {
         let dir = TempDir::new().unwrap();
         let f = seed(&dir.path().to_path_buf());
@@ -8937,6 +9756,83 @@ mod tests {
         assert!(html.contains("{{unclosed and "), "got: {html}");
         // The well-formed `{{x}}` after the junk still converts.
         assert!(html.contains(r#"<span data-field data-name="x"></span>"#), "got: {html}");
+    }
+
+    // ---- JP-448: resolving {{name}} at write time ----
+    // The label-less shape above is what a *live editor* can resolve. These
+    // cover what everything else receives: PDF export, `get_prose`, and any
+    // non-collaborative open, none of which run a nodeView.
+
+    #[test]
+    fn markdown_field_token_bakes_a_known_value() {
+        let fields = FieldMap::from([("Company".to_string(), "Acme Inc.".to_string())]);
+        let html = markdown_to_html_with_fields("The {{Company}} agrees.", &fields);
+        assert!(
+            html.contains(
+                r#"<span data-field data-name="Company" data-label="Acme Inc.">Acme Inc.</span>"#
+            ),
+            "got: {html}"
+        );
+    }
+
+    #[test]
+    fn markdown_field_token_without_a_value_stays_label_less() {
+        // An unknown name must not invent a label — a live editor resolves it,
+        // and `field_html` drops an empty one anyway.
+        let fields = FieldMap::from([("Other".to_string(), "x".to_string())]);
+        let html = markdown_to_html_with_fields("pay {{Amount}} now", &fields);
+        assert!(html.contains(r#"<span data-field data-name="Amount"></span>"#), "got: {html}");
+        assert!(!html.contains("data-label"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_field_value_is_escaped() {
+        let fields = FieldMap::from([("Co".to_string(), "A & B".to_string())]);
+        let html = markdown_to_html_with_fields("{{Co}}", &fields);
+        assert!(!html.contains("A & B"), "value went in raw: {html}");
+        assert!(html.contains("&amp;"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_field_token_in_a_link_destination_resolves() {
+        // JP-448 #5: `dest_url` rides on `Tag::Link`, not an `Event::Text`, so
+        // the text pass never reached it and `push_html` percent-encoded the
+        // braces into a dead `%7B%7B…%7D%7D` href. Found in a real document, on
+        // a CASL-mandated unsubscribe link.
+        let fields = FieldMap::from([(
+            "unsubscribe_link".to_string(),
+            "https://example.com/u?id=1".to_string(),
+        )]);
+        let html = markdown_to_html_with_fields("[click here]({{unsubscribe_link}})", &fields);
+        assert!(html.contains(r#"href="https://example.com/u?id=1""#), "got: {html}");
+        assert!(!html.contains("%7B%7B"), "token was percent-encoded: {html}");
+    }
+
+    #[test]
+    fn markdown_field_token_in_an_image_destination_resolves() {
+        let fields =
+            FieldMap::from([("logo".to_string(), "https://cdn.example/l.png".to_string())]);
+        let html = markdown_to_html_with_fields("![alt]({{logo}})", &fields);
+        assert!(html.contains(r#"src="https://cdn.example/l.png""#), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_unresolvable_link_token_is_left_alone() {
+        // Nothing to substitute → leave the destination as authored rather than
+        // inventing one. A destination is never a span.
+        let html = markdown_to_html_with_fields("[x]({{nope}})", &FieldMap::new());
+        assert!(!html.contains("data-field"), "a destination is not a span: {html}");
+        assert!(html.contains("%7B%7B") || html.contains("{{nope}}"), "got: {html}");
+    }
+
+    #[test]
+    fn markdown_field_token_in_code_is_untouched_even_with_a_value() {
+        // The code guard must win over baking, or a fenced example of the
+        // syntax would silently become the value.
+        let fields = FieldMap::from([("x".to_string(), "SECRET".to_string())]);
+        let fenced = markdown_to_html_with_fields("```\n{{x}}\n```", &fields);
+        assert!(fenced.contains("{{x}}"), "got: {fenced}");
+        assert!(!fenced.contains("SECRET"), "value leaked into code: {fenced}");
     }
 
     // ---- LaTeX math markdown adapter ----
@@ -9681,5 +10577,662 @@ mod tests {
             &json!({"docId": "doc1", "content": "fits"}),
         )
         .unwrap();
+    }
+
+    /// JP-513: page revisions, the whole-page write precondition, and
+    /// id-addressed outline verbs.
+    mod stale_writes {
+        use super::*;
+
+        fn call(f: &Fixture, tool: &str, args: Value) -> Value {
+            dispatch(&f.ctx(true), tool, &args)
+                .unwrap_or_else(|e| panic!("{tool} failed: {e}"))
+                .result
+        }
+
+        fn call_err(f: &Fixture, tool: &str, args: Value) -> String {
+            dispatch(&f.ctx(true), tool, &args).expect_err(tool)
+        }
+
+        /// A prose page seeded from HTML; returns its id.
+        fn page_with(f: &Fixture, html: &str) -> String {
+            let out = call(
+                f,
+                "docushark_add_prose_page",
+                json!({"docId": "doc1", "content": html, "format": "html"}),
+            );
+            out["id"].as_str().unwrap().to_string()
+        }
+
+        /// `(content, revision)` as get_prose reports them.
+        fn read(f: &Fixture, page: &str) -> (String, String) {
+            let out = call(f, "docushark_get_prose", json!({"docId": "doc1", "pageId": page}));
+            (
+                out["page"]["content"].as_str().unwrap().to_string(),
+                out["page"]["revision"].as_str().unwrap().to_string(),
+            )
+        }
+
+        fn outline_ids(f: &Fixture, page: &str) -> Vec<(String, String)> {
+            let out = call(f, "docushark_get_outline", json!({"docId": "doc1", "pageId": page}));
+            out["outline"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| {
+                    (
+                        s["title"].as_str().unwrap().to_string(),
+                        s["id"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        fn id_of(outline: &[(String, String)], title: &str) -> String {
+            outline.iter().find(|(t, _)| t == title).unwrap().1.clone()
+        }
+
+        /// A collaborator's edit to one block, as a connected editor's CRDT
+        /// update would land it: straight into the live fragment.
+        fn live_edit(handle: &DocHandle, page: &str, anchor: &str, html: &str) {
+            handle
+                .replace_prose_block(
+                    page,
+                    crate::sync::TargetSpec::new(None, Some(anchor)),
+                    None,
+                    html,
+                    None,
+                )
+                .unwrap();
+        }
+
+        const PAGE: &str = "<h1>Doc</h1><p>One.</p><p>Two.</p><p>Three: HUMAN</p>";
+
+        #[test]
+        fn revision_is_stable_and_changes_with_any_content_change() {
+            let a = crate::sync::prose_revision("<p>a</p>");
+            assert_eq!(a, crate::sync::prose_revision("<p>a</p>"));
+            assert_ne!(a, crate::sync::prose_revision("<p>b</p>"));
+            assert_ne!(a, crate::sync::prose_revision("<p>a</p><p></p>"));
+            assert!(a.starts_with("rev-") && a.len() == 20, "{a}");
+        }
+
+        #[test]
+        fn every_read_reports_the_same_revision_for_one_page_state() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(
+                &f,
+                "<h1>T</h1><table><tr><th><p>H</p></th></tr><tr><td><p>x</p></td></tr></table>",
+            );
+            let (_, rev) = read(&f, &page);
+            let outline = call(&f, "docushark_get_outline", json!({"docId": "doc1", "pageId": page}));
+            let table = call(&f, "docushark_get_table", json!({"docId": "doc1", "pageId": page}));
+            assert_eq!(outline["revision"], json!(rev));
+            assert_eq!(table["revision"], json!(rev));
+
+            // A whole-page write reports the revision the next read sees.
+            let wrote = call(
+                &f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "content": "<p>new</p>", "format": "html"}),
+            );
+            assert_eq!(wrote["revision"], json!(read(&f, &page).1));
+            assert_ne!(wrote["revision"], json!(rev));
+        }
+
+        #[test]
+        fn a_no_op_round_trip_keeps_the_revision_cold_and_resident() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            for resident in [false, true] {
+                if resident {
+                    f.make_resident("doc1");
+                }
+                let (content, rev) = read(&f, &page);
+                let wrote = call(
+                    &f,
+                    "docushark_set_prose",
+                    json!({
+                        "docId": "doc1", "pageId": page, "content": content,
+                        "format": "html", "expectedRevision": rev,
+                    }),
+                );
+                assert_eq!(wrote["revision"], json!(rev), "resident={resident}");
+                assert_eq!(read(&f, &page).1, rev, "resident={resident}");
+            }
+        }
+
+        /// The defect JP-513 fixes, as found on 2026-09-16: an agent rewrote the
+        /// whole page from a read taken before a person typed, and the typing
+        /// was silently reverted.
+        #[test]
+        fn a_stale_whole_page_write_is_refused_and_the_concurrent_edit_survives_resident() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let handle = f.make_resident("doc1");
+
+            let (stale, stale_rev) = read(&f, &page);
+            live_edit(&handle, &page, "Three: HUMAN", "<p>Three: HUMAN typed</p>");
+
+            let err = call_err(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "format": "html",
+                    "content": stale.replace("One.", "One EDITED."),
+                    "expectedRevision": stale_rev,
+                }),
+            );
+            assert!(err.starts_with("ERR_STALE_WRITE"), "{err}");
+            let (now, now_rev) = read(&f, &page);
+            assert!(now.contains("HUMAN typed") && !now.contains("EDITED"), "{now}");
+            assert!(!err.contains(&now_rev), "the refusal must not hand out the current revision");
+
+            // Re-read, re-apply: both edits survive.
+            let wrote = call(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "format": "html",
+                    "content": now.replace("One.", "One EDITED."),
+                    "expectedRevision": now_rev,
+                }),
+            );
+            let (fin, fin_rev) = read(&f, &page);
+            assert!(fin.contains("HUMAN typed") && fin.contains("One EDITED."), "{fin}");
+            assert_eq!(wrote["revision"], json!(fin_rev));
+        }
+
+        #[test]
+        fn a_stale_whole_page_write_is_refused_cold() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let (stale, stale_rev) = read(&f, &page);
+            call(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "anchor": "Three: HUMAN",
+                    "content": "<p>Three: other writer</p>", "format": "html",
+                }),
+            );
+            let err = call_err(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "format": "html",
+                    "content": stale.replace("One.", "One EDITED."),
+                    "expectedRevision": stale_rev,
+                }),
+            );
+            assert!(err.starts_with("ERR_STALE_WRITE"), "{err}");
+            let (now, _) = read(&f, &page);
+            assert!(now.contains("other writer") && !now.contains("EDITED"), "{now}");
+        }
+
+        #[test]
+        fn without_expected_revision_a_whole_page_write_stays_unconditional() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let handle = f.make_resident("doc1");
+            let (stale, _) = read(&f, &page);
+            live_edit(&handle, &page, "Three: HUMAN", "<p>Three: HUMAN typed</p>");
+            call(
+                &f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "format": "html", "content": stale}),
+            );
+            assert!(!read(&f, &page).0.contains("HUMAN typed"), "today's behaviour is kept");
+        }
+
+        #[test]
+        fn expected_revision_is_refused_on_targeted_writes() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(&f, PAGE);
+            let (_, rev) = read(&f, &page);
+            let err = call_err(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "anchor": "One.",
+                    "content": "<p>1</p>", "format": "html", "expectedRevision": rev,
+                }),
+            );
+            assert!(err.contains("whole-page writes only"), "{err}");
+            assert!(read(&f, &page).0.contains("One."), "nothing written");
+        }
+
+        #[test]
+        fn structural_writes_refuse_a_stale_expected_revision() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(
+                &f,
+                "<h1>A</h1><p>a</p><h1>B</h1><table><tr><th><p>H</p></th></tr><tr><td><p>x</p></td></tr></table>",
+            );
+            let (_, stale_rev) = read(&f, &page);
+            let a_id = id_of(&outline_ids(&f, &page), "A");
+            call(
+                &f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "anchor": "a", "content": "<p>a changed</p>", "format": "html"}),
+            );
+            let before = read(&f, &page).0;
+            for (tool, args) in [
+                ("docushark_insert_section", json!({"level": 2, "title": "New"})),
+                ("docushark_restructure_outline", json!({"op": "demote", "id": a_id})),
+                ("docushark_edit_table", json!({"op": "addRow", "row": 0})),
+            ] {
+                let mut args = args;
+                args["docId"] = json!("doc1");
+                args["pageId"] = json!(page);
+                args["expectedRevision"] = json!(stale_rev);
+                let err = call_err(&f, tool, args);
+                assert!(err.starts_with("ERR_STALE_WRITE"), "{tool}: {err}");
+                assert_eq!(read(&f, &page).0, before, "{tool} must not write");
+            }
+        }
+
+        /// Without a caller revision, a structural edit whose page changes
+        /// between its own read and write re-reads and recomputes instead of
+        /// overwriting the change (it used to write its stale result).
+        #[test]
+        fn a_structural_edit_reapplies_itself_when_the_page_changes_mid_edit() {
+            for resident in [false, true] {
+                let dir = TempDir::new().unwrap();
+                let f = seed(&dir.path().to_path_buf());
+                let page = page_with(&f, PAGE);
+                let handle = resident.then(|| f.make_resident("doc1"));
+                let doc_id = DocId::from_http_path("doc1".to_string()).unwrap();
+                let ctx = f.ctx(true);
+                let mut calls = 0;
+                let (revision, ()) = modify_prose_page(&ctx, &doc_id, &page, None, |current| {
+                    calls += 1;
+                    if calls == 1 {
+                        // A collaborator types after this call read the page.
+                        match &handle {
+                            Some(h) => live_edit(h, &page, "Three: HUMAN", "<p>Three: HUMAN typed</p>"),
+                            None => {
+                                dispatch(
+                                    &ctx,
+                                    "docushark_set_prose",
+                                    &json!({
+                                        "docId": "doc1", "pageId": page, "anchor": "Three: HUMAN",
+                                        "content": "<p>Three: HUMAN typed</p>", "format": "html",
+                                    }),
+                                )
+                                .unwrap();
+                            }
+                        }
+                    }
+                    Ok((current.replace("Two.", "Two EDITED."), ()))
+                })
+                .unwrap();
+                assert_eq!(calls, 2, "resident={resident}: the edit must be recomputed once");
+                let (content, rev) = read(&f, &page);
+                assert!(
+                    content.contains("HUMAN typed") && content.contains("Two EDITED."),
+                    "resident={resident}: {content}"
+                );
+                assert_eq!(revision, rev, "resident={resident}");
+            }
+        }
+
+        /// The defect behind F3 (found 2026-09-16): a heading inserted above the
+        /// target shifted every index, and the index-addressed verbs acted on
+        /// the wrong sections. By id they act on the intended ones.
+        #[test]
+        fn outline_verbs_by_id_hit_the_intended_heading_after_a_concurrent_insert() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let page = page_with(
+                &f,
+                "<h1>Alpha</h1><p>a</p><h2>Alpha child</h2><p>ac</p><h1>Bravo</h1><p>b</p><h1>Charlie</h1><p>c</p>",
+            );
+            let ids = outline_ids(&f, &page);
+            let (bravo, charlie, child, alpha) = (
+                id_of(&ids, "Bravo"),
+                id_of(&ids, "Charlie"),
+                id_of(&ids, "Alpha child"),
+                id_of(&ids, "Alpha"),
+            );
+            // Someone adds a heading at the top: every index shifts by one.
+            call(
+                &f,
+                "docushark_insert_block",
+                json!({"docId": "doc1", "pageId": page, "anchor": "Alpha", "side": "before",
+                       "content": "<h1>Zero</h1>", "format": "html"}),
+            );
+
+            let demoted = call(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "demote", "id": bravo}),
+            );
+            assert_eq!(demoted["section"]["title"], json!("Bravo"));
+            assert_eq!(demoted["section"]["level"], json!(2));
+
+            let moved = call(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "move", "id": charlie, "toId": bravo}),
+            );
+            assert_eq!(moved["section"]["title"], json!("Charlie"));
+            let titles: Vec<&str> = moved["outline"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["title"].as_str().unwrap())
+                .collect();
+            assert_eq!(titles, ["Zero", "Alpha", "Alpha child", "Charlie", "Bravo"]);
+
+            let inserted = call(
+                &f,
+                "docushark_insert_section",
+                json!({"docId": "doc1", "pageId": page, "level": 2, "title": "Notes", "afterId": child}),
+            );
+            assert_eq!(inserted["section"]["title"], json!("Notes"));
+            assert_eq!(inserted["section"]["index"], json!(3));
+            assert!(inserted["section"]["id"].as_str().unwrap().starts_with("blk-"));
+            assert_eq!(inserted["revision"], json!(read(&f, &page).1));
+
+            let mismatch = call_err(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "promote", "id": alpha, "index": 3}),
+            );
+            assert!(mismatch.starts_with("ERR_ID_INDEX_MISMATCH"), "{mismatch}");
+            let missing = call_err(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "promote"}),
+            );
+            assert!(missing.starts_with("ERR_TARGET_MISSING"), "{missing}");
+
+            call(&f, "docushark_delete_block", json!({"docId": "doc1", "pageId": page, "id": charlie}));
+            let gone = call_err(
+                &f,
+                "docushark_restructure_outline",
+                json!({"docId": "doc1", "pageId": page, "op": "promote", "id": charlie}),
+            );
+            assert!(gone.starts_with("ERR_ID_NOT_FOUND"), "{gone}");
+        }
+
+        /// The first live write into an empty page takes the deterministic-seed
+        /// path; its reported revision must still be what the next read sees,
+        /// and a precondition read from the empty page must hold.
+        #[test]
+        fn the_first_live_write_into_an_empty_page_reports_the_live_revision() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            // Added while closed, then opened: hydration leaves an empty page's
+            // live fragment empty (adding it to an open document seeds it).
+            let page = call(&f, "docushark_add_prose_page", json!({"docId": "doc1"}))["id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let handle = f.make_resident("doc1");
+            assert!(handle.prose_html(&page).is_none(), "fixture: the live fragment starts empty");
+            let (_, empty_rev) = read(&f, &page);
+            let wrote = call(
+                &f,
+                "docushark_set_prose",
+                json!({
+                    "docId": "doc1", "pageId": page, "content": "<p>first</p>",
+                    "format": "html", "expectedRevision": empty_rev,
+                }),
+            );
+            assert!(handle.prose_html(&page).is_some());
+            assert_eq!(wrote["revision"], json!(read(&f, &page).1));
+        }
+    }
+
+    /// JP-512: `get_page` filters, projection and summary.
+    mod page_reads {
+        use super::*;
+
+        fn page(f: &Fixture, query: Value) -> Result<Value, String> {
+            let mut args = json!({"docId": "doc1", "pageId": "p1"});
+            for (k, v) in query.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            dispatch(&f.ctx(true), "docushark_get_page", &args).map(|o| o.result)
+        }
+
+        fn ids(result: &Value) -> Vec<String> {
+            result["shapes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].as_str().unwrap().to_string())
+                .collect()
+        }
+
+        /// a (50..150, 75..125), b (550..650, 75..125), c (60..140, 360..440),
+        /// t (240..360, 585..615); connectors ab ("writes") and bc.
+        fn fixture(dir: &TempDir) -> Fixture {
+            let f = seed(&dir.path().to_path_buf());
+            dispatch(
+                &f.ctx(true),
+                "docushark_add_shapes",
+                &json!({"docId": "doc1", "pageId": "p1", "shapes": [
+                    {"id": "a", "kind": "rectangle", "text": "Alpha service", "x": 100, "y": 100, "w": 100, "h": 50},
+                    {"id": "b", "kind": "rectangle", "text": "Bravo store", "x": 600, "y": 100, "w": 100, "h": 50},
+                    {"id": "c", "kind": "ellipse", "text": "Charlie queue", "x": 100, "y": 400, "w": 80, "h": 80},
+                    {"id": "t", "kind": "text", "text": "alpha note", "x": 300, "y": 600, "w": 120, "h": 30},
+                    {"id": "ab", "kind": "connector", "startShapeId": "a", "endShapeId": "b", "text": "writes"},
+                    {"id": "bc", "kind": "connector", "startShapeId": "b", "endShapeId": "c"}
+                ]}),
+            )
+            .unwrap();
+            f
+        }
+
+        #[test]
+        fn each_filter_selects_exactly_the_matching_shapes() {
+            let dir = TempDir::new().unwrap();
+            let f = fixture(&dir);
+            assert_eq!(ids(&page(&f, json!({})).unwrap()), ["a", "b", "c", "t", "ab", "bc"]);
+            assert_eq!(ids(&page(&f, json!({"ids": ["bc", "b"]})).unwrap()), ["b", "bc"]);
+            assert_eq!(ids(&page(&f, json!({"kinds": ["connector"]})).unwrap()), ["ab", "bc"]);
+            assert_eq!(ids(&page(&f, json!({"text": "ALPHA"})).unwrap()), ["a", "t"]);
+            let region = json!({"minX": 0, "minY": 0, "maxX": 200, "maxY": 200});
+            assert_eq!(
+                ids(&page(&f, json!({"region": region})).unwrap()),
+                ["a", "ab"],
+                "a connector joins the region through either end"
+            );
+            assert_eq!(
+                ids(&page(&f, json!({"region": region, "kinds": ["rectangle"]})).unwrap()),
+                ["a"],
+                "filters combine"
+            );
+            // The same filtered read from the live document.
+            f.make_resident("doc1");
+            assert_eq!(ids(&page(&f, json!({"text": "alpha"})).unwrap()), ["a", "t"]);
+        }
+
+        #[test]
+        fn fields_project_each_shape_and_unknown_fields_are_refused() {
+            let dir = TempDir::new().unwrap();
+            let f = fixture(&dir);
+            let out = page(&f, json!({"fields": ["text"]})).unwrap();
+            for shape in out["shapes"].as_array().unwrap() {
+                let keys: Vec<&String> = shape.as_object().unwrap().keys().collect();
+                let expected: &[&str] = if shape["id"] == "bc" { &["id"] } else { &["id", "text"] };
+                assert_eq!(keys, expected, "{shape}");
+            }
+            let err = page(&f, json!({"fields": ["colour"]})).unwrap_err();
+            assert!(err.starts_with("Unknown field 'colour'"), "{err}");
+        }
+
+        #[test]
+        fn summary_counts_by_kind_and_bounds_the_matching_shapes() {
+            let dir = TempDir::new().unwrap();
+            let f = fixture(&dir);
+            let all = page(&f, json!({"summary": true})).unwrap();
+            assert!(all.get("shapes").is_none());
+            assert_eq!(all["summary"]["count"], json!(6));
+            assert_eq!(
+                all["summary"]["byKind"],
+                json!({"rectangle": 2, "ellipse": 1, "text": 1, "connector": 2})
+            );
+            assert_eq!(
+                all["summary"]["bounds"],
+                json!({"minX": 50.0, "minY": 75.0, "maxX": 650.0, "maxY": 615.0})
+            );
+            let alpha = page(&f, json!({"summary": true, "text": "alpha"})).unwrap();
+            assert_eq!(alpha["summary"]["byKind"], json!({"rectangle": 1, "text": 1}));
+            let none = page(&f, json!({"summary": true, "ids": ["nope"]})).unwrap();
+            assert_eq!(none["summary"]["count"], json!(0));
+            assert_eq!(none["summary"]["bounds"], Value::Null);
+        }
+
+        /// The finding behind JP-512: a 100-node generated diagram could not be
+        /// read inline by an agent. Claude Code measures the structured result
+        /// (the September probe failed at 61,569 characters, ~25k tokens), so a
+        /// full read of a page this size sits at that limit whatever the text
+        /// format; what must fit comfortably is the projected read. Pins the
+        /// text compaction and the projection budget.
+        #[test]
+        fn a_large_generated_page_fits_the_read_budget() {
+            let dir = TempDir::new().unwrap();
+            let f = seed(&dir.path().to_path_buf());
+            let nodes: Vec<Value> = (0..100)
+                .map(|i| json!({"id": format!("n{i}"), "label": format!("svc-{}-{}", i / 10, i % 10)}))
+                .collect();
+            let mut edges = Vec::new();
+            for i in 0..90 {
+                edges.push(json!({"from": format!("n{i}"), "to": format!("n{}", i + 10)}));
+                if i % 2 == 0 {
+                    let to = if i % 10 < 9 { i + 11 } else { i + 9 };
+                    edges.push(json!({"from": format!("n{i}"), "to": format!("n{to}")}));
+                }
+            }
+            for k in 0..10 {
+                let from = (k * 7) % 70;
+                edges.push(json!({"from": format!("n{from}"), "to": format!("n{}", from + 30), "label": "async"}));
+            }
+            dispatch(
+                &f.ctx(true),
+                "docushark_generate_diagram",
+                &json!({"docId": "doc1", "pageId": "p1", "nodes": nodes, "edges": edges, "layout": "layered"}),
+            )
+            .unwrap();
+
+            let full = page(&f, json!({})).unwrap();
+            let pretty = serde_json::to_string_pretty(&full).unwrap().len();
+            let compact = serde_json::to_string(&full).unwrap().len();
+            let projected = serde_json::to_string(
+                &page(&f, json!({"fields": ["kind", "text", "x", "y"]})).unwrap(),
+            )
+            .unwrap()
+            .len();
+            let summary = serde_json::to_string(&page(&f, json!({"summary": true})).unwrap()).unwrap().len();
+            eprintln!(
+                "100 nodes, {} edges: pretty {pretty} B, compact {compact} B, projected {projected} B, summary {summary} B",
+                edges.len()
+            );
+            assert!(compact * 10 <= pretty * 6, "compact {compact} B is not well under pretty {pretty} B");
+            assert!(projected * 2 < compact, "projection {projected} B is not under half of {compact} B");
+            assert!(projected <= 25_000, "projected read {projected} B over the 25 KB inline budget");
+            assert!(summary < 300, "summary {summary} B");
+        }
+    }
+
+    /// JP-514 acceptance: every construct the 2026-09-16 audit lost now
+    /// survives a `set_prose` → `get_prose` round trip, on the cold (JSON) and
+    /// the live (Y.Doc) write path, in both formats; what the editor has no
+    /// equivalent for is reported in `fixes`.
+    mod audited_constructs {
+        use super::*;
+
+        fn call(f: &Fixture, tool: &str, args: Value) -> Value {
+            dispatch(&f.ctx(true), tool, &args)
+                .unwrap_or_else(|e| panic!("{tool} failed: {e}"))
+                .result
+        }
+
+        /// Write `content` as the whole page, then read it back.
+        fn round_trip(f: &Fixture, page: &str, content: &str, format: &str) -> (String, Value) {
+            let wrote = call(
+                f,
+                "docushark_set_prose",
+                json!({"docId": "doc1", "pageId": page, "content": content, "format": format}),
+            );
+            let read = call(f, "docushark_get_prose", json!({"docId": "doc1", "pageId": page}));
+            (read["page"]["content"].as_str().unwrap().to_string(), wrote["fixes"].clone())
+        }
+
+        #[test]
+        fn every_audited_construct_round_trips_on_both_write_paths() {
+            let html_cases: &[(&str, &[&str])] = &[
+                ("<p><b>X</b></p>", &["<strong>X</strong>"]),
+                ("<p><i>X</i></p>", &["<em>X</em>"]),
+                ("<p><del>X</del></p>", &["<s>X</s>"]),
+                ("<p><strike>X</strike></p>", &["<s>X</s>"]),
+                (r#"<p><span style="font-weight: bold">X</span></p>"#, &["<strong>X</strong>"]),
+                (r#"<p><span style="font-style: italic">X</span></p>"#, &["<em>X</em>"]),
+                (r#"<p><span style="text-decoration: underline">X</span></p>"#, &["<u>X</u>"]),
+                (r#"<p><span style="text-decoration: line-through">X</span></p>"#, &["<s>X</s>"]),
+                (
+                    r#"<ul><li><input type="checkbox" checked> done</li></ul>"#,
+                    &[r#"data-type="taskItem" data-checked="true""#, "done"],
+                ),
+                ("<p><i>a <b>X</b></i></p>", &["<em>a </em>", "<strong>", "<em>X</em>"]),
+            ];
+            let markdown_cases: &[(&str, &[&str])] = &[
+                ("~~X~~", &["<s>X</s>"]),
+                ("- [x] done\n- [ ] next", &[r#"data-checked="true""#, r#"data-checked="false""#]),
+                ("- [x] loose\n\n- [ ] list", &[r#"data-checked="true""#, r#"data-checked="false""#]),
+            ];
+            for resident in [false, true] {
+                let dir = TempDir::new().unwrap();
+                let f = seed(&dir.path().to_path_buf());
+                let added = call(
+                    &f,
+                    "docushark_add_prose_page",
+                    json!({"docId": "doc1", "content": "<p>seed</p>", "format": "html"}),
+                );
+                let page = added["id"].as_str().unwrap().to_string();
+                if resident {
+                    f.make_resident("doc1");
+                }
+                for (format, cases) in [("html", html_cases), ("markdown", markdown_cases)] {
+                    for (content, wants) in cases {
+                        let (stored, fixes) = round_trip(&f, &page, content, format);
+                        for want in *wants {
+                            assert!(
+                                stored.contains(want),
+                                "{format} {content:?} (resident {resident}): want {want:?} in {stored}"
+                            );
+                        }
+                        assert!(fixes.is_null(), "{content:?} lost nothing, yet fixes = {fixes}");
+                    }
+                }
+
+                // No editor equivalent: degrades safely, and is reported.
+                let (stored, fixes) =
+                    round_trip(&f, &page, "<p>a<kbd>Ctrl</kbd>b<x-empty></x-empty></p>", "html");
+                assert!(stored.contains("aCtrlb"), "{stored}");
+                let reported: Vec<(&str, &str)> = fixes
+                    .as_array()
+                    .unwrap_or_else(|| panic!("no fixes reported: {fixes}"))
+                    .iter()
+                    .map(|f| (f["action"].as_str().unwrap(), f["nodeType"].as_str().unwrap()))
+                    .collect();
+                assert_eq!(
+                    reported,
+                    vec![("unwrapped_element", "<kbd>"), ("removed_element", "<x-empty>")],
+                    "resident {resident}"
+                );
+            }
+        }
     }
 }

@@ -277,10 +277,10 @@ async fn mcp_writes_burst_then_rate_limit_with_429() {
     h.stop().await;
 }
 
-/// JP-430 E3: `add_file` draws from the WRITE bucket. This is the first test
-/// pinning `is_mcp_write_tool` membership at all — a tool missing from that
-/// list silently drops to the read bucket (unlimited here), so the 429
-/// assertion below fails if `add_file` ever falls out of the write set. The
+/// JP-430 E3: `add_file` draws from the WRITE bucket. Write-ness derives from
+/// the tool's declared hints (JP-511); a tool not marked as a write would drop to
+/// the read bucket (unlimited here), so the 429 assertion below fails if
+/// `add_file` is ever misclassified. The
 /// upload preflight runs *after* the throttle, so a rejected call also never
 /// stores bytes.
 #[tokio::test]
@@ -337,11 +337,11 @@ async fn mcp_add_file_draws_from_the_write_bucket() {
     h.stop().await;
 }
 
-/// JP-432 Pillar D: `edit_table` draws from the WRITE bucket (the RB-10 rule —
-/// every new write tool joins `is_mcp_write_tool` WITH a 429 test; a tool
-/// missing from that list silently drops to the read bucket, unlimited here,
-/// and this assertion fails). The throttle runs before dispatch, so the op's
-/// own outcome is irrelevant to the 429.
+/// JP-432 Pillar D: `edit_table` draws from the WRITE bucket. Write-ness now
+/// derives from the tool's declared hints (JP-511), and
+/// `every_tool_annotated_as_a_write_draws_from_the_write_bucket` covers every
+/// writer at once; this test stays as a named example. The throttle runs before
+/// dispatch, so the op's own outcome is irrelevant to the 429.
 #[tokio::test]
 async fn mcp_edit_table_draws_from_the_write_bucket() {
     let limits = LimitsConfig {
@@ -385,6 +385,80 @@ async fn mcp_edit_table_draws_from_the_write_bucket() {
     assert!(
         limited >= 1,
         "edit_table past the burst must 429 from the write bucket; statuses={statuses:?}"
+    );
+
+    h.stop().await;
+}
+
+/// JP-511: every tool that `tools/list` annotates as not read-only draws from
+/// the WRITE bucket, and a read still passes once that bucket is exhausted.
+/// Before JP-511 a hand-kept list metered 13 of the writers; the other 17
+/// (`set_prose`, `generate_diagram`, the block verbs, page operations and more)
+/// drew from the read bucket, which is unlimited here as on loopback and
+/// self-host. The throttle runs before dispatch, so empty arguments are fine.
+#[tokio::test]
+async fn every_tool_annotated_as_a_write_draws_from_the_write_bucket() {
+    let limits = LimitsConfig {
+        writes_per_sec: 1,
+        writes_burst: 1,
+        ..LimitsConfig::default()
+    };
+    let tenancy = TenancyConfig {
+        mode: TenancyMode::Dedicated,
+        workspace_id: None,
+        limits,
+    };
+    let h = Harness::start(tenancy).await;
+    h.seed_doc_via_store("doc-1", "p1").await;
+    let client = reqwest::Client::new();
+    let rpc = |body: serde_json::Value| {
+        client
+            .post(format!("{}/mcp", h.mcp_base))
+            .bearer_auth(&h.mcp_token)
+            .json(&body)
+            .send()
+    };
+
+    let list: serde_json::Value = rpc(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .await
+        .expect("tools/list")
+        .json()
+        .await
+        .expect("tools/list JSON");
+    let writers: Vec<String> = list["result"]["tools"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .filter(|t| t["annotations"]["readOnlyHint"] == json!(false))
+        .map(|t| t["name"].as_str().expect("tool name").to_string())
+        .collect();
+    for known in ["docushark_set_prose", "docushark_generate_diagram", "docushark_add_shape"] {
+        assert!(writers.iter().any(|w| w == known), "{known} must be annotated as a write");
+    }
+
+    for name in &writers {
+        let mut limited = false;
+        for _ in 0..4 {
+            let status = rpc(json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": {}}
+            }))
+            .await
+            .expect("POST /mcp")
+            .status();
+            if status.as_u16() == 429 {
+                limited = true;
+                break;
+            }
+        }
+        assert!(limited, "{name} is annotated as a write but never drew from the write bucket");
+    }
+
+    // The write bucket is exhausted; a read-only tool must still pass.
+    assert_eq!(
+        h.mcp_list_documents().await.as_u16(),
+        200,
+        "reads must not draw from the write bucket"
     );
 
     h.stop().await;

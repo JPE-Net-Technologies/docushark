@@ -55,9 +55,57 @@ pub use prose_validate::ProseFix;
 /// (empty when clean). The build/seed paths sanitize independently, so this is
 /// purely to surface "here's what was malformed and how it was healed" back to
 /// the MCP author.
+///
+/// JP-514: also reports what the HTML parse itself could not represent
+/// (unwrapped or removed elements, atom text), which the structural sanitizer
+/// cannot see because it only ever receives the parsed nodes.
 pub fn validate_prose_html(html: &str) -> Vec<ProseFix> {
-    let (_blocks, fixes) = prose_validate::sanitize_blocks(prose_parse::html_to_blocks(html));
-    fixes
+    let (blocks, losses) = prose_parse::html_to_blocks_with_losses(html);
+    let (_blocks, fixes) = prose_validate::sanitize_blocks(blocks);
+    let mut all = prose_validate::loss_fixes(&losses);
+    all.extend(fixes);
+    all
+}
+
+/// Error code for a whole-page prose write refused because the page changed
+/// after the caller read it (JP-513). Errors are strings in this layer; the
+/// tool layer matches this prefix to decide whether to re-read and retry.
+pub const ERR_STALE_WRITE: &str = "ERR_STALE_WRITE";
+
+/// A prose page's content revision (JP-513): `rev-` plus the first 8 bytes of
+/// the SHA-256 of the page HTML, in hex. Computed over exactly the HTML the MCP
+/// reads return, so a read and a later write precondition compare like for
+/// like. Equal content gives an equal revision; any change gives a new one.
+pub fn prose_revision(html: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(html.as_bytes());
+    format!("rev-{}", hex::encode(&digest[..8]))
+}
+
+/// The refusal for a write whose revision precondition no longer holds. It
+/// deliberately does not name the current revision: the caller must re-read
+/// the page and apply its change to what is there now, not resend the same
+/// content under a fresher revision.
+pub fn stale_write_error(expected: &str) -> String {
+    format!(
+        "{ERR_STALE_WRITE}: the page changed after revision {expected} was read, so nothing was \
+         written. Re-read it (get_prose, get_outline or get_table) and apply your change to the \
+         current content."
+    )
+}
+
+/// True when `err` is a [`stale_write_error`].
+pub fn is_stale_write(err: &str) -> bool {
+    err.starts_with(ERR_STALE_WRITE)
+}
+
+/// A precondition for a whole-page prose write (JP-513).
+pub struct RevisionCheck<'a> {
+    /// The revision the caller's change was based on.
+    pub expected: &'a str,
+    /// What the reads return for this page while its live fragment is empty
+    /// (the JSON projection), so an empty page still has a comparable revision.
+    pub empty_fallback: &'a str,
 }
 
 pub use hydration::total_shape_count;
@@ -1494,6 +1542,21 @@ impl DocHandle {
     /// all survive. A write whose HTML matches the current projection is a
     /// no-op (empty update, no dirty mark).
     pub fn replace_prose(&self, page_id: &str, html: &str) -> Result<Vec<u8>, String> {
+        self.replace_prose_checked(page_id, html, None).map(|(framed, _revision)| framed)
+    }
+
+    /// [`Self::replace_prose`] with an optional revision precondition (JP-513).
+    /// The check runs inside the same transaction as the write, so no
+    /// concurrent edit can land between the check and the write; a mismatch
+    /// returns [`stale_write_error`] and writes nothing. Also returns the page's
+    /// revision after the write, computed inside the transaction, so it
+    /// certifies exactly what this call wrote and never a concurrent edit.
+    pub fn replace_prose_checked(
+        &self,
+        page_id: &str,
+        html: &str,
+        check: Option<&RevisionCheck<'_>>,
+    ) -> Result<(Vec<u8>, String), String> {
         let name = format!("prose:{page_id}");
         // Grab the fragment handle before opening the txn (`get_or_insert_*`
         // transacts; nesting deadlocks).
@@ -1519,6 +1582,19 @@ impl DocHandle {
         let mut txn = self.doc.transact_mut();
         let before = txn.before_state().clone();
         let len = frag.len(&txn);
+        // The page as the reads see it: the live blocks, or (empty fragment)
+        // the JSON projection the caller supplied.
+        let live = (len > 0).then(|| prose_html::fragment_children_html(&frag, &txn));
+        if let Some(check) = check {
+            let current = match &live {
+                Some(children) => children.concat(),
+                None => check.empty_fallback.to_string(),
+            };
+            if prose_revision(&current) != check.expected {
+                drop(txn);
+                return Err(stale_write_error(check.expected));
+            }
+        }
         if len == 0 {
             // JP-338: FIRST seed of an empty fragment (a new `add_prose_page`, or
             // the first `set_prose` into the empty default page) — build the
@@ -1554,7 +1630,7 @@ impl DocHandle {
             // case (nothing in common) degrades to the old full rewrite; a
             // page whose blocks just gained ids (first fill of a legacy
             // id-less page) is exactly that one-time worst case.
-            let live = prose_html::fragment_children_html(&frag, &txn);
+            let live = live.unwrap_or_default();
             let incoming = blocks_children_html(&blocks);
             let (old_len, new_len) = (live.len(), incoming.len());
             let mut prefix = 0usize;
@@ -1573,9 +1649,10 @@ impl DocHandle {
                 // Skip the mutation AND the dirty mark (nothing to flatten);
                 // return the framed empty update so callers' broadcast path
                 // stays uniform (clients apply it as a no-op).
+                let revision = prose_revision(&live.concat());
                 let update = txn.encode_state_as_update_v1(&before);
                 drop(txn);
-                return Ok(protocol::frame_update(update));
+                return Ok((protocol::frame_update(update), revision));
             }
             prose_block::splice(
                 &frag,
@@ -1586,10 +1663,11 @@ impl DocHandle {
                 &blocks[prefix..new_len - suffix],
             );
         }
+        let revision = prose_revision(&prose_html::fragment_to_html(&frag, &txn));
         let update = txn.encode_state_as_update_v1(&before);
         drop(txn);
         self.dirty.store(true, Ordering::Relaxed);
-        Ok(protocol::frame_update(update))
+        Ok((protocol::frame_update(update), revision))
     }
 
     /// Anchored, block-level prose write (JP-239): replace only the block(s)
@@ -2671,6 +2749,32 @@ mod tests {
             !fixes.is_empty(),
             "a ragged table must be reported as a fix so the author sees the heal"
         );
+    }
+
+    #[test]
+    fn jp514_validate_reports_parse_losses_aggregated_with_counts() {
+        // What the parse could not represent reaches the writer as `fixes`,
+        // one entry per element with a count, located like a structural fix.
+        let fixes = super::validate_prose_html(concat!(
+            "<p>Press <kbd>Ctrl</kbd>+<kbd>C</kbd></p>",
+            "<p><span data-field data-name=\"owner\">typed</span></p>",
+        ));
+        let json = serde_json::to_value(&fixes).unwrap();
+        assert_eq!(json.as_array().map(Vec::len), Some(2), "{json}");
+        assert_eq!(json[0]["action"], "unwrapped_element");
+        assert_eq!(json[0]["nodeType"], "<kbd>");
+        assert_eq!(json[0]["count"], 2);
+        assert_eq!(json[0]["path"], "0/paragraph");
+        assert_eq!(json[1]["action"], "stripped_atom_text");
+        assert_eq!(json[1]["nodeType"], "fieldRef");
+        assert_eq!(json[1]["count"], 1);
+        assert_eq!(json[1]["path"], "1/paragraph");
+
+        // A structural fix is not aggregated, so it carries no count.
+        let structural =
+            super::validate_prose_html("<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>");
+        let json = serde_json::to_value(&structural).unwrap();
+        assert!(json[0].get("count").is_none(), "{json}");
     }
 
     #[test]
