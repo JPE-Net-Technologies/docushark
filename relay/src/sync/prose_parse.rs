@@ -279,11 +279,30 @@ fn text_marks(marks: &[PmMark]) -> Vec<PmMark> {
     }
 }
 
-/// A `<span>` whose attributes carry nothing a writer could have meant.
+/// A `<span>` whose attributes carry nothing the editor drops: identity and
+/// language attributes, and a style made only of properties the editor parses.
 fn span_is_plain(attrs: &[(String, String)]) -> bool {
     attrs
         .iter()
-        .all(|(k, _)| matches!(k.as_str(), "class" | "id" | "dir" | "lang" | "title"))
+        .all(|(k, _)| matches!(k.as_str(), "class" | "id" | "dir" | "lang" | "title" | "style"))
+        && style_is_fully_parsed(attrs)
+}
+
+/// The CSS properties the editor reads off an element: the mark styles
+/// ([`apply_style_marks`]) and the text colour a `textStyle` carries.
+const PARSED_STYLE_PROPS: &[&str] = &["font-weight", "font-style", "text-decoration", "vertical-align", "color"];
+
+/// Whether every declaration in an element's `style` is one the editor parses.
+/// Such a style loses nothing when its element is unwrapped, even when it
+/// changed nothing: `font-weight: 400` with no bold to clear is honoured, not
+/// lost. A property the editor has no mark for (`font-size`) is a loss.
+fn style_is_fully_parsed(attrs: &[(String, String)]) -> bool {
+    get_attr(attrs, "style").map_or(true, |style| {
+        style
+            .split(';')
+            .filter_map(|decl| decl.split_once(':'))
+            .all(|(prop, _)| PARSED_STYLE_PROPS.iter().any(|p| prop.trim().eq_ignore_ascii_case(p)))
+    })
 }
 
 /// Elements whose unwrapping loses nothing a writer meant, so it is not
@@ -2334,6 +2353,21 @@ mod tests {
         let item = child_node(&blocks[0], 0);
         assert_eq!(item.children.len(), 1, "{blocks:?}");
         assert_eq!(text_of(&[child_node(item, 0).clone()]), "Press Ctrl now");
+    }
+
+    #[test]
+    fn jp514_a_span_whose_style_the_editor_fully_parses_is_not_a_loss() {
+        // Found on staging: `font-weight: 400` with no bold to clear changes
+        // nothing, but nothing is lost either; the editor parses that style.
+        assert_eq!(
+            losses(r#"<p><span style="font-weight:400">a</span> <span style="text-decoration: none; vertical-align: baseline">b</span></p>"#),
+            vec![]
+        );
+        // A property the editor has no mark for is still a loss.
+        assert_eq!(
+            losses(r#"<p><span style="font-size:12px">a</span></p>"#),
+            vec![(LossKind::Unwrapped, "<span>".to_string(), "0/paragraph".to_string())]
+        );
     }
 
     #[test]
