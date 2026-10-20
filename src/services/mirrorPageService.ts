@@ -36,7 +36,7 @@ import { buildMirrorFamilyIndex, externalKey, subtreeInsertionIndex } from './mi
 /** A mirror operation the user can understand failed — message is UI-ready. */
 export class MirrorPageError extends Error {
   constructor(
-    public readonly code: 'no_live_doc' | 'not_a_mirror' | 'fetch_failed',
+    public readonly code: 'no_live_doc' | 'not_a_mirror' | 'fetch_failed' | 'doc_changed',
     message: string,
   ) {
     super(message);
@@ -65,13 +65,38 @@ function resolveYjsDoc(deps: MirrorPageDeps): YjsDocument {
   if (deps.yjsDoc) return deps.yjsDoc;
   const collab = useCollaborationStore.getState();
   const yjsDoc = collab.getYjsDocument();
-  if (!collab.isActive || !yjsDoc) {
+  // The session must be bound to the document that is OPEN. A stale binding
+  // (a doc switch that kept the previous session) would write the mirror into
+  // the previously open document (DSK-192).
+  const openDocId = usePersistenceStore.getState().currentDocumentId;
+  if (!collab.isActive || !yjsDoc || collab.config?.documentId !== openDocId) {
     throw new MirrorPageError(
       'no_live_doc',
-      'Mirror pages need a live workspace document — open the document online and try again.',
+      'Mirror pages need a workspace document. Open one, or move this document to your workspace, and try again.',
     );
   }
   return yjsDoc;
+}
+
+/**
+ * Re-check the binding after a network await. The user can switch documents
+ * while the provider fetch is in flight; writing then would land in whichever
+ * document the resolved Y.Doc belongs to, not the one now open (DSK-192).
+ */
+function assertStillBound(expected: YjsDocument, deps: MirrorPageDeps): void {
+  if (deps.yjsDoc) return;
+  let current: YjsDocument | null = null;
+  try {
+    current = resolveYjsDoc(deps);
+  } catch {
+    current = null;
+  }
+  if (current !== expected) {
+    throw new MirrorPageError(
+      'doc_changed',
+      'The document changed while the page was loading, so nothing was added. Try again.',
+    );
+  }
 }
 
 function defaultFetch(provider: string, externalId: string): Promise<FetchedMirrorContent> {
@@ -125,6 +150,7 @@ export async function addMirrorPage(
 ): Promise<MirrorPageResult> {
   const yjsDoc = resolveYjsDoc(deps);
   const fetched = await (deps.fetchResource ?? defaultFetch)(provider, externalId);
+  assertStillBound(yjsDoc, deps);
   const content = proseJsonFromHtml(fetched.proseHtml);
 
   const pages = useRichTextPagesStore.getState();
@@ -155,6 +181,7 @@ export async function refreshMirrorPage(pageId: string, deps: MirrorPageDeps = {
   }
   const yjsDoc = resolveYjsDoc(deps);
   const fetched = await (deps.fetchResource ?? defaultFetch)(mirror.provider, mirror.externalId);
+  assertStillBound(yjsDoc, deps);
 
   yjsDoc.setProse(pageId, proseJsonFromHtml(fetched.proseHtml));
   const pages = useRichTextPagesStore.getState();
