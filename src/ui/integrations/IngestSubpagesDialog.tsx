@@ -1,5 +1,5 @@
 /**
- * IngestSubpagesDialog (JP-475) — "Ingest subpages…" on a mirror page's tab.
+ * IngestSubpagesDialog (JP-475) — "Add subpages…" on a mirror page's tab.
  *
  * Opens with a FRESH listing (listSubpages refreshes the parent — ingestion
  * always works against current source state), lets the user pick which
@@ -102,7 +102,7 @@ export function IngestSubpagesDialog({ pageId, onClose }: IngestSubpagesDialogPr
       })
         .then((outcome) => setPhase({ kind: 'done', outcome }))
         .catch((e: unknown) => {
-          setPhase({ kind: 'error', message: e instanceof Error ? e.message : 'Ingest failed.' });
+          setPhase({ kind: 'error', message: e instanceof Error ? e.message : 'Adding subpages failed.' });
         });
     },
     [pageId, checked, recurse],
@@ -120,9 +120,9 @@ export function IngestSubpagesDialog({ pageId, onClose }: IngestSubpagesDialogPr
       className="ingest-subpages-overlay"
       onMouseDown={(e) => e.target === e.currentTarget && !running && onClose()}
     >
-      <div className="ingest-subpages" role="dialog" aria-modal="true" aria-label={`Ingest subpages of ${parentName}`}>
+      <div className="ingest-subpages" role="dialog" aria-modal="true" aria-label={`Add subpages of ${parentName}`}>
         <div className="ingest-subpages-head">
-          <h2>Ingest subpages of “{parentName}”</h2>
+          <h2>Add subpages of “{parentName}”</h2>
           {!running && (
             <button type="button" className="ingest-subpages-close" onClick={onClose} aria-label="Close">
               <Icon icon={X} size={16} />
@@ -189,7 +189,7 @@ export function IngestSubpagesDialog({ pageId, onClose }: IngestSubpagesDialogPr
         {phase.kind === 'running' && (
           <>
             <p className="ingest-subpages-hint">
-              Ingesting {phase.done + 1} of {phase.total}
+              Adding {phase.done + 1} of {phase.total}
               {phase.currentTitle ? ` — “${phase.currentTitle}”` : ''}…
             </p>
             <div className="ingest-subpages-progress">

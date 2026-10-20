@@ -18,6 +18,11 @@
  * `disabled` on sixty-three buttons is more code that communicates less. The
  * canvas side (`CanvasToolbar`) has gated on read-only since JP-370; this closes
  * the asymmetry.
+ *
+ * **A mirror page gets the mirror banner instead (DSK-193).** Mirror pages are
+ * read-only page by page, which the document-level check above never saw, so
+ * they kept a ribbon of dead controls. The banner names the source, says when
+ * it last synced, and carries Refresh, Open and Detach.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -34,6 +39,8 @@ import {
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
+import { useActivePageMirror, useRichTextPagesStore } from '../store/richTextPagesStore';
+import { MirrorBanner } from './integrations/MirrorBanner';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { ImageUploadButton } from './ImageUploadButton';
@@ -91,6 +98,8 @@ const VIEW_ONLY_NOTICE_MS = 30_000;
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
   const docReadOnly = useActiveDocReadOnly();
+  const activeMirror = useActivePageMirror();
+  const activePageId = useRichTextPagesStore((s) => s.activePageId);
   const viewOnlyNoticeDismissed = useUIPreferencesStore((s) => s.viewOnlyNoticeDismissed);
   const dismissViewOnlyNotice = useUIPreferencesStore((s) => s.dismissViewOnlyNotice);
   const [viewOnlyNoticeExpired, setViewOnlyNoticeExpired] = useState(false);
@@ -331,6 +340,12 @@ export function DocumentEditorToolbar() {
         </div>
       </div>
     );
+  }
+
+  // A mirror page is read-only too, page by page (DSK-193). Say what it is and
+  // what can be done with it, instead of offering a ribbon of dead controls.
+  if (activeMirror && activePageId) {
+    return <MirrorBanner pageId={activePageId} mirror={activeMirror} />;
   }
 
   return (
