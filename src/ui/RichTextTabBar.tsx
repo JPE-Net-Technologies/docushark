@@ -20,11 +20,12 @@ import { sharedDocOffline } from '../collaboration/sharedDocOffline';
 import { usePendingSyncPages } from '../store/pendingSyncPages';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useIntegrationHubStore, providerLabel } from '../store/integrationHubStore';
-import { refreshMirrorPage, detachMirrorPage } from '../services/mirrorPageService';
+import {
+  detachMirrorPageWithConfirm,
+  openMirrorSource,
+  refreshMirrorPageWithFeedback,
+} from '../services/mirrorPageActions';
 import { OPEN_MIRROR_PICKER, type OpenMirrorPickerDetail } from '../services/integrationActions';
-import { useNotificationStore } from '../store/notificationStore';
-import { confirmDialog } from './confirm/confirmStore';
-import { opener } from '../platform/opener';
 import { MirrorResourcePicker } from './integrations/MirrorResourcePicker';
 import { IngestSubpagesDialog } from './integrations/IngestSubpagesDialog';
 import { ProviderIcon } from './integrations/ProviderIcon';
@@ -266,34 +267,17 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   // Mirror page actions (context menu on a mirror tab).
   const handleOpenSource = useCallback((url: string) => {
     setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-    void opener.openExternalUrl(url);
+    openMirrorSource(url);
   }, []);
 
   const handleRefreshMirror = useCallback((pageId: string) => {
     setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-    const notifications = useNotificationStore.getState();
-    void refreshMirrorPage(pageId)
-      .then(({ warnings }) => {
-        const dropped = warnings.reduce((n, w) => n + (w.count ?? 1), 0);
-        notifications.success(
-          dropped > 0 ? `Page refreshed — ${dropped} element(s) could not be mirrored` : 'Page refreshed from source',
-        );
-      })
-      .catch((e: unknown) => {
-        notifications.error(e instanceof Error ? e.message : 'Refresh failed.');
-      });
+    void refreshMirrorPageWithFeedback(pageId);
   }, []);
 
   const handleDetachMirror = useCallback((pageId: string, label: string) => {
     setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-    void confirmDialog({
-      title: `Detach from ${label}?`,
-      message: 'The page becomes a normal, editable page with the content as last synced.',
-      details: 'This cannot be undone — re-adding the source later creates a new page.',
-      confirmLabel: 'Detach',
-    }).then((ok) => {
-      if (ok) detachMirrorPage(pageId);
-    });
+    void detachMirrorPageWithConfirm(pageId, label);
   }, []);
 
   // Handle delete from context menu
@@ -528,7 +512,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                       setIngestPageId(pid);
                     }}
                   >
-                    Ingest subpages…
+                    Add subpages…
                   </div>
                   <div
                     className="rich-text-tab-context-item"

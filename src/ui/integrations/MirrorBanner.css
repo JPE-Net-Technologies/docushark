@@ -1,0 +1,74 @@
+/* MirrorBanner (DSK-193): sits in the ribbon's place, styled like the
+   read-only strip (`.ribbon-readonly`) so the two read as one family. */
+
+.mirror-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  min-width: 0;
+}
+
+.mirror-banner > svg {
+  flex-shrink: 0;
+}
+
+.mirror-banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-banner--explaining .mirror-banner__text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.mirror-banner__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.mirror-banner__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mirror-banner__actions button:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.mirror-banner__actions button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.mirror-banner__spin {
+  animation: mirror-banner-spin 0.9s linear infinite;
+}
+
+@keyframes mirror-banner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mirror-banner__spin {
+    animation: none;
+  }
+}
