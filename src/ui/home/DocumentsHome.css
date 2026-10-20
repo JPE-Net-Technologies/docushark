@@ -947,6 +947,34 @@
   color: var(--text-primary);
 }
 
+/* DSK-195: New is a split button. The main half creates where you are
+   working; the arrow half (a DropdownMenu trigger) offers both choices. */
+.dh-new-split {
+  display: flex;
+  align-items: stretch;
+}
+
+.dh-new-split .dh-new {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.dh-new-menu {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid rgba(0, 0, 0, 0.18);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--color-cta);
+  color: var(--color-cta-text);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
 .dh-new {
   display: flex;
   align-items: center;
@@ -962,7 +990,8 @@
   cursor: pointer;
   transition: background 0.12s ease;
 }
-.dh-new:hover {
+.dh-new:hover,
+.dh-new-menu:hover {
   background: var(--color-cta-hover);
 }
 

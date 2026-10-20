@@ -265,7 +265,15 @@ export interface DocumentBrowserModel {
   transferPhase: ReturnType<typeof useTransferStore.getState>['phase'];
   transferDirection: ReturnType<typeof useTransferStore.getState>['direction'];
   // Document-level actions
+  /** Where New creates the document right now (DSK-195). */
+  newDocumentTarget: 'workspace' | 'local';
+  /** Signed in with a usable relay session: the workspace choice is available. */
+  canCreateInWorkspace: boolean;
   handleNewDocument: () => void;
+  /** The New menu's explicit workspace choice; a no-op when unavailable. */
+  handleNewWorkspaceDocument: () => void;
+  /** Always a local document, whatever the context. */
+  handleNewLocalDocument: () => void;
   handleSave: () => void;
   handleRefresh: () => void;
   handleImport: () => void;
@@ -302,6 +310,7 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   // Persistence store
   const currentDocumentId = usePersistenceStore((s) => s.currentDocumentId);
   const newDocument = usePersistenceStore((s) => s.newDocument);
+  const newWorkspaceDocument = usePersistenceStore((s) => s.newWorkspaceDocument);
   const saveDocument = usePersistenceStore((s) => s.saveDocument);
   const deleteDocument = usePersistenceStore((s) => s.deleteDocument);
   const permanentlyDeleteDocument = usePersistenceStore((s) => s.permanentlyDeleteDocument);
@@ -530,7 +539,48 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
   }, [documentList]);
 
   // Handlers
-  const handleNewDocument = useCallback(() => newDocument(), [newDocument]);
+  // New creates where you are working (DSK-195): a workspace document when
+  // signed in with a usable relay session, unless the Local filter is on, and a
+  // local document otherwise. "New local document" stays an explicit choice.
+  const canCreateInWorkspace = signedIn && relaySessionUsable;
+  const newDocumentTarget: 'workspace' | 'local' =
+    canCreateInWorkspace && filterMode !== 'local' ? 'workspace' : 'local';
+
+  const createInWorkspace = useCallback(() => {
+    void newWorkspaceDocument().then((result) => {
+      if (result.ok) return;
+      void import('../../store/notificationStore').then(({ useNotificationStore }) => {
+        useNotificationStore
+          .getState()
+          .warning(
+            `Couldn't create the document in your workspace (${result.error}). It's open as a local document; you can move it to your workspace later.`,
+          );
+      });
+    });
+  }, [newWorkspaceDocument]);
+
+  const handleNewDocument = useCallback(() => {
+    if (newDocumentTarget === 'local') {
+      newDocument();
+      // Signed in but no usable session (offline): say what happened, once per
+      // New. Signed out, local is simply what New means, so stay quiet.
+      if (signedIn && filterMode !== 'local') {
+        void import('../../store/notificationStore').then(({ useNotificationStore }) => {
+          useNotificationStore
+            .getState()
+            .info("You're offline, so this is a local document. Move it to your workspace when you're back online.");
+        });
+      }
+      return;
+    }
+    createInWorkspace();
+  }, [newDocumentTarget, newDocument, createInWorkspace, signedIn, filterMode]);
+
+  /** The New menu's explicit choices: workspace (when available) and local. */
+  const handleNewWorkspaceDocument = useCallback(() => {
+    if (canCreateInWorkspace) createInWorkspace();
+  }, [canCreateInWorkspace, createInWorkspace]);
+  const handleNewLocalDocument = useCallback(() => newDocument(), [newDocument]);
   const handleSave = useCallback(() => saveDocument(), [saveDocument]);
 
   // Single shared refresh path — used by the on-open mount effect AND the manual
@@ -1271,7 +1321,11 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
     isLoading,
     transferPhase,
     transferDirection,
+    newDocumentTarget,
+    canCreateInWorkspace,
     handleNewDocument,
+    handleNewWorkspaceDocument,
+    handleNewLocalDocument,
     handleSave,
     handleRefresh,
     handleImport,
