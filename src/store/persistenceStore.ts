@@ -40,6 +40,7 @@ import { useDocumentRegistry } from './documentRegistry';
 import { useTrashStore } from './trashStore';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { isCollabContentDoc, ensureCollabSessionForDoc, useCollaborationStore } from '../collaboration';
+import { registerOpenDocumentIdSource } from '../collaboration/openDocumentSource';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences, deriveBlobReferences } from '../storage/AssetBundler';
@@ -794,6 +795,27 @@ function loadDocumentToPageStore(input: DiagramDocument): void {
  * if (isDirty) { ... }
  * ```
  */
+/**
+ * The relay→local exit: any transition that makes a LOCAL document the open one
+ * must first leave a relay document's collab session, so its engine stops
+ * broadcasting and the presence "collaborate" frame (gated on `isActive`)
+ * clears (JP-188).
+ *
+ * `leaveDocument`, NOT `stopSession`: it stays signed in to the relay
+ * (preserves the token), so reopening a relay doc reconnects authenticated
+ * instead of dropping to offline/re-login (JP-190). Durable state stays on disk
+ * (relay binary + y-indexeddb), so reopening the relay doc re-hydrates.
+ *
+ * Every path needs it, not just opening a local doc. `newDocument` and
+ * `saveDocumentAs` used to skip it, which left the previous relay document
+ * bound: page-list, field and metadata writes from the new document landed in
+ * that document and the relay persisted them (DSK-192).
+ */
+function leaveCollabSessionForLocalDocument(): void {
+  const collab = useCollaborationStore.getState();
+  if (collab.isActive) collab.leaveDocument();
+}
+
 export const usePersistenceStore = create<PersistenceState & PersistenceActions>()(
   persist(
     (set, get) => ({
@@ -803,6 +825,11 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       // Create a new empty document
       newDocument: (name?: string) => {
         const docName = name ?? UNTITLED_DOCUMENT_NAME;
+
+        // A new document is local until it is saved to a workspace. Leave the
+        // previous relay document's session BEFORE the store resets below, so
+        // nothing they trigger can reach its Y.Doc (DSK-192).
+        leaveCollabSessionForLocalDocument();
 
         // These store resets are a programmatic reset, NOT user edits — suppress
         // autosave so their subscriptions (and any nodeView reaction to
@@ -973,6 +1000,11 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Save to localStorage
         saveDocumentToStorage(doc);
 
+        // The copy is a LOCAL document. If the original is a relay document,
+        // leave its session before the copy becomes the open document, or the
+        // copy's edits would keep writing into the original (DSK-192).
+        leaveCollabSessionForLocalDocument();
+
         // Update metadata index
         const metadata = getDocumentMetadata(doc);
 
@@ -1048,17 +1080,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         if (doc.isRelayDocument) {
           void ensureCollabSessionForDoc(id);
         } else {
-          // Opening a local doc means we've LEFT any relay doc — leave the
-          // doc's collab session so its engine stops broadcasting and the
-          // presence "collaborate" frame (gated on `isActive`) clears (JP-188).
-          // Use `leaveDocument`, NOT `stopSession`: it stays signed in to the
-          // relay (preserves the token), so reopening a relay doc reconnects
-          // authenticated instead of dropping to offline/re-login (JP-190). A
-          // relay→relay switch is handled by `switchDocument` above; this is the
-          // relay→local exit. Durable state stays on disk (relay binary +
-          // y-indexeddb), so reopening the relay doc re-hydrates.
-          const collab = useCollaborationStore.getState();
-          if (collab.isActive) collab.leaveDocument();
+          // Opening a local doc means we've LEFT any relay doc. A relay→relay
+          // switch is handled by `switchDocument` above; this is the
+          // relay→local exit.
+          leaveCollabSessionForLocalDocument();
         }
 
         // Save current document ID
@@ -2112,3 +2137,7 @@ export function uploadDocument(): Promise<boolean> {
     input.click();
   });
 }
+
+// DSK-192: the collab sync layer checks every store→CRDT write against the
+// document that is actually open, and drops writes aimed at a stale session.
+registerOpenDocumentIdSource(() => usePersistenceStore.getState().currentDocumentId);
