@@ -27,8 +27,8 @@ import { usePendingSyncPages } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
-import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
-import { useRelayDocumentStore } from './relayDocumentStore';
+import { isRelayAuthenticated, relaySessionUsable, useConnectionStore } from './connectionStore';
+import { useRelayDocumentStore, hasRelayDocumentProvider } from './relayDocumentStore';
 import { useCollectionStore } from './collectionStore';
 import { stampCollectionMembership } from './collectionMembership';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
@@ -370,6 +370,13 @@ export interface PersistenceActions {
   transferToPersonal: (docId: string) => boolean;
   /** Create a new relay document with the given name, awaiting the relay push */
   createRelayDocumentAs: (name: string) => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
+  /**
+   * New, in the workspace (DSK-195): a fresh, empty document created on the
+   * relay and opened with its own collab session, in one step. Without a
+   * workspace connection, or when the relay refuses, the user still has the
+   * new document, as a local one, and the result says why.
+   */
+  newWorkspaceDocument: () => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
   /** Rename any document by id (handles active/non-active, local/relay) */
   renameDocumentById: (docId: string, newName: string) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Set a document's tags by id (handles active/non-active, local/relay; JP-388) */
@@ -1513,6 +1520,22 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       // and then marks the new doc as a relay doc + pushes it to the relay.
       // Awaits the relay push so callers can surface success/failure in the UI.
       createRelayDocumentAs: async (name: string) => {
+        // Check the connection BEFORE creating anything. This used to save and
+        // flag a local copy as a relay document first, then return "not
+        // connected", leaving a local document that claimed to be a relay one
+        // (DSK-195).
+        //
+        // The creation goes over REST, so the gate is the REST session (a valid
+        // token), as for transfers (JP-211), not the live WebSocket: New leaves
+        // the previous document's session first (DSK-192), which takes the
+        // socket down while REST stays usable.
+        if (!relaySessionUsable()) {
+          return { ok: false, error: 'Not connected to a relay' };
+        }
+        if (!hasRelayDocumentProvider()) {
+          return { ok: false, error: 'Not connected to your workspace' };
+        }
+
         // Save locally first via the existing path (sets currentDocumentId).
         get().saveDocumentAs(name);
 
@@ -1545,17 +1568,19 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           documents: { ...state.documents, [newId]: metadata },
         }));
 
-        if (!isRelayAuthenticated()) {
-          return { ok: false, error: 'Not connected to a relay' };
-        }
-
         const relayDocStore = useRelayDocumentStore.getState();
-        if (!relayDocStore.authenticated) {
-          return { ok: false, error: 'Not authenticated to relay' };
+        try {
+          await relayDocStore.saveToHost(doc);
+        } catch (err) {
+          // The relay never got it. Keep the copy, honestly, as a local
+          // document rather than one that claims a relay record it doesn't
+          // have (DSK-195).
+          get().demoteCurrentDocumentToLocal();
+          const message = err instanceof Error ? err.message : 'Unknown relay error';
+          return { ok: false, error: message };
         }
 
         try {
-          await relayDocStore.saveToHost(doc);
 
           // Make the just-created relay doc the live collab target. Without this
           // the session stays pinned to the previously open doc: `collabDocId`
@@ -1574,6 +1599,13 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           const message = err instanceof Error ? err.message : 'Unknown relay error';
           return { ok: false, error: message };
         }
+      },
+
+      newWorkspaceDocument: async () => {
+        // Leave the previous document and start empty (DSK-192), then create
+        // the empty document in the workspace and bind its own session.
+        get().newDocument();
+        return get().createRelayDocumentAs(UNTITLED_DOCUMENT_NAME);
       },
 
       // Rename a document by id (any document, active or not, local or relay).

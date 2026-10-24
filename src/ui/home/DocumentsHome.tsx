@@ -41,6 +41,7 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
+import { DropdownMenu, menuAction } from '../components/DropdownMenu';
 import { useDocumentBrowserModel } from '../settings/useDocumentBrowserModel';
 import { BrowserViewMenu } from './BrowserViewMenu';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
@@ -123,7 +124,11 @@ export function DocumentsHome({
     relaySessionUsable,
     currentDocumentId,
     hasSelection,
+    newDocumentTarget,
+    canCreateInWorkspace,
     handleNewDocument,
+    handleNewWorkspaceDocument,
+    handleNewLocalDocument,
     handleImport,
     handleRefresh,
   } = model;
@@ -366,6 +371,16 @@ export function DocumentsHome({
 
   const onNew = () => {
     handleNewDocument();
+    onLeaveToEditor();
+  };
+
+  const onNewWorkspace = () => {
+    handleNewWorkspaceDocument();
+    onLeaveToEditor();
+  };
+
+  const onNewLocal = () => {
+    handleNewLocalDocument();
     onLeaveToEditor();
   };
 
@@ -708,10 +723,44 @@ export function DocumentsHome({
               <Upload size={16} aria-hidden="true" />
               <span className="dh-import-label">Import</span>
             </button>
-            <button className="dh-new" onClick={onNew} title="New document">
-              <FilePlus2 size={16} aria-hidden="true" />
-              <span>New</span>
-            </button>
+            {/* DSK-195: a split button. New creates where you are working (the
+                workspace when signed in, unless the Local filter is on); the
+                arrow offers both choices explicitly. */}
+            <div className="dh-new-split">
+              <button
+                className="dh-new"
+                onClick={onNew}
+                title={newDocumentTarget === 'workspace' ? 'New workspace document' : 'New local document'}
+              >
+                <FilePlus2 size={16} aria-hidden="true" />
+                <span>New</span>
+              </button>
+              <DropdownMenu
+                trigger={<ChevronDown size={16} aria-hidden="true" />}
+                triggerTitle="Choose where to create the document"
+                triggerClassName="dh-new-menu"
+                align="right"
+                entries={[
+                  menuAction({
+                    id: 'new-workspace',
+                    label: canCreateInWorkspace
+                      ? 'New workspace document'
+                      : 'New workspace document (sign in or go online)',
+                    icon: <Cloud size={16} aria-hidden="true" />,
+                    disabled: !canCreateInWorkspace,
+                    checked: newDocumentTarget === 'workspace',
+                    onSelect: onNewWorkspace,
+                  }),
+                  menuAction({
+                    id: 'new-local',
+                    label: 'New local document',
+                    icon: <HardDrive size={16} aria-hidden="true" />,
+                    checked: newDocumentTarget === 'local',
+                    onSelect: onNewLocal,
+                  }),
+                ]}
+              />
+            </div>
           </div>
         </header>
 

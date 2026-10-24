@@ -464,6 +464,16 @@ interface RelayDocumentActions {
 /** Document provider instance (module-level singleton) */
 let docProvider: DocumentProvider | null = null;
 
+/**
+ * Whether a REST document provider is installed. Creating or transferring a
+ * relay document needs only this plus a usable token (JP-211, DSK-195); the
+ * `authenticated` flag tracks the live host socket, which leaving a document
+ * takes down while REST stays usable.
+ */
+export function hasRelayDocumentProvider(): boolean {
+  return docProvider !== null;
+}
+
 // Let the blob resolver pull a blob that's missing locally (e.g. a viewer
 // opening a file whose bytes were never downloaded, or one a collaborator
 // uploaded after this client loaded the doc). Routes through the same provider
