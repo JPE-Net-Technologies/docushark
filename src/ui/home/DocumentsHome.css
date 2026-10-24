@@ -846,6 +846,42 @@
   background: var(--border-color);
 }
 
+/* Phone-width header (DSK-196), rendered by DocumentsHome in place of the
+   one-row header when `(max-width: 640px)` matches: two explicit rows instead
+   of letting nine controls wrap into four. Row 1 says where you are and holds
+   the View menu; row 2 is search and New, full width under the drawer toggle.
+   Row 1 starts after the absolutely placed toggle and is at least its height,
+   so the two line up. */
+.dh-top--narrow {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 8px;
+}
+.dh-top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dh-top-row:first-child {
+  min-height: var(--dh-toggle-size);
+  padding-left: calc(var(--dh-toggle-size) + 8px);
+}
+.dh-top--narrow .dh-crumb {
+  flex: 1 1 auto;
+}
+.dh-top--narrow .dh-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+/* "28" says enough beside the title at this width; "items" cost the title its
+   last word. */
+.dh-top--narrow .dh-crumb-unit {
+  display: none;
+}
+
 /* Sort + Group, in one designed trigger instead of two native selects. */
 .dh-viewmenu {
   display: flex;
@@ -873,6 +909,12 @@
 }
 .dh-viewmenu-label {
   white-space: nowrap;
+}
+.dh-viewmenu--icon {
+  flex: 0 0 auto;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
 }
 .dh-view-toggle {
   display: flex;
@@ -1007,6 +1049,8 @@
   min-height: 0;
   overflow-y: auto;
   padding: 22px;
+  /* List rows follow the list's own width (DSK-196; DocumentCard.css). */
+  container: documents-list / inline-size;
 }
 
 /* Sortable column header over the list view (JP-444). Left inset = card side
@@ -1204,6 +1248,11 @@ button.dh-colhead-col:hover {
   display: none;
 }
 
+/* The drawer toggle's size; the narrow header aligns its first row to it. */
+.documents-home {
+  --dh-toggle-size: 36px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dh-ring-arc,
   .dh-storage-foot-fill,
@@ -1284,17 +1333,21 @@ button.dh-colhead-col:hover {
     top: 10px;
     left: 12px;
     z-index: 10;
-    width: 36px;
-    height: 36px;
+    width: var(--dh-toggle-size);
+    height: var(--dh-toggle-size);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     background: var(--bg-primary);
     color: var(--text-secondary);
     cursor: pointer;
   }
-  /* Reserve room at the start of every header for the absolute toggle. */
+  /* Reserve room at the start of every header for the absolute toggle. The
+     two-row documents header reserves it on its first row only. */
   .dh-top {
-    padding-left: 56px;
+    padding: 10px 12px 10px calc(var(--dh-toggle-size) + 20px);
+  }
+  .dh-top--narrow {
+    padding-left: 12px;
   }
   /* The actions group (sort · group · view · refresh · import · new) is a
      non-wrapping flex item; on a narrow header it overflowed the row and the
@@ -1310,10 +1363,48 @@ button.dh-colhead-col:hover {
   .dh-top-rule {
     display: none;
   }
+  /* "Continue working" as a sideways strip (DSK-196). Stacked one per row its
+     six cards filled the whole first screen before a single list row; a
+     snapping strip shows two and a half and costs one card's height. It
+     bleeds to the screen edges so a card cut off at the edge says "more". */
   .dh-recents {
-    /* A single full-width column instead of the 240px-floor track, which could
-       itself overflow a very narrow content column. */
-    grid-template-columns: 1fr;
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(148px, 42%);
+    gap: 10px;
+    margin: 0 -12px;
+    padding: 0 12px 4px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scroll-padding: 0 12px;
+    scrollbar-width: none;
+  }
+  .dh-recents::-webkit-scrollbar {
+    display: none;
+  }
+  .dh-recents > .dh-rcard {
+    scroll-snap-align: start;
+  }
+  .dh-rcard-preview {
+    height: 76px;
+  }
+  .dh-rcard:hover {
+    transform: none;
+  }
+  /* Two grid columns: one 206px-floor card per row left the grid view showing
+     barely two documents a screen. */
+  .dh-content .document-browser__list--grid,
+  .dh-content .document-browser__section-body--grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+  /* Phone-width gutters (DSK-196): 22px a side cost two-line rows a tenth of
+     a 375px screen. */
+  .dh-content {
+    padding: 12px;
+  }
+  .dh-section {
+    margin-bottom: 18px;
   }
 }
 
@@ -1483,4 +1574,74 @@ button.dh-colhead-col:hover {
 .trash-action--danger:hover {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+/* ── Touch (DSK-196) ──────────────────────────────────────────────────────
+   44px targets under a coarse pointer, the minimum the app uses elsewhere.
+   Mouse-sized controls (30–36px, the collection trigger 22px) were measured
+   in the mobile walkthrough. Inputs go to 16px: iOS Safari zooms the page
+   into any focused field set smaller, and doesn't zoom back out. */
+@media (pointer: coarse) {
+  .documents-home {
+    --dh-toggle-size: 44px;
+  }
+  .dh-back,
+  .dh-search,
+  .dh-viewmenu,
+  .dh-view-toggle,
+  .dh-refresh,
+  .dh-import,
+  .dh-new,
+  .dh-new-menu {
+    min-height: 44px;
+  }
+  .dh-search {
+    height: 44px;
+  }
+  .dh-search input {
+    font-size: 16px;
+  }
+  .dh-viewmenu--icon,
+  .dh-refresh,
+  .dh-view-toggle button {
+    width: 44px;
+  }
+  .dh-new-menu {
+    width: 40px;
+  }
+  /* The drawer. */
+  .dh-nav-item {
+    min-height: 44px;
+  }
+  .dh-manage,
+  .dh-user-theme {
+    width: 44px;
+    min-height: 44px;
+  }
+  .dh-nav-add {
+    width: 44px;
+    height: 44px;
+    /* Grow the target, not the section heading's line. */
+    margin: -12px -10px -12px 0;
+  }
+  /* Trash. */
+  .trash-empty-btn,
+  .trash-confirm-yes,
+  .trash-confirm-no,
+  .trash-action {
+    min-height: 44px;
+  }
+  .trash-action--danger {
+    min-width: 44px;
+    justify-content: center;
+  }
+}
+
+/* Touch has no hover to reveal a collection's actions with, and they were
+   unreachable in the drawer: show the trigger at rest. */
+@media (hover: none) {
+  .dh-collection-row .document-browser__section-menu-wrap {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }

@@ -64,8 +64,152 @@
   }
 }
 
+/* ── Bottom placement: an action sheet (DSK-196) ───────────────────────────
+   Replaces a dropdown on touch, so it shares the dropdown layer (z 10200):
+   above the Documents surface (9000) and toasts, which a full sheet's z 1000
+   would sit under. The confirm dialog never stacks on it — choosing an action
+   closes the sheet before the action runs. */
+.mobile-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10200;
+}
+
+.mobile-sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  /* A drag on the scrim must not scroll or refresh the page behind it. */
+  touch-action: none;
+  animation: mobile-sheet-scrim-in 0.18s ease-out;
+}
+
+.mobile-sheet--bottom {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 1;
+  max-height: min(85vh, 85dvh);
+  padding-top: 0;
+  padding-bottom: max(8px, var(--safe-area-bottom));
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  outline: none;
+  transition: transform 0.18s ease-out;
+  animation: mobile-sheet-rise 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mobile-sheet-header--bottom {
+  position: relative;
+  gap: 4px;
+  min-height: 56px;
+  padding: 14px 6px 6px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: transparent;
+  /* The header is the drag handle: keep the browser's own gestures off it. */
+  touch-action: none;
+  cursor: grab;
+}
+
+/* The grip is the cue that the sheet can be swiped away. */
+.mobile-sheet-grip {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: var(--border-color-input, var(--border-color));
+}
+
+.mobile-sheet-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-sheet-header--bottom .mobile-sheet-title,
+.mobile-sheet-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-sheet-header--bottom .mobile-sheet-title {
+  font-size: var(--font-size-base);
+}
+
+.mobile-sheet-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* A back button directly before the title doubles as the page's indent. */
+.mobile-sheet-icon-btn + .mobile-sheet-heading {
+  margin-left: -2px;
+}
+
+.mobile-sheet-icon-btn {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-left: -10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.mobile-sheet-heading + .mobile-sheet-icon-btn {
+  margin-left: 0;
+}
+
+.mobile-sheet-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.mobile-sheet-icon-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.mobile-sheet--bottom .mobile-sheet-body {
+  /* A long sheet scrolls inside itself; reaching its end must not hand the
+     scroll to the page underneath. */
+  overscroll-behavior: contain;
+}
+
+@keyframes mobile-sheet-rise {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes mobile-sheet-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .mobile-sheet {
+  .mobile-sheet,
+  .mobile-sheet-scrim {
     animation: none;
+  }
+  .mobile-sheet--bottom {
+    transition: none;
   }
 }

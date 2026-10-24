@@ -577,6 +577,7 @@
   }
 }
 
+
 .document-browser__section-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -780,6 +781,45 @@
   line-height: 1;
 }
 
+/* The collection actions sheet's colour row (DSK-196): one row of up-to-44px
+   swatches that shrink to fit a 320px phone rather than wrapping "no colour"
+   onto a line of its own; the current one ringed and checked. */
+.collection-sheet__swatches {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 44px));
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 12px 12px;
+}
+
+.collection-sheet__swatch {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.collection-sheet__swatch--current {
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--color-primary);
+}
+
+.collection-sheet__swatch--clear {
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-color-input, var(--border-color));
+  color: var(--text-secondary);
+}
+
+.collection-sheet__swatch:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
 /* Dark mode tweaks for new controls */
 :root[data-theme="dark"] .document-browser__select-input {
   background-color: var(--bg-secondary);
@@ -955,4 +995,22 @@
 
 .document-browser__transfer-text {
   color: var(--color-text, #1e293b);
+}
+
+/* Touch targets (DSK-196): the selection bar's buttons and links, and a
+   collection's actions trigger, at the 44px minimum. Last in the file so it
+   outranks the base rules it resizes. */
+@media (pointer: coarse) {
+  .document-browser__bulk-btn,
+  .document-browser__selection-link {
+    min-height: 44px;
+  }
+  .document-browser__bulk-btn {
+    min-width: 44px;
+    justify-content: center;
+  }
+  .document-browser__section-menu-btn {
+    width: 44px;
+    height: 44px;
+  }
 }

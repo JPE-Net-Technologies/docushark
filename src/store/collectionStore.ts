@@ -316,3 +316,13 @@ export const COLLECTION_SWATCHES: readonly string[] = [
   '#8b5cf6', // violet
   '#ec4899', // pink
 ];
+
+/** Names for the swatches, for their accessible labels. */
+export const COLLECTION_SWATCH_NAMES: Readonly<Record<string, string>> = {
+  '#ef4444': 'Red',
+  '#f59e0b': 'Amber',
+  '#10b981': 'Emerald',
+  '#3b82f6': 'Blue',
+  '#8b5cf6': 'Violet',
+  '#ec4899': 'Pink',
+};

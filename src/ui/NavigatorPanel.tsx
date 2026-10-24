@@ -429,6 +429,7 @@ export function NavigatorPanel() {
           trigger={<Icon icon={MoreHorizontal} size={14} />}
           triggerTitle={`Actions for ${page.name}`}
           triggerClassName="navigator-row-menu"
+          sheetTitle={page.name}
           entries={proseMenuEntries(pageId)}
         />
       </div>
@@ -535,6 +536,7 @@ export function NavigatorPanel() {
                 trigger={<Icon icon={MoreHorizontal} size={14} />}
                 triggerTitle={`Actions for ${canvasPages[id]?.name ?? 'this page'}`}
                 triggerClassName="navigator-row-menu"
+                sheetTitle={canvasPages[id]?.name ?? 'Untitled'}
                 entries={canvasMenuEntries(id)}
               />
             </div>
@@ -551,6 +553,11 @@ export function NavigatorPanel() {
             if (!next) setRowMenu(null);
           }}
           anchorPoint={{ x: rowMenu.x, y: rowMenu.y }}
+          // On a phone a long-press opens this as a sheet, which needs a title.
+          sheetTitle={
+            (rowMenu.kind === 'prose' ? pages[rowMenu.pageId]?.name : canvasPages[rowMenu.pageId]?.name) ??
+            'Untitled'
+          }
           entries={
             rowMenu.kind === 'prose' ? proseMenuEntries(rowMenu.pageId) : canvasMenuEntries(rowMenu.pageId)
           }
