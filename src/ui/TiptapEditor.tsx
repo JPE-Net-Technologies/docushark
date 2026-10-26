@@ -19,7 +19,7 @@ import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { getSchema } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { history } from 'prosemirror-history';
+import { resetEditorHistory } from '../tiptap/resetEditorHistory';
 import Placeholder from '@tiptap/extension-placeholder';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
@@ -385,17 +385,8 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
       editor.commands.setContent(newContent);
       // Drop history so the "load document" transaction can never be
       // undone, and so any leftover entries from a previously-loaded
-      // document don't leak across. Reconfigure with a fresh history
-      // plugin instance — this resets only the history plugin's state
-      // and leaves @tiptap/react's ReactNodeView tracking plugin alone
-      // (a wholesale `EditorState.create` would crash mid-render here
-      // by forcing every plugin to reinit and remounting node views
-      // against a partial desc tree).
-      const newPlugins = editor.state.plugins.map((p) => {
-        const key = (p as unknown as { key?: string }).key;
-        return typeof key === 'string' && key.startsWith('history$') ? history() : p;
-      });
-      editor.view.updateState(editor.state.reconfigure({ plugins: newPlugins }));
+      // document don't leak across (DSK-201).
+      resetEditorHistory(editor);
 
       // Resolve blob:// images after content is set (slight delay for DOM
       // update); on-update resolution is handled by useProseEditorChrome.
