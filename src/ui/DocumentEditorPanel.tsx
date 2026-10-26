@@ -30,7 +30,8 @@ import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { usePresenceStore } from '../store/presenceStore';
-import { shouldPersistLeavingPage } from './proseLeavingPageGuard';
+import { shouldFlushMountedPage, shouldPersistLeavingPage } from './proseLeavingPageGuard';
+import { registerPreSaveFlush } from '../store/preSaveFlush';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
@@ -438,21 +439,43 @@ export function DocumentEditorPanel({
     };
   }, [editor, getScrollEl]);
 
-  // Auto-save current page content periodically
+  // Copy the mounted editor's content into the pages store, the copy a save
+  // serializes and a reload reads back (DSK-199). Writes to the page the editor
+  // is showing (not the store's activePageId — see the cross-page guard in the
+  // scroll handler above), and only when that is the open document's page:
+  // until the load effect runs, the editor still holds the previous document,
+  // whose page ids the new one may share.
+  const isRelayDocRef = useRef(isRelayDoc);
   useEffect(() => {
-    const saveInterval = setInterval(() => {
-      // Use the page whose content is currently mounted in the editor, not the
-      // store's activePageId — see cross-page guard comment in the scroll
-      // handler above.
-      const pageId = lastActivePageRef.current;
-      if (editorRef.current && pageId && !isLoadingRef.current) {
-        const content = editorRef.current.getHTML();
-        updatePageContent(pageId, content);
-      }
-    }, 5000);
-
-    return () => clearInterval(saveInterval);
+    isRelayDocRef.current = isRelayDoc;
+  }, [isRelayDoc]);
+  const flushMountedPage = useCallback(() => {
+    const ed = editorRef.current;
+    const pageId = lastActivePageRef.current;
+    if (!ed || ed.isDestroyed || !pageId) return;
+    const flush = shouldFlushMountedPage({
+      editorPageId: editorPageIdRef.current,
+      shownPageId: pageId,
+      panelDocId: lastDocIdRef.current,
+      openDocId: usePersistenceStore.getState().currentDocumentId,
+      loading: isLoadingRef.current,
+      editable: ed.isEditable,
+      relay: isRelayDocRef.current,
+    });
+    if (flush) updatePageContent(pageId, ed.getHTML());
   }, [updatePageContent]);
+
+  // Every save captures the editor first (DSK-199). Before this, a save took
+  // the pages store as it stood, so text typed since the last copy below missed
+  // every save, the unload and app-switch flushes included.
+  useEffect(() => registerPreSaveFlush(flushMountedPage), [flushMountedPage]);
+
+  // Keep the pages store current for its other readers (outline, offline
+  // cache, export) between saves.
+  useEffect(() => {
+    const saveInterval = setInterval(flushMountedPage, 5000);
+    return () => clearInterval(saveInterval);
+  }, [flushMountedPage]);
 
   // Save on unmount
   useEffect(() => {

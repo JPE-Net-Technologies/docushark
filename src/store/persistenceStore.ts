@@ -23,6 +23,7 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { runPreSaveFlushes } from './preSaveFlush';
 import { usePendingSyncPages } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
@@ -637,6 +638,10 @@ function createDocumentFromPageStore(
   name: string,
   existingDoc?: DiagramDocument
 ): DiagramDocument {
+  // Live editors first copy what they hold into the stores read below
+  // (DSK-199): the local prose editor's page copy otherwise trails it by up to
+  // a save cycle, and a reload reads that copy back.
+  runPreSaveFlushes();
   const pageSnapshot = usePageStore.getState().getSnapshot();
 
   const issues = findPageIntegrityIssues(pageSnapshot.pages);
