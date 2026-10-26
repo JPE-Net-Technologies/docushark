@@ -32,6 +32,7 @@ import { VersionHistoryPanel } from '../VersionHistoryPanel';
 import { openAccessPanel } from '../access/accessPanelStore';
 import { CollectionActionsMenu } from './CollectionActionsMenu';
 import { isWorkspaceCollection, type Collection } from '../../store/collectionStore';
+import { useBreakpoint } from '../layout/useBreakpoint';
 import type { DocumentBrowserView } from '../../store/uiPreferencesStore';
 import type { DocumentRecord } from '../../types/DocumentRegistry';
 import {
@@ -103,6 +104,8 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
 
   const cardMode: 'compact' | 'full' | 'grid' =
     view === 'grid' ? 'grid' : compact ? 'compact' : 'full';
+  // Read once for the whole list rather than per card (DSK-196).
+  const { isTouch } = useBreakpoint();
 
   // JP-185 version history — opened from a cloud doc's card; rendered here so
   // it works in both browser chromes (Settings + DocumentsHome).
@@ -162,6 +165,7 @@ export function DocumentList({ model, compact = false, onOpened }: DocumentListP
         onTagClick={handleTagClick}
         tagSuggestions={allTags}
         mode={cardMode}
+        touch={isTouch}
       />
     );
   };

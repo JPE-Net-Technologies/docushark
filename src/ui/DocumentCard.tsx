@@ -21,6 +21,7 @@ import {
   MoreVertical,
   Network,
   Pencil,
+  SquareCheck,
   Tags,
   Trash2,
   Upload,
@@ -103,6 +104,12 @@ interface DocumentCardProps {
   tagSuggestions?: string[] | undefined;
   /** Display mode */
   mode?: 'compact' | 'full' | 'grid' | undefined;
+  /**
+   * Touch input (DSK-196): nothing is hover-revealed, so the quick actions move
+   * into the menu (no one-tap Trash under a thumb) and the menu offers Select,
+   * the only way into multi-select without a hover checkbox.
+   */
+  touch?: boolean | undefined;
 }
 
 interface OfflineBadge {
@@ -270,6 +277,21 @@ export function formatRelayLabel(
 }
 
 /**
+ * What an action sheet's subtitle says about the document it acts on (DSK-196):
+ * where it lives, when it last changed, and its size. On a phone this stands in
+ * for the list row's details panel, which narrow rows don't show.
+ */
+export function sheetSummary(record: DocumentRecord): string {
+  const edited = formatDate(record.modifiedAt);
+  const parts = [
+    getTypeLabel(record.type),
+    edited === 'Just now' ? 'Edited just now' : `Edited ${edited}`,
+  ];
+  if (typeof record.sizeBytes === 'number') parts.push(formatFileSize(record.sizeBytes));
+  return parts.join(' · ');
+}
+
+/**
  * A collection may hold a document only when their scopes match: a local
  * (personal) document → local collections; a workspace document (remote or
  * cached-offline) → workspace collections. Mirrors `docScopeOf` in collectionSync
@@ -309,6 +331,7 @@ function DocumentCardImpl({
   onTagClick,
   tagSuggestions,
   mode = 'compact',
+  touch = false,
 }: DocumentCardProps) {
   // JP-459: resolve the last editor to a person. Returns '' when we can't —
   // the tooltip is then omitted rather than showing a raw account id.
@@ -345,8 +368,7 @@ function DocumentCardImpl({
     }
   }, [record.name, isEditing]);
 
-  const handlePublish = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const publish = useCallback(async () => {
     if (!onPublishToRelay) return;
     setIsPublishing(true);
     try {
@@ -356,8 +378,15 @@ function DocumentCardImpl({
     }
   }, [onPublishToRelay, record.id]);
 
-  const handleMoveToPersonal = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handlePublish = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      void publish();
+    },
+    [publish],
+  );
+
+  const moveToPersonal = useCallback(async () => {
     if (!onMoveToPersonal) return;
     setIsMovingToPersonal(true);
     try {
@@ -366,6 +395,14 @@ function DocumentCardImpl({
       setIsMovingToPersonal(false);
     }
   }, [onMoveToPersonal, record.id]);
+
+  const handleMoveToPersonal = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      void moveToPersonal();
+    },
+    [moveToPersonal],
+  );
 
   /**
    * Select mode: the browser already has a selection, so the surface is being
@@ -502,6 +539,10 @@ function DocumentCardImpl({
   // badge above it. `relaySignedIn` (a valid cached token) splits a disconnected
   // doc into 'idle' (reopens instantly) vs 'offline' (JP-190).
   const syncState = getSyncState(record, relay?.status === 'connected', relaySignedIn);
+  // An offline copy that can't reach its workspace read "OFFLINE · Offline":
+  // the type badge already says it (DSK-196, where badges compete for a
+  // phone-width line).
+  const restatesType = record.type === 'cached' && syncState === 'offline';
   const showDetails = mode === 'full';
 
   const showCheckbox = Boolean(onSelectToggle) && (showSelectionCheckbox || isSelected);
@@ -517,8 +558,41 @@ function DocumentCardImpl({
 
   // Overflow ("kebab") menu — everything beyond the two visible quick actions
   // (contextual transfer + Trash). Entries are gated on the same optional
-  // callbacks as before, so permission logic stays in the list renderer.
+  // callbacks as before, so permission logic stays in the list renderer. On
+  // touch the quick actions aren't rendered; the menu carries them instead.
   const menuEntries: DropdownMenuEntry[] = [];
+  if (touch && onSelectToggle) {
+    menuEntries.push(
+      menuAction({
+        id: 'select',
+        label: isSelected ? 'Deselect' : 'Select',
+        icon: <SquareCheck size={16} aria-hidden="true" />,
+        onSelect: () => onSelectToggle(record.id, { shift: false, meta: true }),
+      }),
+    );
+  }
+  if (touch && onPublishToRelay) {
+    menuEntries.push(
+      menuAction({
+        id: 'publish',
+        label: 'Move to Cloud',
+        icon: <Upload size={16} aria-hidden="true" />,
+        disabled: isPublishing,
+        onSelect: () => void publish(),
+      }),
+    );
+  }
+  if (touch && onMoveToPersonal) {
+    menuEntries.push(
+      menuAction({
+        id: 'move-personal',
+        label: 'Move to personal',
+        icon: <Download size={16} aria-hidden="true" />,
+        disabled: isMovingToPersonal,
+        onSelect: () => void moveToPersonal(),
+      }),
+    );
+  }
   if (onRename) {
     menuEntries.push(
       menuAction({
@@ -707,7 +781,9 @@ function DocumentCardImpl({
               it renders nothing extra. The connection/offline state lives here
               only — a separate relay badge would duplicate it and leak the
               relay host. */}
-          {record.type !== 'local' && <SyncStatusBadge state={syncState} size="small" showLabel />}
+          {record.type !== 'local' && !restatesType && (
+            <SyncStatusBadge state={syncState} size="small" showLabel />
+          )}
 
           {/* JP-308: document from another relay than the one we're on. Labelled
               generically (no host:port leak — the full host lives in the details
@@ -780,6 +856,12 @@ function DocumentCardImpl({
           {/* Modified time — hidden in full/list mode, where it lives in its
               own column cell instead (JP-444). */}
           <span className="document-card__date">{formatDate(record.modifiedAt)}</span>
+
+          {/* Size, for the two-line list row on narrow screens (DSK-196), where
+              the column cells are hidden. CSS keeps it hidden everywhere else. */}
+          {mode === 'full' && typeof record.sizeBytes === 'number' && (
+            <span className="document-card__size-inline">{formatFileSize(record.sizeBytes)}</span>
+          )}
         </div>
 
         {/* Grid-card foot (JP-444): people + size in the kit's mono style. */}
@@ -917,7 +999,7 @@ function DocumentCardImpl({
 
       {/* Actions */}
       <div className="document-card__actions">
-        {onPublishToRelay && (
+        {onPublishToRelay && !touch && (
           <button
             className="document-card__action document-card__action--publish"
             onClick={handlePublish}
@@ -932,7 +1014,7 @@ function DocumentCardImpl({
             )}
           </button>
         )}
-        {onMoveToPersonal && (
+        {onMoveToPersonal && !touch && (
           <button
             className="document-card__action document-card__action--move-personal"
             onClick={handleMoveToPersonal}
@@ -947,7 +1029,7 @@ function DocumentCardImpl({
             )}
           </button>
         )}
-        {onDelete && (
+        {onDelete && !touch && (
           <button
             className="document-card__action document-card__action--danger"
             onClick={handleTrashClick}
@@ -965,6 +1047,8 @@ function DocumentCardImpl({
             entries={menuEntries}
             align="right"
             onOpenChange={setMenuOpen}
+            sheetTitle={record.name}
+            sheetSubtitle={sheetSummary(record)}
           />
         )}
       </div>

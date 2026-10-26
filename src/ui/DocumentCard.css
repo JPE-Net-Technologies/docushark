@@ -19,9 +19,13 @@
   cursor: default;
 }
 
-.document-card:hover {
-  background: var(--bg-hover);
-  border-color: var(--color-primary);
+/* Hover-capable pointers only: on touch, :hover sticks to the last card
+   tapped, and in select mode that left a deselected card looking selected. */
+@media (hover: hover) {
+  .document-card:hover {
+    background: var(--bg-hover);
+    border-color: var(--color-primary);
+  }
 }
 
 .document-card--active {
@@ -465,6 +469,17 @@ button.document-card__offline--action:focus-visible {
   justify-content: flex-end;
 }
 
+/* The narrow row's size readout; only shown in a narrow list (end of file). */
+.document-card__size-inline {
+  display: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+
+
 /* Compact mode adjustments */
 .document-card--compact {
   padding: 8px 10px;
@@ -623,8 +638,10 @@ button.document-card__offline--action:focus-visible {
   border-color: var(--border-color);
 }
 
-:root[data-theme="dark"] .document-card:hover {
-  background: var(--bg-tertiary);
+@media (hover: hover) {
+  :root[data-theme="dark"] .document-card:hover {
+    background: var(--bg-tertiary);
+  }
 }
 
 :root[data-theme="dark"] .document-card--active {
@@ -663,4 +680,64 @@ button.document-card__offline--action:focus-visible {
 
 :root[data-theme="dark"] .document-card__expand:hover {
   background: var(--bg-tertiary);
+}
+
+/* Touch (DSK-196). Nothing can be hover-revealed without a hover, so the menu
+   button shows at rest, and the selection checkbox appears only in select mode:
+   before, it was an invisible 18px tap target at each row's left edge that
+   selected a document without showing why. (The quick actions aren't rendered
+   on touch at all; DocumentCard moves them into the menu.) */
+@media (hover: none) {
+  .document-card__actions,
+  .document-card--full .document-card__actions {
+    opacity: 1;
+  }
+  .document-card__select:not(.document-card__select--visible) {
+    display: none;
+  }
+}
+
+/* The 44px touch target the app uses under a coarse pointer, and a 16px
+   rename field: iOS Safari zooms the page into a focused input set smaller. */
+@media (pointer: coarse) {
+  .document-card__action {
+    width: 44px;
+    height: 44px;
+  }
+  .document-card__name-input {
+    font-size: 16px;
+  }
+}
+
+/* A narrow list (DSK-196). The table row's fixed tracks take about 524px, so
+   in a phone-width list the flexible name cell got 0px: rows showed badges,
+   times and sizes with no names. A phone held sideways (a docked sidebar
+   beside a ~530px list) and a narrowed window hit the same wall, so this
+   follows the list's own width, not the viewport's. A narrow row is two lines:
+   the name, then a meta line carrying the date and size the column cells hold
+   in a wide list. The details toggle goes too; the row's menu sheet says what
+   it would have. `documents-list` is `.dh-content` (DocumentsHome.css); the
+   width is LIST_ROWS_NARROW_MAX in home/documentsLayout.ts, which DocumentsHome
+   uses to drop its column header at the same pixel. Last in the file: a query
+   block adds no specificity, so it must come after the rules it overrides. */
+@container documents-list (max-width: 680px) {
+  .document-card--full {
+    gap: 4px;
+    padding: 8px 4px 8px 12px;
+  }
+  .document-card--full .document-card__cell,
+  .document-card--full .document-card__expand,
+  .document-card--full .document-card__details {
+    display: none;
+  }
+  .document-card--full .document-card__date,
+  .document-card--full .document-card__size-inline {
+    display: inline;
+  }
+  .document-card--full .document-card__actions {
+    width: auto;
+  }
+  .document-card--full .document-card__meta {
+    gap: 8px;
+  }
 }

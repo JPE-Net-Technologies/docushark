@@ -41,7 +41,12 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
-import { DropdownMenu, menuAction } from '../components/DropdownMenu';
+import {
+  DropdownMenu,
+  menuAction,
+  MENU_SEPARATOR,
+  type DropdownMenuEntry,
+} from '../components/DropdownMenu';
 import { useDocumentBrowserModel } from '../settings/useDocumentBrowserModel';
 import { BrowserViewMenu } from './BrowserViewMenu';
 import { DocumentList, SelectionBar } from '../settings/DocumentList';
@@ -54,6 +59,7 @@ import { useTrashStore } from '../../store/trashStore';
 import { useDocumentRegistry } from '../../store/documentRegistry';
 import { useThemeStore } from '../../store/themeStore';
 import { RecentCard } from './RecentCard';
+import { pickContinueWorking } from './continueWorking';
 import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
 import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
@@ -68,11 +74,15 @@ import {
 } from '../../utils/byteSize';
 import { CapacityRing, type CapacitySegment } from './CapacityRing';
 import { openCloudSignIn } from '../cloud/cloudSignInStore';
+import { COMPACT_WIDTH_QUERY, useMediaQuery } from '../layout/useMediaQuery';
+import { useElementWidth } from '../layout/useElementWidth';
+import { LIST_ROWS_NARROW_MAX } from './documentsLayout';
 import type {
   DocumentBrowserSort,
   DocumentBrowserView,
 } from '../../store/uiPreferencesStore';
 import './DocumentsHome.css';
+
 
 export interface DocumentsHomeProps {
   /** Switch the app shell back to the editor (after opening/creating a doc, or "back"). */
@@ -197,16 +207,24 @@ export function DocumentsHome({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [sidebarOpen]);
+  // The surface's narrow layout (DSK-196): the sidebar becomes a drawer, list
+  // rows become two lines, the header two rows, and the column header gives
+  // way to sorting in the View menu. The same query as the `max-width: 640px`
+  // blocks in DocumentsHome.css and DocumentCard.css, so JS and CSS switch at
+  // the same pixel.
+  const narrow = useMediaQuery(COMPACT_WIDTH_QUERY);
+  // List rows follow the list's own width, not the viewport's (DSK-196): a
+  // phone held sideways, or a narrowed window, leaves a docked sidebar beside a
+  // list too narrow for the table's fixed columns. Pairs with the
+  // `@container documents-list` block in DocumentCard.css; until the list is
+  // measured, the viewport query stands in.
+  const [listRef, listWidth] = useElementWidth<HTMLDivElement>();
+  const rowsNarrow = listWidth === null ? narrow : listWidth <= LIST_ROWS_NARROW_MAX;
   // Drop any lingering open state when the viewport grows past the drawer
   // breakpoint, so the docked rail never renders with a stale backdrop.
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 641px)');
-    const sync = () => {
-      if (mq.matches) setSidebarOpen(false);
-    };
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, []);
+    if (!narrow) setSidebarOpen(false);
+  }, [narrow]);
 
   const selectNav = (id: NavId) => {
     setNav(id);
@@ -340,7 +358,7 @@ export function DocumentsHome({
   // "Continue working" strip: the most recent docs, shown on All without a
   // query. Skipped for tiny libraries (≤4 docs) where it would just duplicate
   // the table below (JP-444).
-  const recents = useMemo(() => documentList.slice(0, 6), [documentList]);
+  const recents = useMemo(() => pickContinueWorking(documentList), [documentList]);
   // Grid view is excluded (JP-477): once the grid cards carry the same
   // thumbnails, the strip is the first six of the list rendered twice, one row
   // above itself. It still earns its place over the list view, where it's the
@@ -383,6 +401,100 @@ export function DocumentsHome({
     handleNewLocalDocument();
     onLeaveToEditor();
   };
+
+  const refreshList = () => {
+    setRefreshSpin(true);
+    handleRefresh();
+    window.setTimeout(() => setRefreshSpin(false), 600);
+  };
+
+  // Header pieces, composed into one row on wide screens and two on narrow.
+  const backButton = currentDocumentId && (
+    <button className="dh-back" onClick={onLeaveToEditor} title="Back to editor">
+      <ChevronLeft size={18} aria-hidden="true" />
+      <span>Editor</span>
+    </button>
+  );
+
+  // Title carries the count, so the list below doesn't repeat it in a heading
+  // of its own.
+  const crumb = (
+    <div className="dh-crumb">
+      <strong>{activeLabel}</strong>
+      <span className="dh-crumb-count">
+        {documentList.length}
+        <span className="dh-crumb-unit"> {documentList.length === 1 ? 'item' : 'items'}</span>
+      </span>
+    </div>
+  );
+
+  const search = (
+    <div className="dh-search">
+      <Search size={16} aria-hidden="true" />
+      <input
+        ref={searchInputRef}
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder={`Search ${activeLabel.toLowerCase()}…`}
+        title="Search by name or tag — #tag matches tags only. Press / or Ctrl+K to focus."
+      />
+      <kbd className="dh-search-kbd" aria-hidden="true">/</kbd>
+    </div>
+  );
+
+  // DSK-195: a split button. New creates where you are working (the workspace
+  // when signed in, unless the Local filter is on); the arrow offers both
+  // choices explicitly. On a phone the arrow also holds Import, which has no
+  // header button there (DSK-196).
+  const newEntries: DropdownMenuEntry[] = [
+    menuAction({
+      id: 'new-workspace',
+      label: canCreateInWorkspace ? 'New workspace document' : 'New workspace document (sign in or go online)',
+      icon: <Cloud size={16} aria-hidden="true" />,
+      disabled: !canCreateInWorkspace,
+      checked: newDocumentTarget === 'workspace',
+      onSelect: onNewWorkspace,
+    }),
+    menuAction({
+      id: 'new-local',
+      label: 'New local document',
+      icon: <HardDrive size={16} aria-hidden="true" />,
+      checked: newDocumentTarget === 'local',
+      onSelect: onNewLocal,
+    }),
+  ];
+  if (narrow) {
+    newEntries.push(
+      MENU_SEPARATOR,
+      menuAction({
+        id: 'import',
+        label: 'Import a document…',
+        icon: <Upload size={16} aria-hidden="true" />,
+        onSelect: handleImport,
+      }),
+    );
+  }
+  const newSplit = (
+    <div className="dh-new-split">
+      <button
+        className="dh-new"
+        onClick={onNew}
+        title={newDocumentTarget === 'workspace' ? 'New workspace document' : 'New local document'}
+      >
+        <FilePlus2 size={16} aria-hidden="true" />
+        <span>New</span>
+      </button>
+      <DropdownMenu
+        trigger={<ChevronDown size={16} aria-hidden="true" />}
+        triggerTitle="Choose where to create the document"
+        triggerClassName="dh-new-menu"
+        align="right"
+        sheetTitle="New document"
+        entries={newEntries}
+      />
+    </div>
+  );
 
   return (
     <div className="documents-home" data-theme={resolvedTheme}>
@@ -638,33 +750,33 @@ export function DocumentsHome({
           <TrashView onBack={() => setMainView('documents')} />
         ) : (
           <>
+        {narrow ? (
+          /* Two rows on a phone (DSK-196): where you are, then what you do.
+             The display controls fold into one View menu, and Import joins
+             New's menu, so neither costs a header row of its own. */
+          <header className="dh-top dh-top--narrow">
+            <div className="dh-top-row">
+              {backButton}
+              {crumb}
+              <BrowserViewMenu
+                columnSort={false}
+                sort={sort}
+                setSort={setSort}
+                groupBy={groupBy}
+                setGroupBy={setGroupBy}
+                compact={{ view, setView, onRefresh: refreshList }}
+              />
+            </div>
+            <div className="dh-top-row">
+              {search}
+              {newSplit}
+            </div>
+          </header>
+        ) : (
         <header className="dh-top">
-          {currentDocumentId && (
-            <button className="dh-back" onClick={onLeaveToEditor} title="Back to editor">
-              <ChevronLeft size={18} aria-hidden="true" />
-              <span>Editor</span>
-            </button>
-          )}
-          {/* Title carries the count, so the list below doesn't repeat it in a
-              heading of its own. */}
-          <div className="dh-crumb">
-            <strong>{activeLabel}</strong>
-            <span className="dh-crumb-count">
-              {documentList.length} {documentList.length === 1 ? 'item' : 'items'}
-            </span>
-          </div>
-          <div className="dh-search">
-            <Search size={16} aria-hidden="true" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={`Search ${activeLabel.toLowerCase()}…`}
-              title="Search by name or tag — #tag matches tags only. Press / or Ctrl+K to focus."
-            />
-            <kbd className="dh-search-kbd" aria-hidden="true">/</kbd>
-          </div>
+          {backButton}
+          {crumb}
+          {search}
           {/* Two clusters, not one undifferentiated row: how the library is
               displayed (view · sort/group · refresh), then what you do to it
               (import · new). The rule between them is the hierarchy. */}
@@ -691,7 +803,7 @@ export function DocumentsHome({
                 </button>
               </div>
               <BrowserViewMenu
-                view={view}
+                columnSort={view === 'list' && !rowsNarrow}
                 sort={sort}
                 setSort={setSort}
                 groupBy={groupBy}
@@ -699,11 +811,7 @@ export function DocumentsHome({
               />
               <button
                 className="dh-refresh"
-                onClick={() => {
-                  setRefreshSpin(true);
-                  handleRefresh();
-                  window.setTimeout(() => setRefreshSpin(false), 600);
-                }}
+                onClick={refreshList}
                 title="Refresh document list"
                 aria-label="Refresh document list"
               >
@@ -723,48 +831,12 @@ export function DocumentsHome({
               <Upload size={16} aria-hidden="true" />
               <span className="dh-import-label">Import</span>
             </button>
-            {/* DSK-195: a split button. New creates where you are working (the
-                workspace when signed in, unless the Local filter is on); the
-                arrow offers both choices explicitly. */}
-            <div className="dh-new-split">
-              <button
-                className="dh-new"
-                onClick={onNew}
-                title={newDocumentTarget === 'workspace' ? 'New workspace document' : 'New local document'}
-              >
-                <FilePlus2 size={16} aria-hidden="true" />
-                <span>New</span>
-              </button>
-              <DropdownMenu
-                trigger={<ChevronDown size={16} aria-hidden="true" />}
-                triggerTitle="Choose where to create the document"
-                triggerClassName="dh-new-menu"
-                align="right"
-                entries={[
-                  menuAction({
-                    id: 'new-workspace',
-                    label: canCreateInWorkspace
-                      ? 'New workspace document'
-                      : 'New workspace document (sign in or go online)',
-                    icon: <Cloud size={16} aria-hidden="true" />,
-                    disabled: !canCreateInWorkspace,
-                    checked: newDocumentTarget === 'workspace',
-                    onSelect: onNewWorkspace,
-                  }),
-                  menuAction({
-                    id: 'new-local',
-                    label: 'New local document',
-                    icon: <HardDrive size={16} aria-hidden="true" />,
-                    checked: newDocumentTarget === 'local',
-                    onSelect: onNewLocal,
-                  }),
-                ]}
-              />
-            </div>
+            {newSplit}
           </div>
         </header>
+        )}
 
-        <div className="dh-content">
+        <div className="dh-content" ref={listRef}>
           {showRecents && (
             <section className="dh-section">
               <h2 className="dh-section-title">
@@ -805,7 +877,9 @@ export function DocumentsHome({
                   list. A search gets one, because "Results" is the only case
                   where the list is no longer what the header says it is. */}
               {searchQuery && <h2 className="dh-section-title">Results</h2>}
-              {view === 'list' && documentList.length > 0 && (
+              {/* Narrow rows have no columns to head; sorting moves into the
+                  View menu there (DSK-196). */}
+              {view === 'list' && !rowsNarrow && documentList.length > 0 && (
                 <ColumnHeader sort={sort} setSort={setSort} />
               )}
               <DocumentList model={model} onOpened={onLeaveToEditor} />

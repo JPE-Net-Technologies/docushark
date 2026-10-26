@@ -19,7 +19,7 @@
  * without React, alongside `useBreakpoint.test.ts` / `modes.test.ts`.
  */
 
-import { useBreakpoint, type BreakpointState } from './useBreakpoint';
+import { readBreakpointState, useBreakpoint, type BreakpointState } from './useBreakpoint';
 import { useUIPreferencesStore } from '../../store/uiPreferencesStore';
 
 export interface MobileAdaptation {
@@ -49,6 +49,17 @@ export function shouldAdaptToMobile(
   forceDesktop: boolean,
 ): boolean {
   return accepted && !forceDesktop && bp.isTouch && bp.band !== 'wide';
+}
+
+/**
+ * `mobileActive`, read once instead of subscribed to: for a decision taken at
+ * one moment rather than on every render. A menu choosing how to open
+ * (DSK-196) asks this as it opens, so a list of a hundred cards doesn't keep a
+ * hundred resize subscriptions for menus that are almost all closed.
+ */
+export function readMobileActive(): boolean {
+  const { mobilePreviewAccepted, forceDesktopSite } = useUIPreferencesStore.getState();
+  return shouldAdaptToMobile(readBreakpointState(), mobilePreviewAccepted, forceDesktopSite);
 }
 
 /** Reactive mobile-adaptation state — the single seam every mobile slice reads. */

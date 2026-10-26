@@ -100,7 +100,9 @@ the zoom controls whenever a canvas is on screen, plus connection status. Mouse
 coordinates, shape count and the tool name are left out — the first has no
 meaning without a hovering pointer, and the others cost more width than they
 earn. When you're writing with no canvas in view and there's nothing to report,
-the bar steps aside entirely and returns the space to the page.
+the bar steps aside entirely and returns the space to the page. On a phone it
+also steps aside while the Documents home is open: it describes the editor, not
+your library.
 
 ## Keyboard Quick Reference
 

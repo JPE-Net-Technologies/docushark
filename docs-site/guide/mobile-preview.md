@@ -17,6 +17,18 @@ The prompt only appears on an actual touch device at a narrow viewport — resiz
 
 If you've accepted mobile preview and want the desktop layout instead, go to **Settings → Appearance → Mobile preview** and turn it off. This is a durable setting — DocuShark will always use the desktop layout for you from then on, even on a phone, until you turn it back on.
 
+## Your library on a phone
+
+The **Documents** home fits a narrow screen whether or not mobile preview is on:
+
+- Each list row is two lines: the document's name, then where it lives, when it last changed and its size. In a wide window these are columns, along with who's on each document; on a phone, switch to the grid view to see that.
+- The header is two rows. The first holds the title and **View options**: list or grid, sort order, grouping, and refresh. The second holds search and **New**, and the arrow beside **New** also has **Import a document…**.
+- Your collections, Trash and storage are in the menu at the top left.
+
+On a touch screen nothing waits for a pointer to hover. Each document's **⋯** button is always showing, and the actions a mouse finds on the row itself (**Move to Cloud**, **Move to personal**, **Move to Trash**) are in that menu instead. To pick several documents, choose **Select** from one document's menu, then tap the others; the bar at the top of the list has the actions for all of them.
+
+With mobile preview on, menus open as sheets from the bottom of the screen, with room for a finger on every choice. Tap outside a sheet, or swipe it down, to close it.
+
 ## What to expect
 
 Mobile preview is still early: expect some panels and workflows to feel tighter or less polished than on desktop. If something feels broken rather than just cramped, that's useful feedback — but it's not yet the primary way DocuShark is meant to be used.

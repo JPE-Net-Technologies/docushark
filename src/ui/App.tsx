@@ -15,6 +15,7 @@ import {
 } from './layout/modes';
 import { useBreakpoint } from './layout/useBreakpoint';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { COMPACT_WIDTH_QUERY, useMediaQuery } from './layout/useMediaQuery';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
 import { MobilePropertySheet } from './mobile/MobilePropertySheet';
 import { FlyoutPanel } from './layout/FlyoutPanel';
@@ -175,6 +176,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // Experimental mobile chrome (JP-332): inert until the user opts in on a small
   // touch screen. Slices hang their mobile overrides off `data-mobile` + this flag.
   const { mobileActive } = useMobileAdaptation();
+  const compactWidth = useMediaQuery(COMPACT_WIDTH_QUERY);
   const regions = resolveRegions(activeMode, relaxedFocus, band);
   const isRelaxed = activeMode === 'relaxed';
   // The canvas wrapper is rendered once for every layout (so the engine never
@@ -694,7 +696,12 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             />
           )}
         </main>
-        <StatusBar />
+        {/* The status bar is editor chrome, like the toolbar hidden above. On a
+            phone (either way up) the Documents surface takes its height
+            instead: under the surface's full-height drawer it read as the
+            drawer being cut off, and its canvas readouts mean nothing there
+            (DSK-196). Desktop keeps it. */}
+        {!(appView === 'documents' && (compactWidth || mobileActive)) && <StatusBar />}
 
         {/* Floating, draggable collaboration indicator (JP-315). Hides itself
             when no remote collaborators are present. */}
