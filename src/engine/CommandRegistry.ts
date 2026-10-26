@@ -104,14 +104,20 @@ export type ActionSurface = 'palette' | 'tools';
  */
 const commandSources = new Map<string, () => Command[]>();
 
+// id → display shortcut, built on first use. A command's keys never change
+// while the app runs; contributed sources reset it when they come and go.
+let shortcutCache: Map<string, string> | null = null;
+
 /** Contribute commands from a feature area. Replaces any source with the same id. */
 export function registerCommandSource(id: string, source: () => Command[]): void {
   commandSources.set(id, source);
+  shortcutCache = null;
 }
 
 /** Remove a contributed source (tests, and teardown of an optional feature). */
 export function unregisterCommandSource(id: string): void {
   commandSources.delete(id);
+  shortcutCache = null;
 }
 
 function contributedCommands(): Command[] {
@@ -515,6 +521,23 @@ export function getAllCommands(): Command[] {
   return [...buildCommands(), ...contributedCommands()].map((c) =>
     c.keys ? { ...c, shortcut: formatCombo(c.keys) } : c,
   );
+}
+
+/**
+ * One command's shortcut as the user should read it ("Ctrl+Shift+O" on Linux
+ * and Windows, "⇧⌘O" on macOS), from the keys the command is actually bound
+ * to; undefined when it has none (DSK-198). Every surface that names a
+ * shortcut — tiles, tooltips, menus, hints — asks here, so none can hard-code
+ * one platform's spelling or drift from the real binding.
+ */
+export function commandShortcut(id: string): string | undefined {
+  if (!shortcutCache) {
+    shortcutCache = new Map();
+    for (const c of getAllCommands()) {
+      if (c.shortcut) shortcutCache.set(c.id, c.shortcut);
+    }
+  }
+  return shortcutCache.get(id);
 }
 
 /** True when `c` is offered on `surface` (absent `surfaces` = palette only). */

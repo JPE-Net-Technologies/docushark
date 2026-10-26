@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, useEffect, useMemo, useLayoutEffect } from 'react';
+import { commandShortcut } from '../engine/CommandRegistry';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useHistoryStore } from '../store/historyStore';
@@ -915,7 +916,7 @@ export function LayerPanel() {
               <button
                 className="layer-panel-action-btn"
                 onClick={handleGroupSelected}
-                title="Group selected shapes (Ctrl+G)"
+                title={`Group selected shapes (${commandShortcut('edit.group') ?? ''})`}
               >
                 <Icon icon={Group} size={14} /> Group Selected
               </button>

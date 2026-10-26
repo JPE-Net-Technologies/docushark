@@ -9,6 +9,7 @@
  */
 
 import { useState } from 'react';
+import { commandShortcut } from '../engine/CommandRegistry';
 import {
   MousePointer2,
   Hand,
@@ -131,15 +132,15 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
   const undoEnabled = collabActive ? canUndoCanvas : canUndo();
   const redoEnabled = collabActive ? canRedoCanvas : canRedo();
   const undoTitle = collabActive
-    ? 'Undo your last change (Ctrl+Z)'
+    ? `Undo your last change (${commandShortcut('edit.undo') ?? ''})`
     : undoDesc
-      ? `Undo: ${undoDesc} (Ctrl+Z)`
-      : 'Undo (Ctrl+Z)';
+      ? `Undo: ${undoDesc} (${commandShortcut('edit.undo') ?? ''})`
+      : `Undo (${commandShortcut('edit.undo') ?? ''})`;
   const redoTitle = collabActive
-    ? 'Redo your last change (Ctrl+Y)'
+    ? `Redo your last change (${commandShortcut('edit.redo') ?? ''})`
     : redoDesc
-      ? `Redo: ${redoDesc} (Ctrl+Y)`
-      : 'Redo (Ctrl+Y)';
+      ? `Redo: ${redoDesc} (${commandShortcut('edit.redo') ?? ''})`
+      : `Redo (${commandShortcut('edit.redo') ?? ''})`;
 
   if (isReadOnly) {
     return (

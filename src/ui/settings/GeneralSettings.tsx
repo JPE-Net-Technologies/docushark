@@ -21,6 +21,7 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useStyleProfileStore } from '../../store/styleProfileStore';
 import { RichSelect, type RichSelectItem } from '../components/RichSelect';
 import { ActionTile, CustomTile, TileGroup, ToggleTile } from '../tiles/Tile';
+import { confirmDialog } from '../confirm/confirmStore';
 import './GeneralSettings.css';
 
 export function GeneralSettings() {
@@ -119,9 +120,15 @@ export function GeneralSettings() {
           label="Reset settings"
           value="Back to defaults"
           onClick={() => {
-            if (confirm('Reset all settings to defaults?')) {
-              resetSettings();
-            }
+            // The app's own danger confirm, not the browser's (DSK-198).
+            void confirmDialog({
+              title: 'Reset settings?',
+              message: 'Everything on this tab goes back to its shipped value.',
+              confirmLabel: 'Reset settings',
+              danger: true,
+            }).then((ok) => {
+              if (ok) resetSettings();
+            });
           }}
           hint="Everything on this tab, restored to its shipped value."
         />

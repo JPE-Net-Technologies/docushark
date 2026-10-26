@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
+import { commandShortcut } from '../engine/CommandRegistry';
 import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
@@ -495,14 +496,14 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
       {canGroup && (
         <button className="context-menu-item" onClick={handleGroup}>
           <span className="context-menu-label">Group</span>
-          <span className="context-menu-shortcut">Ctrl+G</span>
+          <span className="context-menu-shortcut">{commandShortcut('edit.group')}</span>
         </button>
       )}
 
       {singleGroupSelected && (
         <button className="context-menu-item" onClick={handleUngroup}>
           <span className="context-menu-label">Ungroup</span>
-          <span className="context-menu-shortcut">Ctrl+Shift+G</span>
+          <span className="context-menu-shortcut">{commandShortcut('edit.ungroup')}</span>
         </button>
       )}
 
@@ -526,7 +527,7 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
         <>
           <button className="context-menu-item" onClick={handleSelectConnected}>
             <span className="context-menu-label">Select connected</span>
-            <span className="context-menu-shortcut">Ctrl+Shift+A</span>
+            <span className="context-menu-shortcut">{commandShortcut('arrange.selectConnected')}</span>
           </button>
           {canGroup && <Submenu label="Auto-layout" items={autoLayoutItems} onClose={onClose} parentMenuRef={menuRef} onShiftChange={handleShiftChange} />}
 
@@ -582,7 +583,7 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
           {(onSaveToLibrary || onExport || singleFileSelected) && <div className="context-menu-separator" />}
           <button className="context-menu-item danger" onClick={handleDelete}>
             <span className="context-menu-label">Delete</span>
-            <span className="context-menu-shortcut">Del</span>
+            <span className="context-menu-shortcut">{commandShortcut('edit.delete')}</span>
           </button>
         </>
       )}

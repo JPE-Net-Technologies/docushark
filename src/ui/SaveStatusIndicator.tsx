@@ -138,7 +138,7 @@ export function SaveStatusIndicator() {
       )}
 
       {isDirty && (
-        <button className="save-status-save-button" onClick={saveNow} title="Save now (Ctrl+S)">
+        <button className="save-status-save-button" onClick={saveNow} title="Save now">
           Save
         </button>
       )}

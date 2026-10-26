@@ -525,6 +525,13 @@ export interface ActionTileProps extends TileBaseProps {
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /**
+   * `button` gives the tile a solid edge and fill (DSK-198), for a grid made
+   * only of actions, such as the Tools panel, where the default dashed edge
+   * read as a page of empty slots. The default suits an action set among
+   * controls, as in Settings.
+   */
+  appearance?: 'default' | 'button' | undefined;
 }
 
 export function ActionTile({
@@ -535,6 +542,7 @@ export function ActionTile({
   onClick,
   danger = false,
   disabled = false,
+  appearance = 'default',
   ...base
 }: ActionTileProps) {
   return (
@@ -543,7 +551,7 @@ export function ActionTile({
       disabled={disabled}
       className={footprint({
         ...base,
-        className: `tile--action ${danger ? 'is-danger' : ''} ${base.className ?? ''}`,
+        className: `tile--action ${appearance === 'button' ? 'tile--button' : ''} ${danger ? 'is-danger' : ''} ${base.className ?? ''}`,
       })}
       onClick={onClick}
       {...(base.title !== undefined ? { title: base.title } : {})}

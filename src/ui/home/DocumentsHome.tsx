@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { formatCombo } from '../../engine/keybindings';
 import {
   ChevronDown,
   ChevronLeft,
@@ -437,7 +438,7 @@ export function DocumentsHome({
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         placeholder={`Search ${activeLabel.toLowerCase()}…`}
-        title="Search by name or tag — #tag matches tags only. Press / or Ctrl+K to focus."
+        title={`Search by name or tag — #tag matches tags only. Press / or ${formatCombo('Mod+K')} to focus.`}
       />
       <kbd className="dh-search-kbd" aria-hidden="true">/</kbd>
     </div>

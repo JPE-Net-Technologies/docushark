@@ -40,6 +40,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { commandShortcut } from '../../engine/CommandRegistry';
 import { createPortal } from 'react-dom';
 import { PanelsTopLeft, Settings2, SlidersHorizontal, Layers, Compass, FileText } from 'lucide-react';
 import { Icon } from '../icons';
@@ -240,7 +241,7 @@ export function LayoutSelector({ onOpenLayoutSettings, compact = false }: Layout
       onMouseLeave={scheduleClose}
     >
       <TileGroup title="Layout" icon={PanelsTopLeft} min={132} row={0}>
-        {LAYOUT_MODES.map((mode, idx) => (
+        {LAYOUT_MODES.map((mode) => (
           <button
             key={mode}
             type="button"
@@ -257,7 +258,7 @@ export function LayoutSelector({ onOpenLayoutSettings, compact = false }: Layout
             </span>
             <span className="layout-tile__row">
               <span className="layout-tile__name">{LAYOUT_LABELS[mode]}</span>
-              <span className="layout-tile__key">⌘⇧{idx + 1}</span>
+              <span className="layout-tile__key">{commandShortcut(`view.layout.${mode}`)}</span>
             </span>
             <span className="layout-tile__desc">{LAYOUT_DESCRIPTIONS[mode]}</span>
           </button>
@@ -275,15 +276,15 @@ export function LayoutSelector({ onOpenLayoutSettings, compact = false }: Layout
             disabled={layoutOwned}
             onLabel="Shown"
             offLabel="Hidden"
-            {...(layoutOwned ? { note: 'on selection' } : {})}
+            // A disabled tile says why on the tile (DSK-198, the JP-253 rule):
+            // a tooltip never shows on touch, and this one is the only
+            // explanation of why the switch doesn't move.
+            {...(layoutOwned
+              ? { note: 'on selection', hint: 'Relaxed shows it while something is selected.' }
+              : { title: `${visible ? 'Hide' : 'Show'} the ${PANEL_LABELS[id]} panel` })}
             // The popover stays open: showing a panel is the kind of thing you
             // do two or three of in a row.
             onCheckedChange={() => togglePanelVisible(id)}
-            title={
-              layoutOwned
-                ? 'Relaxed shows Properties only while something is selected'
-                : `${visible ? 'Hide' : 'Show'} the ${PANEL_LABELS[id]} panel`
-            }
           />
         ))}
       </TileGroup>
@@ -312,7 +313,7 @@ export function LayoutSelector({ onOpenLayoutSettings, compact = false }: Layout
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={`View: ${LAYOUT_LABELS[activeMode]} layout. Click to change layout and panels.`}
-        title={`Layout: ${LAYOUT_LABELS[activeMode]} (Cmd+Shift+1..4)`}
+        title={`Layout: ${LAYOUT_LABELS[activeMode]} (${commandShortcut('view.layout.relaxed') ?? ''}–4)`}
       >
         {compact ? (
           <Icon icon={PanelsTopLeft} />
