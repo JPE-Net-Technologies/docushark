@@ -196,6 +196,9 @@ export function DropdownMenu({
   const [subPlacement, setSubPlacement] = useState<FlyoutPlacement | null>(null);
 
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // Whether the trigger was activated from the keyboard (a click with no
+  // pointer behind it), so a sheet knows to start on its first row.
+  const openedByKeyboardRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const subPanelRef = useRef<HTMLDivElement>(null);
   const subAnchorRef = useRef<HTMLButtonElement | null>(null);
@@ -562,6 +565,7 @@ export function DropdownMenu({
             // hover flag so the panel takes focus as it normally would.
             cancelHoverClose();
             hoverOpenedRef.current = false;
+            openedByKeyboardRef.current = e.detail === 0;
             setOpenNotify(!open);
           }}
           onMouseEnter={handleHoverEnter}
@@ -578,6 +582,7 @@ export function DropdownMenu({
           entries={entries}
           onSelect={handleSelect}
           onClose={() => closeAll(true)}
+          focusFirstItem={openedByKeyboardRef.current}
         />
       )}
 

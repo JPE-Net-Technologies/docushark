@@ -146,6 +146,22 @@
   padding: 0;
   justify-content: center;
 }
+/* DSK-197: the right group keeps its natural width, and the left group takes
+   what remains for the document's title chip (MobileDocumentInfo), which
+   truncates into it. */
+.app[data-mobile='true'] .unified-toolbar-left {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.app[data-mobile='true'] .unified-toolbar-right {
+  flex: 0 0 auto;
+}
+/* DSK-197: the Write / Diagram control's 44px touch segments plus its own
+   padding and border made it 50px tall in the 44px bar, so it overflowed both
+   edges. In the bar it fits: 36px segments, 42px in all. */
+.app[data-mobile='true'] .unified-toolbar .relaxed-focus-segment {
+  min-height: 36px;
+}
 
 /* Divider */
 .toolbar-divider {

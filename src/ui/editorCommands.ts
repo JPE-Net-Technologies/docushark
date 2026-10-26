@@ -52,6 +52,26 @@ export const toggleBulletList = (editor: Editor) => editor.chain().focus().toggl
 export const toggleOrderedList = (editor: Editor) => editor.chain().focus().toggleOrderedList().run();
 export const toggleTaskList = (editor: Editor) => editor.chain().focus().toggleTaskList().run();
 
+// List nesting (DSK-197). Tab and Shift+Tab nest on a keyboard; a phone has
+// neither, so the mobile bar offers these while the caret is in a list.
+const listItemType = (editor: Editor) => (editor.isActive('taskItem') ? 'taskItem' : 'listItem');
+export const isInList = (editor: Editor) =>
+  editor.isActive('bulletList') || editor.isActive('orderedList') || editor.isActive('taskList');
+export const indentListItem = (editor: Editor) =>
+  editor.chain().focus().sinkListItem(listItemType(editor)).run();
+export const outdentListItem = (editor: Editor) =>
+  editor.chain().focus().liftListItem(listItemType(editor)).run();
+export const canIndentListItem = (editor: Editor) => editor.can().sinkListItem(listItemType(editor));
+export const canOutdentListItem = (editor: Editor) => editor.can().liftListItem(listItemType(editor));
+
+// History (DSK-197). Both prose editors register `undo`/`redo` — the local
+// editor's history and the collaborative editor's Yjs undo manager — so these
+// work in either; prose undo was otherwise only Mod+Z, which a phone lacks.
+export const undo = (editor: Editor) => editor.chain().focus().undo().run();
+export const redo = (editor: Editor) => editor.chain().focus().redo().run();
+export const canUndo = (editor: Editor) => editor.can().undo();
+export const canRedo = (editor: Editor) => editor.can().redo();
+
 // Alignment
 export const setTextAlign = (editor: Editor, alignment: 'left' | 'center' | 'right' | 'justify') =>
   editor.chain().focus().setTextAlign(alignment).run();

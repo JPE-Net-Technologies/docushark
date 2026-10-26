@@ -25,6 +25,11 @@ export interface DropdownMenuSheetProps {
   /** Fires the action and closes (the menu's own selection path). */
   onSelect: (action: DropdownMenuAction) => void;
   onClose: () => void;
+  /**
+   * Opened from the keyboard: start on the first row, as the dropdown does.
+   * Opened by a tap, focus stays on the sheet itself (DSK-197).
+   */
+  focusFirstItem?: boolean | undefined;
 }
 
 interface SubmenuPage {
@@ -44,20 +49,38 @@ function sheetItems(list: HTMLElement | null): HTMLButtonElement[] {
   return Array.from(list.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
 }
 
-export function DropdownMenuSheet({ title, subtitle, entries, onSelect, onClose }: DropdownMenuSheetProps) {
+export function DropdownMenuSheet({
+  title,
+  subtitle,
+  entries,
+  onSelect,
+  onClose,
+  focusFirstItem = false,
+}: DropdownMenuSheetProps) {
   const [page, setPage] = useState<SubmenuPage | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // The row that opened the current page, so Back returns focus to it.
   const returnFocusId = useRef<string | null>(null);
+  const opened = useRef(false);
 
-  // Keyboard users land on the first row of each page. A touch tap that
-  // opened the sheet doesn't match :focus-visible, so no ring flashes on touch.
+  // On opening, a sheet opened by a tap leaves focus on itself (MobileSheet
+  // focuses its dialog, which a screen reader announces). Moving focus to the
+  // first row there drew a focus ring on it: focus leaving a focused text field
+  // (the prose editor) makes the next focus match :focus-visible. Opened from
+  // the keyboard, it starts on the first row. A page change moves focus from a
+  // tapped row, so it rings only for keyboard users.
   useEffect(() => {
     const items = sheetItems(listRef.current);
+    if (!opened.current) {
+      opened.current = true;
+      if (focusFirstItem) items[0]?.focus({ preventScroll: true });
+      return;
+    }
     const back = returnFocusId.current;
     const target = !page && back ? items.find((el) => el.dataset['entryId'] === back) : items[0];
     target?.focus({ preventScroll: true });
     if (!page) returnFocusId.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
