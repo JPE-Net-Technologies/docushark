@@ -129,6 +129,14 @@ interface CollaborationState {
    * edits + relay state) rather than a partial one.
    */
   isIdbSynced: boolean;
+  /**
+   * Whether the views have adopted this session's Y.Doc: the page list, shapes
+   * and name now come from it, and edits flow into it (DSK-194). Set once per
+   * session by the adopt in `useCollaborationSync`, cleared on teardown. Code
+   * that writes into a document it has only just opened must wait for this: a
+   * write before the adopt is replaced by it.
+   */
+  isAdopted: boolean;
   /** Connection error message */
   error: string | null;
   /** Remote users currently viewing the document */
@@ -277,6 +285,8 @@ interface CollaborationActions {
   _markSyncedHandshake: () => void;
   /** Set IndexedDB-loaded state (internal) */
   _setIdbSynced: (synced: boolean) => void;
+  /** Set adopted state (internal; the adopt in useCollaborationSync) */
+  _setAdopted: (adopted: boolean) => void;
   /** Set error (internal) */
   _setError: (error: string | null) => void;
   /** Update remote users (internal) */
@@ -476,6 +486,7 @@ function teardownSession(
     // syncEpoch deliberately survives teardown (monotonic — see its doc).
     isSynced: false,
     isIdbSynced: false,
+    isAdopted: false,
     error: null,
     remoteUsers: [],
     config: null,
@@ -495,6 +506,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     isSynced: false,
     syncEpoch: 0,
     isIdbSynced: false,
+    isAdopted: false,
     error: null,
     remoteUsers: [],
     config: null,
@@ -1081,6 +1093,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 
     _setIdbSynced: (synced: boolean) => {
       set({ isIdbSynced: synced });
+    },
+
+    _setAdopted: (adopted: boolean) => {
+      set({ isAdopted: adopted });
     },
 
     _setError: (error: string | null) => {

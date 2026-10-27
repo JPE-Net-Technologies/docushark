@@ -176,6 +176,9 @@ export function InlinePageTabs() {
             <button
               key={item.id}
               data-page-id={item.id}
+              // The strip is a tablist; its tabs say so, and which is shown (DSK-194).
+              role="tab"
+              aria-selected={item.id === activePageId}
               className={`inline-tab ${item.id === activePageId ? 'active' : ''}`}
               onClick={() => handleTabClick(item.id)}
               onContextMenu={(e) => handleContextMenu(e, item.id)}

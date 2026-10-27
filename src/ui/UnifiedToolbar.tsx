@@ -37,7 +37,8 @@ import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
 import { useActiveLayoutMode } from './layout/useLayout';
 import { isGuestSession } from '../guest/guestSession';
-import { useIntegrationHubStore } from '../store/integrationHubStore';
+import { refreshIfNothingConnected, useIntegrationHubStore } from '../store/integrationHubStore';
+import { activeWorkspaceId } from '../store/activeWorkspace';
 import { Popover } from './components/Popover';
 import { ToolsPanel } from './tools/ToolsPanel';
 import './UnifiedToolbar.css';
@@ -217,6 +218,12 @@ export function UnifiedToolbar({
   useEffect(() => {
     void useIntegrationHubStore.getState().ensureLoaded();
   }, []);
+
+  // With nothing connected, opening Tools asks again past the cache (DSK-194):
+  // a connection just made on the account site would otherwise stay missing.
+  useEffect(() => {
+    if (toolsOpen) refreshIfNothingConnected(activeWorkspaceId());
+  }, [toolsOpen]);
 
   // Restoring from inside the open doc: the relay tombstones the source id and
   // the Deleted broadcast carries OUR user id, so the self-initiated guard

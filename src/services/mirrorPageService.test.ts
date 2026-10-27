@@ -13,7 +13,16 @@ import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useCollaborationStore, type CollaborationConfig } from '../collaboration/collaborationStore';
 import type { FetchedMirrorContent } from '../api/webClient';
-import { addMirrorPage, refreshMirrorPage, detachMirrorPage, ingestSubpages, listSubpages, MirrorPageError } from './mirrorPageService';
+import {
+  addMirrorPage,
+  canAddMirrorPage,
+  importAsNewDocument,
+  refreshMirrorPage,
+  detachMirrorPage,
+  ingestSubpages,
+  listSubpages,
+  MirrorPageError,
+} from './mirrorPageService';
 
 const schema = getSchema([StarterKit.configure({ history: false })]);
 
@@ -308,6 +317,119 @@ describe('mirror writes follow the open document (DSK-192)', () => {
     usePersistenceStore.setState({ currentDocumentId: null });
     yjsDoc.destroy();
     __resetProseSchemaForTests();
+  });
+
+  describe('importAsNewDocument (DSK-194)', () => {
+    const realNew = usePersistenceStore.getState().newWorkspaceDocument;
+    const realRename = usePersistenceStore.getState().renameDocument;
+    afterEach(() => {
+      usePersistenceStore.setState({ newWorkspaceDocument: realNew, renameDocument: realRename });
+      useCollaborationStore.setState({ isAdopted: false });
+    });
+
+    /**
+     * A workspace document that opens as `docId`, its session bound and its
+     * Y.Doc adopted into the views now, or after `bindAfterMs`.
+     */
+    function newDocumentOpens(docId: string, bindAfterMs?: number) {
+      const ready = () => useCollaborationStore.setState({ config: boundTo(docId), isAdopted: true });
+      const create = vi.fn(async () => {
+        usePersistenceStore.setState({ currentDocumentId: docId });
+        useCollaborationStore.setState({ isAdopted: false });
+        if (bindAfterMs === undefined) ready();
+        else setTimeout(ready, bindAfterMs);
+        return { ok: true as const, docId };
+      });
+      const rename = vi.fn();
+      usePersistenceStore.setState({ newWorkspaceDocument: create, renameDocument: rename });
+      return { create, rename };
+    }
+
+    it('makes a new document whose first page is the mirror, named after it', async () => {
+      useRichTextPagesStore.getState().createPage('Page 1');
+      const { create, rename } = newDocumentOpens('doc-new', 150);
+      const stages: string[] = [];
+
+      const { pageId } = await importAsNewDocument(
+        'notion',
+        'p-1',
+        { onStage: (s) => stages.push(s) },
+        { fetchResource: async () => fetched() },
+      );
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(useRichTextPagesStore.getState().pageOrder[0]).toBe(pageId);
+      expect(useRichTextPagesStore.getState().pages[pageId]?.mirror?.externalId).toBe('p-1');
+      expect(rename).toHaveBeenCalledWith(fetched().title);
+      expect(stages).toEqual(['fetching', 'adding']);
+    });
+
+    it('waits for the new session to adopt before writing into it', async () => {
+      // Bound at once, adopted later: the relay's page list and name replace
+      // anything written in between, which is what the local stack showed.
+      newDocumentOpens('doc-new');
+      useCollaborationStore.setState({ isAdopted: false });
+      const createdBeforeAdopt: number[] = [];
+      const adopt = vi.fn(() => {
+        createdBeforeAdopt.push(useRichTextPagesStore.getState().pageOrder.length);
+        useCollaborationStore.setState({ isAdopted: true });
+      });
+      const create = usePersistenceStore.getState().newWorkspaceDocument;
+      usePersistenceStore.setState({
+        newWorkspaceDocument: vi.fn(async () => {
+          const result = await create();
+          useCollaborationStore.setState({ isAdopted: false });
+          setTimeout(adopt, 200);
+          return result;
+        }),
+      });
+
+      await importAsNewDocument('notion', 'p-1', {}, { fetchResource: async () => fetched() });
+
+      expect(adopt).toHaveBeenCalledTimes(1);
+      expect(createdBeforeAdopt).toEqual([0]);
+      expect(useRichTextPagesStore.getState().pageOrder).toHaveLength(1);
+    });
+
+    it('creates nothing when the fetch fails', async () => {
+      const { create } = newDocumentOpens('doc-new');
+      await expect(
+        importAsNewDocument('notion', 'p-1', {}, {
+          fetchResource: async () => {
+            throw new Error('provider down');
+          },
+        }),
+      ).rejects.toThrow('provider down');
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('adds nothing when the document cannot be created in the workspace', async () => {
+      usePersistenceStore.setState({ newWorkspaceDocument: vi.fn(async () => ({ ok: false as const, error: 'offline' })) });
+      await expect(
+        importAsNewDocument('notion', 'p-1', {}, { fetchResource: async () => fetched() }),
+      ).rejects.toMatchObject({ code: 'no_live_doc' });
+      expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
+    });
+
+    it('gives up when the new document never binds', async () => {
+      newDocumentOpens('doc-new', 10_000);
+      await expect(
+        importAsNewDocument('notion', 'p-1', {}, { fetchResource: async () => fetched(), bindTimeoutMs: 250 }),
+      ).rejects.toMatchObject({ code: 'no_live_doc' });
+      expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
+    });
+  });
+
+  it('says an add can happen exactly when the add would bind (DSK-194)', () => {
+    // Entry points ask this before offering "New page from …", so it must
+    // agree with the add's own refusal below.
+    usePersistenceStore.setState({ currentDocumentId: 'doc-A' });
+    expect(canAddMirrorPage()).toBe(true);
+    usePersistenceStore.setState({ currentDocumentId: 'doc-B' });
+    expect(canAddMirrorPage()).toBe(false);
+    usePersistenceStore.setState({ currentDocumentId: 'doc-A' });
+    useCollaborationStore.setState({ isActive: false });
+    expect(canAddMirrorPage()).toBe(false);
   });
 
   it('writes when the session is bound to the open document', async () => {

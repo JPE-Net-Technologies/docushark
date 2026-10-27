@@ -65,6 +65,12 @@ import { getDocProvider } from '../../store/relayDocumentStore';
 import type { RelayUsage } from '../../api/relayClient';
 import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../../api/relayConnection';
 import { RailWorkspaceSwitcher } from './RailWorkspaceSwitcher';
+import { useIntegrationHubStore, workspaceIntegrationState } from '../../store/integrationHubStore';
+import { activeWorkspaceId } from '../../store/activeWorkspace';
+import type { IntegrationProvider } from '../../api/webClient';
+import { importAsNewDocument } from '../../services/mirrorPageService';
+import { MirrorResourcePicker } from '../integrations/MirrorResourcePicker';
+import { ProviderIcon } from '../integrations/ProviderIcon';
 import { opener } from '../../platform/opener';
 import { blobStorage } from '../../storage/BlobStorage';
 import type { StorageStats } from '../../storage/BlobTypes';
@@ -108,6 +114,14 @@ export function DocumentsHome({
   onOpenSettings,
 }: DocumentsHomeProps) {
   const model = useDocumentBrowserModel();
+  // The provider whose picker is open to import a page as a new document.
+  const [importFrom, setImportFrom] = useState<IntegrationProvider | null>(null);
+  const hub = useIntegrationHubStore((s) => s.hub);
+  // The editor's toolbar loads the hub, but this view can be the first one
+  // shown; the store caches, so asking here costs nothing when it has.
+  useEffect(() => {
+    void useIntegrationHubStore.getState().ensureLoaded();
+  }, []);
   const {
     documentList,
     documentCounts,
@@ -465,6 +479,27 @@ export function DocumentsHome({
       onSelect: onNewLocal,
     }),
   ];
+  // DSK-194: one import model. A page from a connected provider becomes a new
+  // workspace document whose first page mirrors it, as the account site's
+  // "Import a page" does.
+  const ws = workspaceIntegrationState(hub, activeWorkspaceId());
+  const importProviders = ws?.entitled
+    ? ws.providers.filter((p) => p.connected && p.provider.searchable).map((p) => p.provider)
+    : [];
+  if (importProviders.length > 0) {
+    newEntries.push(
+      MENU_SEPARATOR,
+      ...importProviders.map((provider) =>
+        menuAction({
+          id: `from-${provider.id}`,
+          label: `From ${provider.label}…`,
+          icon: <ProviderIcon provider={provider.id} size={16} />,
+          disabled: !canCreateInWorkspace,
+          onSelect: () => setImportFrom(provider),
+        }),
+      ),
+    );
+  }
   if (narrow) {
     newEntries.push(
       MENU_SEPARATOR,
@@ -890,6 +925,18 @@ export function DocumentsHome({
           </>
         )}
       </div>
+      {importFrom && (
+        <MirrorResourcePicker
+          provider={importFrom}
+          title={`New document from ${importFrom.label}`}
+          onPick={async (resource, onStage) => {
+            const result = await importAsNewDocument(importFrom.id, resource.externalId, { onStage });
+            onLeaveToEditor();
+            return result;
+          }}
+          onClose={() => setImportFrom(null)}
+        />
+      )}
     </div>
   );
 }

@@ -410,6 +410,11 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
             <div
               key={item.id}
               data-page-id={item.id}
+              // The strip is a tablist; its tabs say so, and which is shown
+              // (DSK-194). A family's tab counts as selected while one of its
+              // subpages is the page shown.
+              role="tab"
+              aria-selected={isActive}
               className={`rich-text-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
               style={{ '--tab-color': page.color || 'transparent' } as React.CSSProperties}
               onClick={() => handleTabClick(item.id)}
