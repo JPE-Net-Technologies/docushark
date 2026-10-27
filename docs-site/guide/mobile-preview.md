@@ -39,7 +39,12 @@ With mobile preview on, a writing bar sits at the bottom of a prose page, above 
 - Bulleted, numbered and task lists. While you're in a list, **Indent** and **Outdent** nest items, which a keyboard does with Tab.
 - **Link**.
 
-**Format**, at the end of the bar, opens every other formatting control. The document's name is at the top of the screen: tap it to rename the document or see whether it's saved. Tap anywhere on the page below your text to carry on writing at the end.
+**Format**, at the end of the bar, opens every other formatting control, including the table tools while you're in a table. The document's name is at the top of the screen: tap it to rename the document or see whether it's saved. Tap anywhere on the page below your text to carry on writing at the end.
+
+Pressing and holding text selects it as it does in any other app, with your phone's own handles and copy-and-paste bar; DocuShark opens no menu over it. Instead, the bar changes with what you're on:
+
+- **A word underlined as misspelled:** put the cursor in it and the bar offers corrections and **Add to dictionary**. Tap **×** to get the formatting controls back.
+- **An image:** tap it, or press and hold it, to select it. The bar offers **Replace image…** and **Remove image**, and in a gallery, buttons to move the image left or right.
 
 A page mirrored from another tool, such as Notion, is read-only. Its bar says so and when it last synced, and offers **Refresh**, **Open** in the source, and **Detach**.
 

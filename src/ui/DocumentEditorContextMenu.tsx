@@ -15,7 +15,6 @@ import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import type { Editor } from '@tiptap/core';
-import { NodeSelection } from '@tiptap/pm/state';
 import {
   ChevronLeft,
   ChevronRight,
@@ -64,7 +63,8 @@ import {
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
 import { Icon } from './icons';
-import { uploadProseImage, IMAGE_FILE_ACCEPT } from './proseImageUpload';
+import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
+import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
 import * as cmd from './editorCommands';
 import './DocumentEditorContextMenu.css';
 
@@ -140,19 +140,8 @@ export function DocumentEditorContextMenu({
   const isInTable = editor?.isActive('table') ?? false;
 
   // Image selection (a NodeSelection on an image) → image actions. If the image
-  // is inside a gallery, also offer reordering.
-  const imageMenu = useMemo(() => {
-    const sel = editor?.state.selection;
-    if (!editor || !(sel instanceof NodeSelection) || sel.node.type.name !== 'image') {
-      return null;
-    }
-    const $from = editor.state.doc.resolve(sel.from);
-    if ($from.parent.type.name === 'gallery') {
-      const index = $from.index();
-      return { inGallery: true, canLeft: index > 0, canRight: index < $from.parent.childCount - 1 };
-    }
-    return { inGallery: false, canLeft: false, canRight: false };
-  }, [editor]);
+  // is inside a gallery, also offer reordering. Shared with the phone bar.
+  const imageMenu = useMemo(() => (editor ? selectedImage(editor.state) : null), [editor]);
 
   // Get group display name
   const getGroupName = useCallback((group: GroupShape): string => {
@@ -289,8 +278,7 @@ export function DocumentEditorContextMenu({
         return;
       }
       try {
-        const { src, alt } = await uploadProseImage(file);
-        editor.chain().focus().replaceSelectedImage({ src, alt }).run();
+        await replaceSelectedImageWithFile(editor, file);
       } catch (err) {
         console.error('Failed to replace image:', err);
       } finally {

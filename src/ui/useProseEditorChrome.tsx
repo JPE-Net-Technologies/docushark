@@ -26,6 +26,13 @@ import { SpellcheckPopover } from './SpellcheckPopover';
 import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
 import { useResolveBlobImages } from './useProseBlobImages';
 import { useProseLinkClicks } from './useProseLinkClicks';
+import { readMobileActive } from './layout/useMobileAdaptation';
+
+/** Select the image whose node view holds `dom` (a long-press on a phone). */
+function selectImageNode(editor: Editor, dom: Element): void {
+  const pos = editor.view.posAtDOM(dom, 0);
+  if (editor.state.doc.nodeAt(pos)?.type.name === 'image') editor.commands.setNodeSelection(pos);
+}
 
 interface ContextMenuState {
   isOpen: boolean;
@@ -94,10 +101,26 @@ export function useProseEditorChrome(
   // both menus lead to programmatic writes (`insertContent`, formatting
   // chains) that `editable: false` does not block, so the whole handler
   // returns early. No `preventDefault`: the native menu still offers copy.
+  //
+  // On a phone (DSK-202) a long-press fires this event too, and a long-press is
+  // the system's selection gesture: a menu at the finger covered the selection
+  // handles and, with the keyboard up, ran under the bar. The phone's bar
+  // offers the spelling fixes and image actions instead, so the phone layout
+  // opens neither menu. On text the system keeps its handles and its own
+  // copy-and-paste bar; on an image, the browser's image menu gives way to
+  // selecting the image, which brings its actions into the bar.
   const onContextMenu = useCallback(
     (e: React.MouseEvent) => {
       if (!editor || !editor.isEditable) return;
       const target = e.target as HTMLElement | null;
+      if (readMobileActive()) {
+        const image = target?.closest('.resizable-image-container');
+        if (image && editor.view.dom.contains(image)) {
+          e.preventDefault();
+          selectImageNode(editor, image);
+        }
+        return;
+      }
       const errorSpan = target?.closest('.spellcheck-error') as HTMLElement | null;
       if (errorSpan) {
         e.preventDefault();

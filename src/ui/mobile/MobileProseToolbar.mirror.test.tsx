@@ -22,6 +22,8 @@ vi.mock('../TiptapEditorContext', () => ({
     off: vi.fn(),
     isDestroyed: false,
     view: { dom: document.createElement('div') },
+    // A caret, in no image and no underlined word (DSK-202 reads both).
+    state: { selection: { from: 1, to: 1 } },
   }),
 }));
 

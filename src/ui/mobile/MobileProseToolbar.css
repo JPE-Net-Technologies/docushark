@@ -111,6 +111,44 @@
   text-align: left;
 }
 
+/* What the selection brings to the bar (DSK-202): spelling fixes and image
+   actions, in the formatting controls' place. */
+.mpt-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* A worded action: a suggestion, or Add to dictionary. */
+.mpt-text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mpt-text-btn:active {
+  background: var(--bg-hover);
+}
+
+.mpt-spell-none {
+  flex: 0 0 auto;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
 .mpt-format {
   flex: 0 0 auto;
   display: inline-flex;
