@@ -127,10 +127,12 @@
   line-height: 1;
 }
 
+/* Neutral, like any other way out (DSK-198): closing Settings loses nothing,
+   and a red hover said it would. */
 .settings-modal-close:hover {
-  background: var(--danger-bg);
-  border-color: var(--danger);
-  color: var(--danger-text);
+  background: var(--bg-hover);
+  border-color: var(--border-color-input);
+  color: var(--text-primary);
 }
 
 .settings-modal-close:focus-visible {

@@ -334,6 +334,19 @@ button.tile:disabled {
   font-size: var(--font-size-sm);
 }
 
+/* A chip tile's hint (DSK-198: a disabled panel says why) goes on its own line
+   under the label, indented to the label text. Beside the head in the chip's
+   row, it squeezed the title to a column one letter wide. */
+.tile--chip {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+.tile--chip .tile__hint {
+  flex: 1 0 100%;
+  padding-left: calc(24px + var(--space-2));
+}
+
 /* --- 3. Slider tile ------------------------------------------------------- */
 .tile__dots {
   display: flex;
@@ -443,13 +456,33 @@ button.tile--action:hover:not(:disabled) {
   border-style: solid;
 }
 
-.tile--action.is-danger .tile__chip {
+/* A destructive action reads as one before the pointer reaches it (DSK-198):
+   a red-tinted edge and title, not just a red glyph. */
+.tile--action.is-danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.tile--action.is-danger .tile__chip,
+.tile--action.is-danger .tile__title {
   color: var(--danger-text);
 }
 
 button.tile--action.is-danger:hover:not(:disabled) {
   background: var(--danger-bg);
   border-color: var(--danger);
+}
+
+/* An action tile that is a button among buttons (DSK-198, `appearance=
+   "button"`): the Tools panel is all actions, and dashed edges there read as a
+   page of empty slots. The base tile's solid edge and fill instead. */
+.tile--action.tile--button {
+  border: 1px solid var(--glass-tile-border);
+  background: var(--glass-tile);
+}
+
+button.tile--action.tile--button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-color-input);
 }
 
 /* --- 8. Status tile ------------------------------------------------------- */

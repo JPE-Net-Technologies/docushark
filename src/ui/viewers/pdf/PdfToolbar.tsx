@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { formatCombo } from '../../../engine/keybindings';
 import {
   Bookmark,
   ChevronDown,
@@ -89,7 +90,7 @@ export function PdfToolbar({
         <button
           className={`pdf-reader__btn${showFind ? ' pdf-reader__btn--active' : ''}`}
           onClick={onToggleFind}
-          title="Find in document (Ctrl+F)"
+          title={`Find in document (${formatCombo('Mod+F')})`}
           aria-pressed={showFind}
         >
           <Icon icon={Search} size={16} />

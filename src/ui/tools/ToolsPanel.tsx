@@ -27,7 +27,7 @@
 import { useMemo } from 'react';
 import { Command as CommandIcon } from 'lucide-react';
 
-import { getToolsActions, recordRecent, type Command } from '../../engine/CommandRegistry';
+import { getToolsActions, recordRecent, type Command, commandShortcut } from '../../engine/CommandRegistry';
 import type { ShortcutCategory } from '../../engine/KeyboardShortcuts';
 import { ActionTile, TileGrid } from '../tiles/Tile';
 import './ToolsPanel.css';
@@ -48,6 +48,13 @@ export interface ToolsPanelProps {
 function groupOf(c: Command): ShortcutCategory {
   return c.category;
 }
+
+/**
+ * The Tools grid's column floor (DSK-198). At 150 a label beside its shortcut
+ * wrapped ("Export to / PDF…") in three of the four File tiles; 170 fits them
+ * on one line. The panel's width in ToolsPanel.css holds two columns of it.
+ */
+const TOOLS_TILE_MIN = 170;
 
 export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
   // Deliberately not memoized on the actions themselves: `canExecute` is read at
@@ -81,10 +88,14 @@ export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
       {groups.map(([group, list]) => (
         <section key={group} className="tools-panel__group">
           <h3 className="tools-panel__group-title">{group}</h3>
-          <TileGrid min={150} row={78}>
-            {list.map((action) => (
+          <TileGrid min={TOOLS_TILE_MIN} row={78}>
+            {list.map((action, index) => (
               <ActionTile
                 key={action.id}
+                appearance="button"
+                // An odd group's last tile takes the full row, so no group
+                // ends on a lone half-width tile (DSK-198).
+                wide={list.length % 2 === 1 && index === list.length - 1}
                 {...(action.iconNode !== undefined
                   ? { chip: action.iconNode }
                   : { icon: action.icon })}
@@ -105,11 +116,12 @@ export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
 
       {onOpenPalette && (
         <section className="tools-panel__group">
-          <TileGrid min={150} row={78}>
+          <TileGrid min={TOOLS_TILE_MIN} row={78}>
             <ActionTile
+              appearance="button"
               icon={CommandIcon}
               label="Command palette"
-              value="Mod+K"
+              value={commandShortcut('view.commandPalette')}
               hint="Search every action, including ones without a tile."
               wide
               onClick={() => {

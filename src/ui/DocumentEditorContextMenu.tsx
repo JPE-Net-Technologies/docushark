@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useCallback, useState, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
+import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import type { Editor } from '@tiptap/core';
@@ -512,7 +513,7 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Bold} /></span>
             <span className="doc-editor-context-menu-label">Bold</span>
-            <span className="doc-editor-context-menu-shortcut">Ctrl+B</span>
+            <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+B')}</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('italic') ? 'active' : ''}`}
@@ -520,7 +521,7 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Italic} /></span>
             <span className="doc-editor-context-menu-label">Italic</span>
-            <span className="doc-editor-context-menu-shortcut">Ctrl+I</span>
+            <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+I')}</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('underline') ? 'active' : ''}`}
@@ -528,7 +529,7 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Underline} /></span>
             <span className="doc-editor-context-menu-label">Underline</span>
-            <span className="doc-editor-context-menu-shortcut">Ctrl+U</span>
+            <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+U')}</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('strike') ? 'active' : ''}`}

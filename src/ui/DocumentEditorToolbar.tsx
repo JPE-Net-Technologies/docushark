@@ -26,6 +26,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import {
   Bold, Italic, Underline, Strikethrough, Code, Subscript, Superscript,
@@ -397,13 +398,13 @@ export function DocumentEditorToolbar() {
 
             {/* Text formatting */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} title="Bold (Ctrl+B)" aria-label="Bold">
+              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} title={`Bold (${formatCombo('Mod+B')})`} aria-label="Bold">
                 <Bold {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} title="Italic (Ctrl+I)" aria-label="Italic">
+              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} title={`Italic (${formatCombo('Mod+I')})`} aria-label="Italic">
                 <Italic {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} title="Underline (Ctrl+U)" aria-label="Underline">
+              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} title={`Underline (${formatCombo('Mod+U')})`} aria-label="Underline">
                 <Underline {...ICON} />
               </button>
               <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} title="Strikethrough" aria-label="Strikethrough">
@@ -594,7 +595,7 @@ export function DocumentEditorToolbar() {
 
             {/* Search */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title="Search & Replace (Ctrl+F)" aria-label="Search and replace">
+              <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title={`Search & Replace (${formatCombo('Mod+F')})`} aria-label="Search and replace">
                 <Search {...ICON} />
               </button>
             </div>
@@ -752,7 +753,7 @@ export function DocumentEditorToolbar() {
               />
             )}
             <div className="math-input-hint">
-              {mathIsBlock ? 'Press Ctrl+Enter to insert, Escape to cancel' : 'Press Enter to insert, Escape to cancel'}
+              {mathIsBlock ? `Press ${formatCombo('Mod+Enter')} to insert, Escape to cancel` : 'Press Enter to insert, Escape to cancel'}
             </div>
             <div className="math-input-actions">
               <button onClick={() => setShowMathInput(false)}>Cancel</button>

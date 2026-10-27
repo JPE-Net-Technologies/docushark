@@ -8,6 +8,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { commandShortcut } from '../engine/CommandRegistry';
 import {
   CircleHelp,
   Settings,
@@ -280,7 +281,7 @@ export function UnifiedToolbar({
           <button
             className="toolbar-documents-btn"
             onClick={onOpenDocuments}
-            title="Documents (Ctrl+Shift+O)"
+            title={`Documents (${commandShortcut('view.documents') ?? ''})`}
             aria-label="Documents"
           >
             <Icon icon={FolderOpen} size={14} />
