@@ -26,40 +26,97 @@
   border-bottom: none;
 }
 
+/* The bar (DSK-197): a sideways-scrolling row of everyday controls, with
+   Format pinned at the end so the full ribbon is always one tap away. */
 .mpt-bar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 4px 8px;
+  gap: 4px;
+  padding: 4px 6px 4px 4px;
+}
+
+.mpt-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  /* Fade the trailing edge so a cut-off button reads as "scroll for more". */
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.mpt-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .mpt-btn {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   flex: 0 0 auto;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.mpt-btn:hover {
+.mpt-btn:active:not(:disabled) {
   background: var(--bg-hover);
 }
 .mpt-btn.is-active {
   background: var(--color-primary-light);
   color: var(--text-primary);
 }
+.mpt-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mpt-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: var(--border-color);
+}
+
+/* The text-style menu's trigger: the current style, named. */
+.mpt-style {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  min-width: 64px;
+  height: 44px;
+  padding: 0 8px 0 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.mpt-style:active {
+  background: var(--bg-hover);
+}
+.mpt-style-label {
+  flex: 1 1 auto;
+  text-align: left;
+}
 
 .mpt-format {
-  margin-left: auto;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 36px;
+  height: 44px;
   padding: 0 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -67,14 +124,32 @@
   color: var(--text-secondary);
   font-size: var(--font-size-base);
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.mpt-format:hover {
+.mpt-format:active {
   background: var(--bg-hover);
 }
 .mpt-format.is-open {
   background: var(--color-primary-light);
   color: var(--text-primary);
   border-color: var(--color-primary);
+}
+
+/* The full ribbon in the Format panel, at the 44px touch size (DSK-197): its
+   32px buttons and 23px tabs were made for a mouse. */
+@media (pointer: coarse) {
+  .mpt-panel .ribbon-tab {
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: var(--font-size-base);
+  }
+  .mpt-panel .document-editor-toolbar-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .mpt-panel .rich-select-trigger {
+    min-height: 44px;
+  }
 }
 
 /* Read-only strip (JP-462) — the mobile counterpart of `.ribbon-readonly`.

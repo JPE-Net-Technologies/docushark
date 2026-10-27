@@ -59,3 +59,18 @@
   font-size: 0.72rem;
   color: var(--text-secondary, rgba(127, 127, 127, 0.9));
 }
+
+/* Touch (DSK-197): 44px rows, the size the app's other touch menus use. */
+@media (pointer: coarse) {
+  .slash-menu-item {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
+  .slash-menu-item > .slash-menu-row {
+    flex: 1 1 auto;
+  }
+  .slash-menu-title {
+    font-size: 15px;
+  }
+}

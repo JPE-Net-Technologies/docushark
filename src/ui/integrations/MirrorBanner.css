@@ -57,6 +57,52 @@
   opacity: 0.7;
 }
 
+/* The phone's bottom bar (DSK-197): the quick formatting bar's place, two
+   short lines and icon-only actions at the 44px touch size. */
+.mirror-banner--compact {
+  gap: 10px;
+  padding: 4px 6px 4px 14px;
+  background: transparent;
+}
+
+.mirror-banner--compact .mirror-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  white-space: normal;
+}
+
+.mirror-banner__title,
+.mirror-banner__sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirror-banner__title {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.mirror-banner__sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.mirror-banner--compact .mirror-banner__actions {
+  gap: 0;
+}
+
+.mirror-banner--compact .mirror-banner__actions button {
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+
 .mirror-banner__spin {
   animation: mirror-banner-spin 0.9s linear infinite;
 }

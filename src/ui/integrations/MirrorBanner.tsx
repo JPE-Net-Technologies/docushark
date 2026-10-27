@@ -51,9 +51,14 @@ function isEditingKey(e: KeyboardEvent): boolean {
 interface MirrorBannerProps {
   pageId: string;
   mirror: PageMirrorMeta;
+  /**
+   * The phone's bottom bar (DSK-197): two short lines and icon-only, 44px
+   * actions in place of the quick formatting bar, whose marks would do nothing.
+   */
+  compact?: boolean | undefined;
 }
 
-export function MirrorBanner({ pageId, mirror }: MirrorBannerProps) {
+export function MirrorBanner({ pageId, mirror, compact = false }: MirrorBannerProps) {
   const hub = useIntegrationHubStore((s) => s.hub);
   const label = providerLabel(hub, mirror.provider);
   const editor = useTiptapEditor();
@@ -106,6 +111,55 @@ export function MirrorBanner({ pageId, mirror }: MirrorBannerProps) {
     setNow(Date.now());
   };
 
+  const synced = syncedLabel(mirror.syncedAt, now);
+
+  if (compact) {
+    return (
+      <div
+        className={`mirror-banner mirror-banner--compact${triedToEdit ? ' mirror-banner--explaining' : ''}`}
+        role="status"
+      >
+        <ProviderIcon provider={mirror.provider} size={16} />
+        <span className="mirror-banner__text">
+          <span className="mirror-banner__title">
+            {triedToEdit ? `Read-only. Detach it to edit.` : `${label} mirror · read-only`}
+          </span>
+          <span className="mirror-banner__sub">Synced {synced}</span>
+        </span>
+        <div className="mirror-banner__actions">
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={refreshing}
+            aria-busy={refreshing || undefined}
+            aria-label={refreshing ? 'Refreshing…' : 'Refresh'}
+            title={refreshing ? 'Refreshing…' : 'Refresh'}
+          >
+            <RefreshCw size={18} aria-hidden="true" className={refreshing ? 'mirror-banner__spin' : undefined} />
+          </button>
+          {mirror.url && (
+            <button
+              type="button"
+              onClick={() => openMirrorSource(mirror.url!)}
+              aria-label={`Open in ${label}`}
+              title={`Open in ${label}`}
+            >
+              <ExternalLink size={18} aria-hidden="true" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void detachMirrorPageWithConfirm(pageId, label)}
+            aria-label="Detach"
+            title="Detach"
+          >
+            <Unlink size={18} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="document-editor-toolbar document-editor-toolbar--mirror">
       <div className={`mirror-banner${triedToEdit ? ' mirror-banner--explaining' : ''}`} role="status">
@@ -113,7 +167,7 @@ export function MirrorBanner({ pageId, mirror }: MirrorBannerProps) {
         <span className="mirror-banner__text">
           {triedToEdit
             ? `This page mirrors ${label} and is read-only. Detach it to edit.`
-            : `Mirrored from ${label} · read-only · synced ${syncedLabel(mirror.syncedAt, now)}`}
+            : `Mirrored from ${label} · read-only · synced ${synced}`}
         </span>
         <div className="mirror-banner__actions">
           <button type="button" onClick={() => void refresh()} disabled={refreshing} aria-busy={refreshing || undefined}>

@@ -52,6 +52,7 @@ import { CodeBlock } from '../tiptap/CodeBlockExtension';
 import { Figure, Figcaption } from '../tiptap/FigureExtension';
 import { Gallery } from '../tiptap/GalleryExtension';
 import type { EditorView } from '@tiptap/pm/view';
+import { device } from '../platform/device';
 import { handleProseFileDrop } from '../tiptap/proseDropGuard';
 import { handleCitationDoiPaste } from '../tiptap/citationPaste';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
@@ -286,6 +287,24 @@ export const sharedProseExtensions = [
  * These are the props with no per-editor variation. An editor needing extra
  * behaviour spreads this and adds to it, rather than restating the common set.
  */
+/**
+ * Where the editor keeps the caret when it scrolls it into view (DSK-197).
+ *
+ * On a touch screen the selection handles hang below the selected line (Android
+ * draws them there), and the bottom of the writing area meets the mobile
+ * formatting bar. With ProseMirror's defaults (scroll once the caret is off the
+ * edge, then leave it 5px inside) a line selected at the bottom put its handles
+ * under the bar, whose buttons took the drag. On touch, start scrolling 48px
+ * before the bottom edge and leave the caret that far up. A mouse keeps the
+ * defaults. Exported for its test; the editors use it through
+ * `sharedProseEditorProps`.
+ */
+export function proseScrollProps(touch: boolean) {
+  if (!touch) return {};
+  const edges = { top: 16, right: 0, bottom: 48, left: 0 };
+  return { scrollMargin: edges, scrollThreshold: edges };
+}
+
 export const sharedProseEditorProps = {
   attributes: {
     class: 'tiptap-prose',
@@ -295,7 +314,23 @@ export const sharedProseEditorProps = {
   // Swallow file drops — the browser's default is to navigate away to the
   // dropped file, discarding unsaved editor state (JP-495).
   handleDrop: (view: EditorView, event: Event) => handleProseFileDrop(view, event as DragEvent),
+  // Keep a touch selection's handles clear of the bottom bar (DSK-197). The
+  // pointer type is read once, at load.
+  ...proseScrollProps(device.isTouch()),
 } as const;
+
+/**
+ * The editor's content, in the wrapper that lets it fill the page (DSK-197).
+ *
+ * EditorContent renders ProseMirror inside an unclassed div, so the editor's
+ * `min-height: 100%` resolved against an auto-height parent and the editable
+ * area was only as tall as its text: a tap or click on the empty page below a
+ * short document did nothing. Every prose surface renders this, so none can
+ * drift back to a bare EditorContent (`proseEditorPropsParity.test.ts`).
+ */
+export function ProseEditorContent({ editor }: { editor: Editor | null }) {
+  return <EditorContent editor={editor} className="tiptap-editor-content" />;
+}
 
 /**
  * The local (non-collaborative) editor's full extension set: StarterKit (with
@@ -413,7 +448,7 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>
-      <EditorContent editor={editor} />
+      <ProseEditorContent editor={editor} />
       {overlay}
     </div>
   );

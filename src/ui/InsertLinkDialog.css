@@ -287,3 +287,26 @@
   background: rgba(220, 38, 38, 0.08);
   border-color: var(--danger);
 }
+
+/* Touch (DSK-197): 16px fields, so iOS Safari doesn't zoom into them; 44px
+   buttons, tabs and heading rows; and no keyboard-shortcut hint, which a touch
+   screen can't act on. */
+@media (pointer: coarse) {
+  .link-dialog-field input[type="text"],
+  .link-dialog-field input[type="search"] {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  .link-dialog-btn,
+  .link-dialog-close,
+  .link-dialog-segment button,
+  .link-dialog-heading-item {
+    min-height: 44px;
+  }
+  .link-dialog-close {
+    min-width: 44px;
+  }
+  .link-dialog-footer-hint {
+    display: none;
+  }
+}

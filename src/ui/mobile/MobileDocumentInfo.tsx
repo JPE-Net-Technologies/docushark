@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Info } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { Icon } from '../icons';
 import { usePersistenceStore } from '../../store/persistenceStore';
 import { useAutoSave } from '../../hooks/useAutoSave';
@@ -63,6 +63,9 @@ export function MobileDocumentInfo() {
 
   return (
     <div className="mobile-doc-info" ref={wrapRef}>
+      {/* The document's name, truncated to the bar's spare width (DSK-197):
+          behind a bare ⓘ the title of the open document wasn't on screen at
+          all. Tapping it opens the same rename and status popover. */}
       <button
         type="button"
         className={`mobile-doc-info-btn${isDirty ? ' is-dirty' : ''}`}
@@ -72,7 +75,8 @@ export function MobileDocumentInfo() {
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <Icon icon={Info} />
+        <span className="mobile-doc-info-name">{currentDocumentName}</span>
+        <Icon icon={ChevronDown} size={14} aria-hidden="true" />
       </button>
 
       {open && (

@@ -23,7 +23,7 @@
  */
 
 import { useEffect } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
@@ -31,7 +31,7 @@ import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import type { Doc as YDoc } from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AnyExtension } from '@tiptap/core';
-import { sharedProseExtensions, sharedProseEditorProps } from './TiptapEditor';
+import { sharedProseExtensions, sharedProseEditorProps, ProseEditorContent } from './TiptapEditor';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore, usePageMirror } from '../store/richTextPagesStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
@@ -158,7 +158,7 @@ export function CollaborativeProseEditor({
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`} onContextMenu={onContextMenu}>
-      <EditorContent editor={editor} />
+      <ProseEditorContent editor={editor} />
       {overlay}
     </div>
   );

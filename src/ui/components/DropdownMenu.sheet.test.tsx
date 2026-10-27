@@ -153,6 +153,19 @@ describe('DropdownMenu — action sheet on a phone (DSK-196)', () => {
     expect(screen.getByRole('dialog', { name: 'Quarterly plan' })).toBeTruthy();
   });
 
+  it('leaves focus on the sheet when a tap opened it, so no row is ringed (DSK-197)', () => {
+    renderMenu(entries());
+    // A pointer click carries a click count; a keyboard activation doesn't.
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }), { detail: 1 });
+    expect(document.activeElement).toBe(screen.getByRole('dialog', { name: 'Quarterly plan' }));
+  });
+
+  it('starts on the first row when the keyboard opened it', () => {
+    renderMenu(entries());
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }), { detail: 0 });
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Rename' }));
+  });
+
   it('shows a submenu’s current choice on its row', () => {
     renderMenu(entries());
     openMenu();

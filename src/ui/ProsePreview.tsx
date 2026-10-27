@@ -12,8 +12,8 @@
  * so the HTML is schema-sanitized and rendered with the exact prose styling.
  */
 
-import { useEditor, EditorContent } from '@tiptap/react';
-import { extensions } from './TiptapEditor';
+import { useEditor } from '@tiptap/react';
+import { extensions, ProseEditorContent } from './TiptapEditor';
 import { useResolveBlobImages } from './useProseBlobImages';
 import { useProseLinkClicks } from './useProseLinkClicks';
 import './TiptapEditor.css';
@@ -48,7 +48,7 @@ export function ProsePreview({ html, className }: ProsePreviewProps) {
 
   return (
     <div className={`tiptap-editor ${className ?? ''}`}>
-      <EditorContent editor={editor} />
+      <ProseEditorContent editor={editor} />
     </div>
   );
 }

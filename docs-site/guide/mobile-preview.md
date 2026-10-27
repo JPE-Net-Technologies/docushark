@@ -29,6 +29,20 @@ On a touch screen nothing waits for a pointer to hover. Each document's **⋯** 
 
 With mobile preview on, menus open as sheets from the bottom of the screen, with room for a finger on every choice. Tap outside a sheet, or swipe it down, to close it.
 
+## Writing on a phone
+
+With mobile preview on, a writing bar sits at the bottom of a prose page, above the keyboard. Swipe it sideways for more:
+
+- **Undo** and **Redo**, since a phone keyboard has no shortcut for them.
+- The **text style** (body text, headings, quote, code block), with the current one named on the button.
+- Bold, italic, underline and strikethrough.
+- Bulleted, numbered and task lists. While you're in a list, **Indent** and **Outdent** nest items, which a keyboard does with Tab.
+- **Link**.
+
+**Format**, at the end of the bar, opens every other formatting control. The document's name is at the top of the screen: tap it to rename the document or see whether it's saved. Tap anywhere on the page below your text to carry on writing at the end.
+
+A page mirrored from another tool, such as Notion, is read-only. Its bar says so and when it last synced, and offers **Refresh**, **Open** in the source, and **Detach**.
+
 ## What to expect
 
 Mobile preview is still early: expect some panels and workflows to feel tighter or less polished than on desktop. If something feels broken rather than just cramped, that's useful feedback — but it's not yet the primary way DocuShark is meant to be used.
