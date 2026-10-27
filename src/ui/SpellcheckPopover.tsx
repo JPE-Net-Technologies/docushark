@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
 import { SpellcheckService } from '../services/SpellcheckService';
-import { rebuildSpellcheck } from '../tiptap/SpellcheckExtension';
-import { useRichTextStore } from '../store/richTextStore';
+import { addToDictionary, replaceMisspelling } from './proseSpelling';
 
 export interface SpellcheckPopoverProps {
   editor: Editor;
@@ -37,27 +36,15 @@ export function SpellcheckPopover({ editor, word, range, x, y, onClose }: Spellc
     setSuggestions(SpellcheckService.suggest(word));
   }, [word]);
 
+  // The fixes themselves are shared with the phone bar (proseSpelling), which
+  // also keeps them fail-closed on a surface that has turned read-only.
   const replaceWith = (replacement: string) => {
-    // Defence in depth: the chrome never opens this popover on a read-only
-    // surface, but a permission flip can land while it's open — and
-    // `insertContent` is a programmatic write that `editable: false` does
-    // not block on its own.
-    if (!editor.isEditable) return;
-    editor.chain().focus().setTextSelection(range).insertContent(replacement).run();
-    rebuildSpellcheck(editor.view);
+    replaceMisspelling(editor, range, replacement);
     onClose();
   };
 
-  const addToDictionary = () => {
-    // Same fail-closed rule: the dictionary is document metadata a viewer
-    // has no business writing.
-    if (!editor.isEditable) return;
-    SpellcheckService.addToSession(word);
-    // Persist via the structural metadata method — never round-trip through
-    // loadContent to append a word (that abused the prose content-write path
-    // and once dropped the dictionary; JP-198).
-    useRichTextStore.getState().addDictionaryWord(word);
-    rebuildSpellcheck(editor.view);
+  const acceptWord = () => {
+    addToDictionary(editor, word);
     onClose();
   };
 
@@ -85,7 +72,7 @@ export function SpellcheckPopover({ editor, word, range, x, y, onClose }: Spellc
         </ul>
       )}
       <div className="spellcheck-popover-divider" />
-      <button className="spellcheck-popover-add" onClick={addToDictionary}>
+      <button className="spellcheck-popover-add" onClick={acceptWord}>
         Add to Dictionary
       </button>
     </div>,
