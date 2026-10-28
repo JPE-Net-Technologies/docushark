@@ -16,6 +16,7 @@ import {
   isAutoSaveSuppressed,
   withAutoSaveSuppressed,
   registerAutoSaveFlush,
+  registerSaveNow,
 } from '../store/autoSaveGuard';
 
 export type AutoSaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
@@ -102,6 +103,7 @@ function install(debounceMs: number): void {
     if (!pendingSave && !timeoutId) return;
     flushNow();
   });
+  registerSaveNow(saveNow);
 
   useDocumentStore.subscribe(() => {
     if (isAutoSaveSuppressed()) return;
@@ -163,6 +165,15 @@ function install(debounceMs: number): void {
   window.addEventListener('pagehide', flushOnHide);
 }
 
+/**
+ * Save the open document now: Mod+S and the toolbar's save button (DSK-203).
+ * The autosave path itself, so a pending debounced save is folded in rather
+ * than run twice, and a guest's read-only snapshot still never saves.
+ */
+export function saveNow(): void {
+  flushNow();
+}
+
 // ============ React hook ============
 
 export function useAutoSave(options: UseAutoSaveOptions = {}): UseAutoSaveResult {
@@ -203,22 +214,7 @@ export function useAutoSave(options: UseAutoSaveOptions = {}): UseAutoSaveResult
   const isDirty = usePersistenceStore((s) => s.isDirty);
   const lastSavedAt = usePersistenceStore((s) => s.lastSavedAt);
 
-  const saveNow = useCallback(() => flushNow(), []);
+  const save = useCallback(() => saveNow(), []);
 
-  return { status, isDirty, lastSavedAt, saveNow };
-}
-
-/**
- * Format a timestamp for display.
- */
-export function formatLastSaved(timestamp: number | null): string {
-  if (!timestamp) return 'Never saved';
-  const now = Date.now();
-  const diff = now - timestamp;
-  if (diff < 5000) return 'Just now';
-  if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  const date = new Date(timestamp);
-  return date.toLocaleDateString();
+  return { status, isDirty, lastSavedAt, saveNow: save };
 }

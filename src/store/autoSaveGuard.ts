@@ -44,3 +44,17 @@ export function registerAutoSaveFlush(fn: () => void): void {
 export function flushAutoSaveNow(): void {
   flushImpl?.();
 }
+
+// Also registered by useAutoSave on install: an unconditional save, where the
+// flush above only runs a pending one. The command registry's Mod+S saves
+// through this, so the engine never imports the hook (DSK-203).
+let saveNowImpl: (() => void) | null = null;
+
+export function registerSaveNow(fn: () => void): void {
+  saveNowImpl = fn;
+}
+
+/** Save the open document now (Mod+S). No-op until useAutoSave has installed. */
+export function requestSaveNow(): void {
+  saveNowImpl?.();
+}

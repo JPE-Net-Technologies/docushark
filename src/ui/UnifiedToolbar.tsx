@@ -50,6 +50,13 @@ function DocumentInfo() {
   const currentDocumentName = usePersistenceStore((state) => state.currentDocumentName);
   const renameDocument = usePersistenceStore((state) => state.renameDocument);
   const { isDirty, status, saveNow } = useAutoSave();
+  const saveKeys = commandShortcut('file.save') ?? '';
+  const saveStatusLabel =
+    status === 'saving'
+      ? 'Saving…'
+      : isDirty
+        ? `Unsaved changes. Save now (${saveKeys})`
+        : `All changes saved. Save now (${saveKeys})`;
 
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -104,10 +111,14 @@ function DocumentInfo() {
           {currentDocumentName}
         </button>
       )}
-      <span
+      {/* A button, so the keyboard reaches it too (DSK-203); it saves at once,
+          as Mod+S does. */}
+      <button
+        type="button"
         className={`document-status ${status === 'saving' ? 'saving' : isDirty ? 'dirty' : 'saved'}`}
-        onClick={isDirty ? saveNow : undefined}
-        title={status === 'saving' ? 'Saving...' : isDirty ? 'Unsaved changes - click to save' : 'Saved'}
+        onClick={saveNow}
+        aria-label={saveStatusLabel}
+        title={saveStatusLabel}
       >
         {status === 'saving' ? (
           <SavingIcon />
@@ -116,7 +127,7 @@ function DocumentInfo() {
         ) : (
           <SavedIcon />
         )}
-      </span>
+      </button>
     </div>
   );
 }

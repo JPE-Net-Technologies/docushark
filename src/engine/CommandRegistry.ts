@@ -38,6 +38,7 @@ import {
   Network,
   PanelLeft,
   Redo2,
+  Save,
   ScanSearch,
   Search,
   Spline,
@@ -63,6 +64,8 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { isGroup, type RectangleShape } from '../shapes/Shape';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { isActiveDocReadOnly, getActiveDocumentRecord } from '../store/documentRegistry';
+import { useNotificationStore } from '../store/notificationStore';
+import { requestSaveNow } from '../store/autoSaveGuard';
 import { relaySessionUsable } from '../store/connectionStore';
 import { opener } from '../platform/opener';
 import { Vec2 } from '../math/Vec2';
@@ -342,6 +345,22 @@ function buildCommands(): Command[] {
       keys: 'Mod+Shift+O', scope: 'global', whileTyping: true,
       // The palette can't reach React state; App listens for this event.
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-documents')),
+    },
+    {
+      id: 'file.save', icon: Save,
+      label: 'Save now',
+      category: 'File',
+      keys: 'Mod+S', scope: 'global', whileTyping: true,
+      // Autosave already runs; this saves at once (DSK-203). Deliberately no
+      // canExecute: dispatchKey hands the key back to the browser when that is
+      // false, and Mod+S would then open "Save page as" over the document.
+      execute: () => {
+        if (isActiveDocReadOnly()) {
+          useNotificationStore.getState().info('This document is view only, so there is nothing to save.');
+          return;
+        }
+        requestSaveNow();
+      },
     },
 
     // --- Page navigation (JP-357) --- steps the focused surface's pages (prose

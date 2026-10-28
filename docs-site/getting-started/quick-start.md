@@ -57,6 +57,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 
 DocuShark **auto-saves** your work, so you won't lose anything. You can also:
 
+- Press `Ctrl+S` (`Cmd+S` on a Mac) to save at once
 - Use **Export** to save as PNG, SVG, PDF, or JSON
 - Click the document name in the toolbar to rename it
 

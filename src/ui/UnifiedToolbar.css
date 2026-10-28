@@ -371,17 +371,30 @@
   max-width: clamp(220px, 34vw, 460px);
 }
 
+/* The save status is a button (DSK-203): it saves at once, as Mod+S does. */
 .document-status {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   font-size: var(--font-size-base);
-  cursor: default;
+  cursor: pointer;
+}
+
+.document-status:hover {
+  background: var(--bg-hover);
+}
+
+.document-status:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 .document-status.dirty {
   color: var(--warning);
-  cursor: pointer;
 }
 
 .document-status.saving {
@@ -389,7 +402,7 @@
 }
 
 .document-status.saved {
-  color: #10b981;
+  color: var(--success);
 }
 
 .status-icon {
