@@ -14,8 +14,6 @@ import { commandShortcut } from '../engine/CommandRegistry';
 import { LAYOUT_MODES } from './layout/types';
 
 const ROOTS = ['src/ui', 'src/tiptap'];
-/** Unmounted; its removal is tracked separately. */
-const IGNORED = new Set(['src/ui/FileMenu.tsx']);
 
 function sources(dir: string): string[] {
   const out: string[] = [];
@@ -33,7 +31,6 @@ describe('shortcut labels (DSK-198)', () => {
     for (const root of ROOTS) {
       for (const file of sources(resolve(process.cwd(), root))) {
         const rel = relative(process.cwd(), file);
-        if (IGNORED.has(rel)) continue;
         readFileSync(file, 'utf8')
           .split('\n')
           .forEach((line, i) => {
