@@ -31,12 +31,38 @@ export const AUTH_CALLBACK_ENABLED = true;
 /** SPA path the web OAuth redirect lands on. */
 export const AUTH_CALLBACK_PATH = '/auth/callback';
 
+/** A page to import once signed in, from the account site's "Import a page" (DSK-194). */
+export interface ImportIntent {
+  provider: string;
+  externalId: string;
+  /** The workspace whose card the page was chosen on (`?ws=`). A hand-off opens
+   *  the user's primary workspace, so the import refuses to run in another. */
+  workspaceId?: string;
+}
+
 /** Parsed return from the web OAuth redirect. */
 export interface AuthCallbackParams {
   /** Single-use handoff code minted by docushark-web, if present. */
   handoffCode: string | null;
   /** OAuth/exchange error code, if the redirect carried one. */
   error: string | null;
+  /** `?import=<provider>:<externalId>` (and `?ws=`), when the hand-off carries an import. */
+  importIntent: ImportIntent | null;
+}
+
+/**
+ * Parse `<provider>:<externalId>`. Strict, since it comes from a URL: a provider
+ * id is lowercase letters, digits and dashes, and an id is word characters and
+ * dashes (a Notion page id, with or without its dashes). Anything else is no
+ * intent at all.
+ */
+export function parseImportIntent(value: string | null): ImportIntent | null {
+  if (!value) return null;
+  const sep = value.indexOf(':');
+  const provider = value.slice(0, sep);
+  const externalId = value.slice(sep + 1);
+  if (sep <= 0 || !/^[a-z][a-z0-9-]{0,31}$/.test(provider) || !/^[\w-]{1,200}$/.test(externalId)) return null;
+  return { provider, externalId };
 }
 
 /**
@@ -48,12 +74,19 @@ export function parseAuthCallback(url: string): AuthCallbackParams {
   try {
     parsed = new URL(url);
   } catch {
-    return { handoffCode: null, error: 'invalid_callback_url' };
+    return { handoffCode: null, error: 'invalid_callback_url', importIntent: null };
   }
   return {
     handoffCode: parsed.searchParams.get('handoff_code'),
     error: parsed.searchParams.get('error'),
+    importIntent: withWorkspace(parseImportIntent(parsed.searchParams.get('import')), parsed.searchParams.get('ws')),
   };
+}
+
+/** Attach a well-formed `ws` to an intent; a malformed one drops the whole intent. */
+function withWorkspace(intent: ImportIntent | null, ws: string | null): ImportIntent | null {
+  if (!intent || ws === null) return intent;
+  return /^[\w-]{1,64}$/.test(ws) ? { ...intent, workspaceId: ws } : null;
 }
 
 /** Is the given pathname the auth-callback route? */
@@ -125,7 +158,7 @@ export async function handleAuthCallbackIfPresent(): Promise<boolean> {
     return false;
   }
 
-  const { handoffCode, error } = parseAuthCallback(window.location.href);
+  const { handoffCode, error, importIntent } = parseAuthCallback(window.location.href);
   window.history.replaceState(null, '', '/');
 
   if (error || !handoffCode) {
@@ -155,8 +188,55 @@ export async function handleAuthCallbackIfPresent(): Promise<boolean> {
     });
     // First-connect explainer of the storage model (once per browser).
     showStorageInfoToastOnce();
+    if (importIntent) void runImportIntent(importIntent);
   } catch (err) {
     console.warn('[authCallback] handoff consume failed:', err);
   }
   return true;
+}
+
+/** How long a fresh sign-in gets to reach the workspace before an import gives up. */
+const RELAY_READY_TIMEOUT_MS = 20_000;
+
+/**
+ * Run the account site's "Import a page" here (DSK-194): the page becomes a new
+ * workspace document, exactly as the document browser's New > From <provider>
+ * makes one. It runs only after a hand-off has signed this editor in, and the
+ * code is single-use and minted for the signed-in user, so a crafted link
+ * cannot start an import on its own.
+ */
+async function runImportIntent(intent: ImportIntent): Promise<void> {
+  const [{ useNotificationStore }, { isRelayAuthenticated }, { importAsNewDocument }, { activeWorkspaceId }] =
+    await Promise.all([
+      import('../store/notificationStore'),
+      import('../store/connectionStore'),
+      import('../services/mirrorPageService'),
+      import('../store/activeWorkspace'),
+    ]);
+  const notifications = useNotificationStore.getState();
+  try {
+    const started = Date.now();
+    while (!isRelayAuthenticated()) {
+      if (Date.now() - started > RELAY_READY_TIMEOUT_MS) {
+        throw new Error("Signed in, but your workspace didn't answer in time, so the page was not imported.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (intent.workspaceId && intent.workspaceId !== activeWorkspaceId()) {
+      throw new Error(
+        'That page was chosen for another workspace. Switch to it here, then use New > From the source to import it.',
+      );
+    }
+    const { pageId, warnings } = await importAsNewDocument(intent.provider, intent.externalId);
+    const { useRichTextPagesStore } = await import('../store/richTextPagesStore');
+    const name = useRichTextPagesStore.getState().pages[pageId]?.name ?? 'the page';
+    const dropped = warnings.reduce((n, w) => n + (w.count ?? 1), 0);
+    notifications.success(
+      dropped > 0
+        ? `Imported "${name}" as a new document — ${dropped} element(s) could not be mirrored`
+        : `Imported "${name}" as a new document`,
+    );
+  } catch (err) {
+    notifications.error(err instanceof Error ? err.message : 'Could not import the page.');
+  }
 }

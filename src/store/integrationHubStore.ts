@@ -83,3 +83,36 @@ export function workspaceIntegrationState(
     })),
   };
 }
+
+/** Least time between two focus refreshes, so a burst of focus events costs one request. */
+const FOCUS_REFRESH_MIN_MS = 30_000;
+
+/**
+ * Reload the hub when the editor regains focus (DSK-194). Connecting happens on
+ * the account site, in another tab or app, so coming back is when the cached
+ * hub is most likely stale: without this, the editor went on offering "Connect
+ * an integration…" for up to five minutes after a connection. Only once the hub
+ * has loaded, so a session that never needed integrations makes no request.
+ * Returns the listener's removal.
+ */
+export function refreshHubOnFocus(): () => void {
+  const onFocus = () => {
+    const { status, loadedAt, ensureLoaded } = useIntegrationHubStore.getState();
+    if (status === 'idle' || status === 'loading') return;
+    if (Date.now() - loadedAt < FOCUS_REFRESH_MIN_MS) return;
+    void ensureLoaded({ force: true });
+  };
+  window.addEventListener('focus', onFocus);
+  return () => window.removeEventListener('focus', onFocus);
+}
+
+/**
+ * Reload the hub, past its cache, when the workspace has nothing connected
+ * (DSK-194). Called as Tools opens: a connection just made on the account site
+ * would otherwise stay missing from Tools until the cache expires.
+ */
+export function refreshIfNothingConnected(workspaceId: string | null | undefined): void {
+  const { hub, ensureLoaded } = useIntegrationHubStore.getState();
+  if (workspaceIntegrationState(hub, workspaceId)?.providers.some((p) => p.connected)) return;
+  void ensureLoaded({ force: true });
+}

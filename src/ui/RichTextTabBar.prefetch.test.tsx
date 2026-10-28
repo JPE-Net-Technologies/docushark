@@ -86,3 +86,15 @@ describe('RichTextTabBar integration-hub prefetch', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * The strip is a tablist (DSK-194): its tabs must be tabs, and the page shown
+ * must be the selected one, or a screen reader hears an empty list.
+ */
+describe('RichTextTabBar tab semantics (DSK-194)', () => {
+  it('marks each page as a tab and the shown page as selected', () => {
+    const { getByRole } = render(<RichTextTabBar />);
+    const tab = getByRole('tab', { name: /Page 1/ });
+    expect(tab.getAttribute('aria-selected')).toBe('true');
+  });
+});

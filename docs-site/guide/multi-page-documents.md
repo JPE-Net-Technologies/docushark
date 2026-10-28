@@ -45,9 +45,23 @@ A **mirrored page** shows a live copy of a page from a connected source, such
 as a Notion page, inside your document. Available on paid workspace plans with
 the source connected from your account's Integrations page.
 
-To add one, open **Tools** and choose **New page from Notion…**, then search
-for the page you want and pick it. The same action is in the command palette —
-press <kbd>Mod</kbd>+<kbd>K</kbd> and start typing the source's name. The content —
+To add one to a workspace document, open **Tools** and choose **New page from
+Notion…**, then search for the page you want and pick it. Use the arrow keys to
+move through the results and <kbd>Enter</kbd> to pick one; each result shows
+what kind of page it is and the page or database it sits in. The same action is
+in the command palette — press <kbd>Mod</kbd>+<kbd>K</kbd> and start typing the
+source's name. It isn't offered in a local document: a mirrored page lives in
+your workspace, so move the document there first.
+
+To start a new document from a page instead, open **Documents**, then the
+arrow beside **New**, and choose **From Notion…**. The page becomes a new
+workspace document named after it, with the mirrored page first. **Import a
+page** on your account's Integrations page does the same and opens the new
+document in the editor.
+
+Only pages you've shared with DocuShark in Notion can be found. If a page is
+missing, choose **Choose pages in Notion…** in the search window: it opens your
+account's Integrations page, where Notion asks which pages to share. The content —
 headings, lists, tables, images, and file attachments — is imported as a
 read-only page, and the tab carries the source's icon so you can spot mirrored
 pages at a glance. Attachments come across as files you can open from the page,

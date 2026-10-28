@@ -106,10 +106,11 @@
   text-align: left;
   color: var(--text-primary);
 }
-.mirror-picker-row:hover:not(:disabled) {
+/* The row Enter would pick, moved by the arrow keys and the pointer (DSK-194). */
+.mirror-picker-row[data-active] {
   background: var(--bg-hover);
 }
-.mirror-picker-row:disabled {
+.mirror-picker-row[aria-disabled='true'] {
   cursor: default;
   opacity: 0.6;
 }
@@ -124,9 +125,37 @@
   color: var(--text-secondary);
   font-size: 13px;
 }
-.mirror-picker-row-title {
+.mirror-picker-row-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.mirror-picker-row-title {
   font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Where the resource lives and what kind it is, when the control plane says. */
+.mirror-picker-row-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.mirror-picker-row-type {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  line-height: 16px;
+}
+.mirror-picker-row-parent {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -135,6 +164,29 @@
   flex: none;
   font-size: 11.5px;
   color: var(--text-secondary);
+}
+
+.mirror-picker-empty {
+  margin: 16px 8px;
+}
+.mirror-picker-empty .mirror-picker-hint {
+  margin: 0 0 8px;
+}
+/* Opens the account page, where the provider's consent screen adds pages. */
+.mirror-picker-choose {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.mirror-picker-choose:hover {
+  text-decoration-line: underline;
 }
 
 .mirror-picker-more {
@@ -153,9 +205,28 @@
 }
 
 .mirror-picker-foot {
-  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 14px 12px;
+  border-top: 1px solid var(--border-color);
+}
+.mirror-picker-foot p {
+  margin: 0;
   font-size: 11.5px;
   color: var(--text-secondary);
-  border-top: 1px solid var(--border-color);
+}
+
+/* Touch: finger-sized rows, and a 16px search box so iOS doesn't zoom in. */
+@media (pointer: coarse) {
+  .mirror-picker-row {
+    min-height: 44px;
+  }
+  .mirror-picker-search input {
+    font-size: 16px;
+  }
+  .mirror-picker-choose {
+    min-height: 44px;
+  }
 }

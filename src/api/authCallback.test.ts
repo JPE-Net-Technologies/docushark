@@ -14,6 +14,7 @@ vi.mock('./relayConnection', () => ({
 
 import {
   parseAuthCallback,
+  parseImportIntent,
   isAuthCallbackRoute,
   handleAuthCallbackIfPresent,
   AUTH_CALLBACK_ENABLED,
@@ -34,20 +35,48 @@ describe('authCallback', () => {
   it('parses a handoff_code from the query string', () => {
     expect(
       parseAuthCallback('https://app.docushark.app/auth/callback?handoff_code=abc123'),
-    ).toEqual({ handoffCode: 'abc123', error: null });
+    ).toEqual({ handoffCode: 'abc123', error: null, importIntent: null });
   });
 
   it('surfaces an error param with no handoff code', () => {
     expect(
       parseAuthCallback('https://app.docushark.app/auth/callback?error=access_denied'),
-    ).toEqual({ handoffCode: null, error: 'access_denied' });
+    ).toEqual({ handoffCode: null, error: 'access_denied', importIntent: null });
   });
 
   it('returns no handoff code for a bare callback URL', () => {
     expect(parseAuthCallback('https://app.docushark.app/auth/callback')).toEqual({
       handoffCode: null,
       error: null,
+      importIntent: null,
     });
+  });
+
+  it('carries an import from the account site with the hand-off (DSK-194)', () => {
+    const id = '1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d';
+    expect(
+      parseAuthCallback(`https://app.docushark.app/auth/callback?handoff_code=abc123&import=notion:${id}`).importIntent,
+    ).toEqual({ provider: 'notion', externalId: id });
+    expect(
+      parseAuthCallback(`https://app.docushark.app/auth/callback?handoff_code=abc&import=notion:${id}&ws=ws-1`).importIntent,
+    ).toEqual({ provider: 'notion', externalId: id, workspaceId: 'ws-1' });
+    // A malformed workspace drops the import rather than running it unchecked.
+    expect(
+      parseAuthCallback(`https://app.docushark.app/auth/callback?handoff_code=abc&import=notion:${id}&ws=a%20b`).importIntent,
+    ).toBeNull();
+  });
+
+  it('reads an import only in its strict form', () => {
+    expect(parseImportIntent('notion:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d')).toEqual({
+      provider: 'notion',
+      externalId: '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d',
+    });
+    expect(parseImportIntent(null)).toBeNull();
+    expect(parseImportIntent('notion')).toBeNull(); // no id
+    expect(parseImportIntent(':abc')).toBeNull(); // no provider
+    expect(parseImportIntent('Notion:abc')).toBeNull(); // provider ids are lowercase
+    expect(parseImportIntent('notion:abc/../x')).toBeNull();
+    expect(parseImportIntent('notion:<script>')).toBeNull();
   });
 
   it('flags an unparseable URL', () => {

@@ -86,6 +86,13 @@ export interface ExternalResource {
   iconEmoji?: string;
   url?: string;
   modifiedAt?: string;
+  /** Title of the page or database the resource sits in, for the picker's
+   *  location line (DSK-194). Absent at the top level, or from an older
+   *  control plane. */
+  parentTitle?: string;
+  /** What the provider calls this kind of resource ("Page", "Database row"),
+   *  shown as a badge (DSK-194). */
+  typeLabel?: string;
 }
 export interface ResourceSearchPage {
   resources: ExternalResource[];

@@ -11,8 +11,12 @@ import './shapes/import/registerImportAdapters';
 // registry, so they appear in the Tools grid and the palette. Reads live hub
 // state at render time, so this only wires the source — nothing is fetched here.
 import { registerIntegrationActions } from './services/integrationActions';
+import { refreshHubOnFocus } from './store/integrationHubStore';
 
 registerIntegrationActions();
+// Reload the integration hub when the editor regains focus, once it has loaded
+// (DSK-194): connections are made on the account site, in another tab.
+refreshHubOnFocus();
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
