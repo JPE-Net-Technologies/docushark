@@ -1805,26 +1805,31 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
     }),
     {
       name: STORAGE_KEYS.DOCUMENT_INDEX,
-      // v2 (DSK-207): `autoSaveEnabled` is no longer persisted. A guest share
-      // load turns it off for its read-only snapshot, and guest pages share the
-      // editor's origin, so persisting it left every later editor session in
-      // that browser without autosave — and without the close-tab flush, which
-      // goes through the same switch. It was never a user setting. The
-      // migration keeps the document index and drops a stored switch, so a
-      // browser already in that state recovers on its next load.
-      version: 2,
-      migrate: (persisted, version) => {
-        const stored = persisted as { documents?: PersistenceState['documents']; autoSaveEnabled?: boolean } | null;
-        if (stored?.autoSaveEnabled === false) {
-          console.info(`[persistence] document index v${version} → v2: dropped a stored "autosave off" (DSK-207)`);
-        }
-        return { documents: stored?.documents ?? {} };
-      },
+      // DSK-207: `autoSaveEnabled` is not persisted. A guest share load turns
+      // it off for its read-only snapshot, and guest pages share the editor's
+      // origin, so persisting it left every later editor session in that
+      // browser without autosave — and without the close-tab flush, which goes
+      // through the same switch. It was never a user setting.
+      //
+      // Deliberately NOT a version bump: code that predates a version can't
+      // read it, and zustand then starts empty and writes the empty index back.
+      // A rollback past a bump would wipe every local document index. Instead
+      // the version stays 1 and `merge` takes only the index from storage, so
+      // a browser that stored "off" recovers on its next load and older code
+      // still reads what this writes.
+      version: 1,
       partialize: (state) => ({
         // Only the document index, never current-document state or the
-        // autosave switch (see the version note above).
+        // autosave switch.
         documents: state.documents,
       }),
+      merge: (persisted, current) => {
+        const stored = persisted as { documents?: PersistenceState['documents']; autoSaveEnabled?: boolean } | null;
+        if (stored?.autoSaveEnabled === false) {
+          console.info('[persistence] ignored a stored "autosave off" in the document index (DSK-207)');
+        }
+        return { ...current, documents: stored?.documents ?? current.documents };
+      },
     }
   )
 );

@@ -34,12 +34,15 @@ describe('the autosave switch (DSK-207)', () => {
     // The guest session itself still never autosaves its snapshot…
     expect(usePersistenceStore.getState().autoSaveEnabled).toBe(false);
     // …but nothing about it reaches the storage the editor boots from.
-    const stored = JSON.parse(localStorage.getItem(KEY) ?? '{}') as { state?: Record<string, unknown> };
+    const stored = JSON.parse(localStorage.getItem(KEY) ?? '{}') as { state?: Record<string, unknown>; version?: number };
     expect(stored.state).toBeDefined();
     expect(stored.state).not.toHaveProperty('autoSaveEnabled');
+    // Still version 1: code that predates a bump can't read the index, starts
+    // empty and writes that back, so a rollback past one would wipe it.
+    expect(stored.version).toBe(1);
   });
 
-  it('recovers a browser that stored it off, keeping the document index', async () => {
+  it("recovers a browser that stored it off, keeping the document index", async () => {
     // Clear the in-memory index first: a setState writes through to storage.
     usePersistenceStore.setState({ documents: {} });
     const documents = { 'doc-1': { id: 'doc-1', name: 'Kept' } };
