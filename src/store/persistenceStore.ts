@@ -1805,12 +1805,31 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
     }),
     {
       name: STORAGE_KEYS.DOCUMENT_INDEX,
+      // DSK-207: `autoSaveEnabled` is not persisted. A guest share load turns
+      // it off for its read-only snapshot, and guest pages share the editor's
+      // origin, so persisting it left every later editor session in that
+      // browser without autosave — and without the close-tab flush, which goes
+      // through the same switch. It was never a user setting.
+      //
+      // Deliberately NOT a version bump: code that predates a version can't
+      // read it, and zustand then starts empty and writes the empty index back.
+      // A rollback past a bump would wipe every local document index. Instead
+      // the version stays 1 and `merge` takes only the index from storage, so
+      // a browser that stored "off" recovers on its next load and older code
+      // still reads what this writes.
       version: 1,
       partialize: (state) => ({
-        // Only persist the document index and settings, not current document state
+        // Only the document index, never current-document state or the
+        // autosave switch.
         documents: state.documents,
-        autoSaveEnabled: state.autoSaveEnabled,
       }),
+      merge: (persisted, current) => {
+        const stored = persisted as { documents?: PersistenceState['documents']; autoSaveEnabled?: boolean } | null;
+        if (stored?.autoSaveEnabled === false) {
+          console.info('[persistence] ignored a stored "autosave off" in the document index (DSK-207)');
+        }
+        return { ...current, documents: stored?.documents ?? current.documents };
+      },
     }
   )
 );
