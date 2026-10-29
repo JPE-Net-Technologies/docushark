@@ -117,6 +117,48 @@
   min-width: 0;
 }
 
+/* The document editor while its lazy chunk loads (DocumentEditorLoading,
+ * DSK-205). It paints the panel's backdrop, in either theme, so nothing shifts
+ * when the editor arrives, and the bar fades in only after a noticeable wait.
+ * These rules live here because the panel's stylesheet ships inside the chunk
+ * being loaded. */
+.document-editor-loading {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--prose-bg, var(--prose-backdrop));
+}
+
+.document-editor-loading__bar {
+  display: block;
+  width: 96px;
+  height: 3px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border-color);
+  animation: document-editor-loading-in 0.3s ease 0.25s both;
+}
+
+.document-editor-loading__bar::after {
+  content: '';
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-muted);
+  animation: document-editor-loading-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes document-editor-loading-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes document-editor-loading-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
 /* In Relaxed split focus the canvas becomes a secondary pane beside the prose.
  * Both panes share the row equally (`flex: 1 1 0`) for a true ~50/50 at any
  * viewport — until the user drags the divider, after which an explicit px

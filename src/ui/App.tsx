@@ -41,6 +41,7 @@ import { AccessPanelHost } from './access/AccessPanel';
 import { openCloudSignIn } from './cloud/cloudSignInStore';
 import { BlobSyncToastBridge } from './BlobSyncToastBridge';
 import { ErrorBoundary } from './ErrorBoundary';
+import { DocumentEditorLoading } from './DocumentEditorLoading';
 import { ConnectionStatusBanner } from './ConnectionStatusBanner';
 import { registerNetworkStatusWatcher } from '../services/networkStatusWatcher';
 import { registerConnectionWakeWatcher } from '../services/connectionWakeWatcher';
@@ -506,7 +507,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                 }${canvasIsSecondary ? ' document-area-wrapper--split' : ''}`}
               >
                 <ErrorBoundary sectionName="Document Editor">
-                  <Suspense fallback={<div className="document-editor-loading" />}>
+                  <Suspense fallback={<DocumentEditorLoading />}>
                     <DocumentEditorPanel
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
@@ -527,7 +528,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               <PanelChromeWrapper panelId="document">
                 <DockedPanel panelId="document" side="left" defaultWidth={320}>
                   <ErrorBoundary sectionName="Document Editor">
-                    <Suspense fallback={<div className="document-editor-loading" />}>
+                    <Suspense fallback={<DocumentEditorLoading />}>
                       <DocumentEditorPanel
                         onCollapse={handleCollapseEditor}
                         isFullscreen={isEditorFullscreen}
@@ -673,7 +674,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             <PanelChromeWrapper panelId="document">
               <DockedPanel panelId="document" side="right" defaultWidth={320}>
                 <ErrorBoundary sectionName="Document Editor">
-                  <Suspense fallback={<div className="document-editor-loading" />}>
+                  <Suspense fallback={<DocumentEditorLoading />}>
                     <DocumentEditorPanel
                       onCollapse={handleCollapseEditor}
                       isFullscreen={isEditorFullscreen}

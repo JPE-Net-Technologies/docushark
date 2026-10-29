@@ -4,20 +4,11 @@
   height: 100%;
   overflow: hidden;
   /* `--prose-bg` is set by the Appearance "Prose background" preset; when unset
-   * (the Default preset) it falls back to the built-in per-base behavior: a flat
-   * surface in light, the soft glow below in dark. The prose surface
-   * (.tiptap-editor) is transparent so this backdrop shows through. */
-  background: var(--prose-bg, var(--bg-primary));
-}
-
-/* Dark mode default: a soft top-center glow that settles into the deep page
- * navy — depth without an aggressive blue block, within the navy elevation
- * ladder (raised -> surface -> page). A chosen preset (--prose-bg) overrides it. */
-[data-theme="dark"] .document-editor-panel {
-  background: var(
-    --prose-bg,
-    radial-gradient(140% 90% at 50% 0%, #16273f 0%, #0e1c30 42%, #0a1525 100%)
-  );
+   * (the Default preset) it falls back to `--prose-backdrop` (index.css): a flat
+   * surface in light, a soft glow in dark. The editor's loading state paints the
+   * same (App.css). The prose surface (.tiptap-editor) is transparent so this
+   * backdrop shows through. */
+  background: var(--prose-bg, var(--prose-backdrop));
 }
 
 .document-editor-panel-collapse {
