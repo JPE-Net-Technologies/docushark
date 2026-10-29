@@ -15,7 +15,13 @@ export type ResolvedTheme = 'light' | 'dark';
  * Theme colors for the canvas renderer.
  */
 export interface ThemeColors {
+  /** The canvas on screen. */
   backgroundColor: string;
+  /**
+   * Behind a diagram in an export. Kept apart from the screen colour: the
+   * light canvas is a warm paper tone (DSK-204), and a PDF page is white.
+   */
+  exportBackgroundColor: string;
   gridColor: string;
   majorGridColor: string;
   originColor: string;
@@ -28,10 +34,14 @@ export interface ThemeColors {
  * Light theme colors.
  */
 const LIGHT_COLORS: ThemeColors = {
-  backgroundColor: '#ffffff',
-  gridColor: '#e0e0e0',
-  majorGridColor: '#c0c0c0',
-  originColor: '#808080',
+  // The app's soft warm white (`--bg-primary` in index.css; a test pins the
+  // two together). A pure white canvas in warm chrome was the light theme's
+  // glare (DSK-204); the grid is warmed to match.
+  backgroundColor: '#f9f6ee',
+  exportBackgroundColor: '#ffffff',
+  gridColor: '#e7e1d4',
+  majorGridColor: '#d3ccbc',
+  originColor: '#a39b8a',
   selectionColor: '#2196f3',
   handleFillColor: '#ffffff',
   handleStrokeColor: '#2196f3',
@@ -42,6 +52,7 @@ const LIGHT_COLORS: ThemeColors = {
  */
 const DARK_COLORS: ThemeColors = {
   backgroundColor: '#1e1e1e',
+  exportBackgroundColor: '#1e1e1e',
   gridColor: '#2d2d2d',
   majorGridColor: '#3d3d3d',
   originColor: '#505050',
