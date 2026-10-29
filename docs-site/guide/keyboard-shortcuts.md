@@ -12,6 +12,7 @@ Most things in DocuShark have a shortcut. If you ever forget one, you don't need
 | Action | Shortcut |
 |--------|----------|
 | Command palette | `Ctrl+K` / `Cmd+K` |
+| Save now (DocuShark also saves as you work) | `Ctrl+S` / `Cmd+S` |
 | Search your library (Documents home) | `/` or `Ctrl+K` |
 | Select tool | `V` |
 | Connector tool | `C` |
