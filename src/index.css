@@ -41,6 +41,9 @@
   --bg-primary: #f9f6ee;          /* surface — cards, panels, inputs (soft warm white) */
   --bg-secondary: #f6f4ec;        /* page background — warm paper */
   --bg-tertiary: #efece1;         /* sunken / alt section */
+  /* The prose editor's default backdrop (a Prose background preset, --prose-bg,
+     overrides it). Here so the editor's loading state can paint it too. */
+  --prose-backdrop: var(--bg-primary);
   --bg-hover: rgba(14, 28, 48, 0.06);
   --bg-active: rgba(31, 51, 84, 0.10);
 
@@ -212,6 +215,9 @@
   --bg-primary: #0e1c30;          /* surface — cards, panels, inputs */
   --bg-secondary: #0a1525;        /* page / sunken sections */
   --bg-tertiary: #16273f;         /* raised / hover surface */
+  /* The prose editor's default backdrop: a soft top-center glow that settles
+     into the page navy, depth without an aggressive blue block. */
+  --prose-backdrop: radial-gradient(140% 90% at 50% 0%, #16273f 0%, #0e1c30 42%, #0a1525 100%);
   --bg-hover: rgba(214, 224, 240, 0.06);
   --bg-active: rgba(224, 198, 144, 0.14); /* gold-soft wash */
 
