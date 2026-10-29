@@ -358,9 +358,12 @@ html {
   --glass-surface: rgba(249, 246, 238, 0.72);
   --glass-border: rgba(255, 255, 255, 0.6);
 
-  /* A tile: a raised plate ON the panel, so it reads as stacked glass. */
-  --glass-tile: rgba(255, 255, 255, 0.5);
-  --glass-tile-hover: rgba(255, 255, 255, 0.78);
+  /* A tile: a raised plate ON the panel, so it reads as stacked glass. Warm
+     rather than pure white (DSK-204): white plates on the paper-toned panel
+     read as glare. The thin borders and highlights stay white — they are
+     what make it read as glass. */
+  --glass-tile: rgba(255, 251, 242, 0.5);
+  --glass-tile-hover: rgba(255, 251, 242, 0.78);
   --glass-tile-border: rgba(255, 255, 255, 0.55);
 
   /* The 1px specular line along a top-lit glass edge. */

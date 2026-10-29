@@ -271,7 +271,7 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
       const pdfBlob = await exportToPdf(
         options,
         richTextContent,
-        themeColors.backgroundColor,
+        themeColors.exportBackgroundColor,
         richTextPages,
         canvasPages
       );
@@ -312,7 +312,7 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
     diagramPosition,
     diagramScale,
     diagramUseThemeBackground,
-    themeColors.backgroundColor,
+    themeColors.exportBackgroundColor,
     richTextContent,
     currentDocumentId,
     onClose,
