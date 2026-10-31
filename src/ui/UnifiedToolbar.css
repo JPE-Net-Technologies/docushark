@@ -359,6 +359,19 @@
   border-color: var(--border-color);
 }
 
+/* Not named yet (DSK-209): muted, with a pencil that says it can be. */
+.document-name-button.is-untitled {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.document-name-button.is-untitled:hover {
+  color: var(--text-primary);
+}
+
 .document-name-input {
   padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-md);

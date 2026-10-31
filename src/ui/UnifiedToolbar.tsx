@@ -15,6 +15,7 @@ import {
   FolderOpen,
   MoreHorizontal,
   Wrench,
+  Pencil,
 } from 'lucide-react';
 import { Icon } from './icons';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
@@ -22,7 +23,8 @@ import { MobileDocumentInfo } from './mobile/MobileDocumentInfo';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
-import { usePersistenceStore } from '../store/persistenceStore';
+import { usePersistenceStore, UNTITLED_DOCUMENT_NAME } from '../store/persistenceStore';
+import { useDocumentNamingStore } from '../services/documentNaming';
 import { useRelayDocumentStore } from '../store/relayDocumentStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { useRelaySessionUsable } from '../store/connectionStore';
@@ -46,7 +48,7 @@ import './UnifiedToolbar.css';
 /**
  * Inline document name with save status.
  */
-function DocumentInfo() {
+export function DocumentInfo() {
   const currentDocumentName = usePersistenceStore((state) => state.currentDocumentName);
   const renameDocument = usePersistenceStore((state) => state.renameDocument);
   const { isDirty, status, saveNow } = useAutoSave();
@@ -62,10 +64,27 @@ function DocumentInfo() {
   const [editValue, setEditValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // An unnamed document says so, and naming it starts from a suggestion taken
+  // from its content (DSK-209).
+  const untitled = currentDocumentName === UNTITLED_DOCUMENT_NAME;
+  const suggestion = useDocumentNamingStore((s) => s.suggestion);
+  const titleEditRequest = useDocumentNamingStore((s) => s.titleEditRequest);
+
+  const prefillRef = useRef('');
   const handleStartEdit = useCallback(() => {
-    setEditValue(currentDocumentName);
+    const prefill = untitled && suggestion ? suggestion : currentDocumentName;
+    prefillRef.current = prefill;
+    setEditValue(prefill);
     setIsEditing(true);
-  }, [currentDocumentName]);
+  }, [currentDocumentName, untitled, suggestion]);
+
+  // The "Give this document a name?" prompt's Rename opens the title here.
+  const seenTitleEditRequest = useRef(titleEditRequest);
+  useEffect(() => {
+    if (titleEditRequest === seenTitleEditRequest.current) return;
+    seenTitleEditRequest.current = titleEditRequest;
+    handleStartEdit();
+  }, [titleEditRequest, handleStartEdit]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = editValue.trim();
@@ -103,12 +122,20 @@ function DocumentInfo() {
           className="document-name-input"
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
-          onBlur={handleSubmit}
+          // Leaving the field renames only if the text was edited, so opening an
+          // untitled document's title (pre-filled with a suggestion) and
+          // clicking away doesn't name it; Enter accepts the suggestion.
+          onBlur={() => (editValue.trim() !== prefillRef.current.trim() ? handleSubmit() : handleCancel())}
           onKeyDown={handleKeyDown}
         />
       ) : (
-        <button className="document-name-button" onClick={handleStartEdit} title="Click to rename">
+        <button
+          className={`document-name-button${untitled ? ' is-untitled' : ''}`}
+          onClick={handleStartEdit}
+          title={untitled ? 'Name this document' : 'Click to rename'}
+        >
           {currentDocumentName}
+          {untitled && <Icon icon={Pencil} size={12} aria-hidden="true" />}
         </button>
       )}
       {/* A button, so the keyboard reaches it too (DSK-203); it saves at once,
