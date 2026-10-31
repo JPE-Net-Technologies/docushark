@@ -342,7 +342,8 @@ current.
   the shared write bucket (`[tenancy.limits] writes_per_sec`/`writes_burst`,
   shared with WS sync); read-only tools draw from a **separate** bucket
   (`reads_per_sec`/`reads_burst`, `0` = unlimited). Over the bucket → HTTP `429`
-  with `ERR_RATE_LIMIT`. Tunable via `RELAY_*` env on Cloud pods.
+  with `ERR_RATE_LIMIT`. Both buckets are set under `[tenancy.limits]` in
+  `relay.toml`; no `RELAY_*` environment variable overrides them.
 - **Tool annotations and server instructions.** Every tool in `tools/list`
   carries MCP annotations: `readOnlyHint` and `openWorldHint` on all tools, plus
   `destructiveHint` and `idempotentHint` on tools that write. A client can use

@@ -45,7 +45,8 @@ use tower_http::cors::{Any, CorsLayer};
 use blobs::{BlobStore, SaveBlobError};
 use documents::{DocumentStore, MirrorOp};
 use governor::{
-    clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter,
+    clock::MonotonicClock, middleware::NoOpMiddleware, state::keyed::DefaultKeyedStateStore,
+    Quota, RateLimiter,
 };
 use std::num::NonZeroU32;
 use protocol::*;
@@ -61,8 +62,18 @@ pub(crate) use blob_backend::S3Backend;
 
 /// Per-workspace token-bucket limiter shared between WS sync handlers
 /// and MCP write tools. Phase 21.3.
-pub type WorkspaceWriteLimiter =
-    RateLimiter<WorkspaceId, DefaultKeyedStateStore<WorkspaceId>, DefaultClock>;
+///
+/// DSK-210: it runs on `MonotonicClock` (`std::time::Instant`), not governor's
+/// default `QuantaClock`. Quanta reads the raw TSC, which some hosts reset to
+/// zero on resume from suspend; the limiter's clock then falls back, and every
+/// workspace written before the suspend is refused all writes until the new
+/// uptime catches up. The OS monotonic clock never goes backwards.
+pub type WorkspaceWriteLimiter = RateLimiter<
+    WorkspaceId,
+    DefaultKeyedStateStore<WorkspaceId>,
+    MonotonicClock,
+    NoOpMiddleware<std::time::Instant>,
+>;
 
 /// Build the S3/R2 byte store from `[storage]` config. Returns `None` for the
 /// filesystem backend; logs and returns `None` if `backend = "s3"` but the
@@ -262,7 +273,7 @@ pub fn build_workspace_limiter(
     let per_sec = NonZeroU32::new(per_sec).unwrap_or_else(|| NonZeroU32::new(1).unwrap());
     let burst = NonZeroU32::new(burst).unwrap_or(per_sec);
     let quota = Quota::per_second(per_sec).allow_burst(burst);
-    RateLimiter::dashmap(quota)
+    RateLimiter::dashmap_with_clock(quota, MonotonicClock::default())
 }
 
 /// Network access mode for the server
@@ -3742,14 +3753,13 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
             .unwrap_or_else(|| (None, WorkspaceId::single_tenant(), None, None))
     };
 
-    if state.write_limiter().check_key(&workspace_id).is_err() {
-        state.record_rate_limit_rejection();
-        log::debug!(
-            "ws sync frame rate-limited client_id={} workspace_id={}",
-            client_id,
-            workspace_id.as_str()
-        );
-        send_rate_limit_error(client_id, state).await;
+    // DSK-210: a state request (SyncStep1, sub-type 0) is a read that the
+    // authoritative Y.Doc answers, so it doesn't draw from the write bucket: a
+    // write burst in the workspace can't stop an editor syncing. Every other
+    // frame does, and so does a state request that ends up forwarded opaquely
+    // to peers below.
+    let state_request = data.len() > 1 && data[1] == 0;
+    if !state_request && !admit_write(client_id, &workspace_id, state).await {
         return;
     }
 
@@ -3845,7 +3855,12 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
                 // The frame didn't decode as a Yjs sync message. Valid clients
                 // never hit this; to stay backwards-compatible (and preserve
                 // the workspace-scoped routing for any non-standard frame) we
-                // fall back to opaque forwarding rather than dropping it.
+                // fall back to opaque forwarding rather than dropping it. A
+                // forwarded frame is a write to peers, even one shaped like a
+                // state request (DSK-210).
+                if state_request && !admit_write(client_id, &workspace_id, state).await {
+                    return;
+                }
                 log::warn!(
                     "sync decode/apply failed (doc {} ws {}): {:?} — forwarding opaque",
                     doc_id.as_str(),
@@ -3858,9 +3873,28 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
         // No authoritative Y.Doc available — fall back to opaque forwarding so
         // the frame isn't silently dropped.
         None => {
+            if state_request && !admit_write(client_id, &workspace_id, state).await {
+                return;
+            }
             state.broadcast_to_doc(&workspace_id, &doc_id, data.to_vec(), Some(client_id));
         }
     }
+}
+
+/// Draw one write from the workspace's bucket. When it's empty the frame is
+/// dropped: count the rejection and tell the sender (ERR_RATE_LIMIT).
+async fn admit_write(client_id: u64, workspace_id: &WorkspaceId, state: &Arc<ServerState>) -> bool {
+    if state.write_limiter().check_key(workspace_id).is_ok() {
+        return true;
+    }
+    state.record_rate_limit_rejection();
+    log::debug!(
+        "ws sync frame rate-limited client_id={} workspace_id={}",
+        client_id,
+        workspace_id.as_str()
+    );
+    send_rate_limit_error(client_id, state).await;
+    false
 }
 
 /// Send an `ERROR` frame to a single client indicating their last
@@ -4584,6 +4618,118 @@ mod tests {
                 .map(|d| d.as_str().to_string())
         };
         assert_eq!(cur.as_deref(), Some("real-doc"));
+    }
+
+    /// DSK-210: a client joined to a relay doc in a workspace whose bucket holds
+    /// one write, with the join's own frames already drained from `rx`.
+    async fn joined_with_one_write() -> (Arc<ServerState>, u64, mpsc::Receiver<Vec<u8>>) {
+        let mut tenancy = TenancyConfig::default();
+        tenancy.limits.writes_per_sec = 1;
+        tenancy.limits.writes_burst = 1;
+        let state = test_server_state(tenancy).await;
+        let ws = WorkspaceId::single_tenant();
+        let doc = serde_json::json!({
+            "id": "busy-doc",
+            "name": "Busy",
+            "pageOrder": ["p1"],
+            "pages": {},
+            "createdAt": 1u64,
+            "modifiedAt": 1u64,
+        });
+        state.doc_store.save_document(&ws, doc).expect("save");
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let client_id = state.next_client_id();
+        state.clients.write().await.insert(
+            client_id,
+            ClientState {
+                id: client_id,
+                user_id: Some("user-1".to_string()),
+                username: None,
+                role: Some(WorkspaceRole::Member),
+                current_doc_id: None,
+                current_workspace_id: ws,
+                authenticated: true,
+                jti: None,
+                token_exp: None,
+                tx,
+                reassembly: chunk::ChunkReassembler::default(),
+            },
+        );
+        let req = JoinDocRequest {
+            doc_id: DocId::from_http_path("busy-doc".to_string()).unwrap(),
+        };
+        handle_join_doc(client_id, &encode_message(MESSAGE_JOIN_DOC, &req).unwrap(), &state).await;
+        while rx.try_recv().is_ok() {}
+        (state, client_id, rx)
+    }
+
+    fn is_rate_limit_error(frame: &[u8]) -> bool {
+        frame[0] == MESSAGE_ERROR && String::from_utf8_lossy(&frame[1..]).contains("ERR_RATE_LIMIT")
+    }
+
+    /// DSK-210: a state request (SyncStep1) is answered even when the workspace's
+    /// write bucket is empty; a write is still refused.
+    #[tokio::test]
+    async fn state_request_is_answered_when_the_write_bucket_is_empty() {
+        let (state, client_id, mut rx) = joined_with_one_write().await;
+        assert!(state.write_limiter().check_key(&WorkspaceId::single_tenant()).is_ok());
+        let rejections = state.rate_limit_rejections();
+
+        // SyncStep1 with an empty state vector.
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+        let reply = rx.try_recv().expect("a reply");
+        assert_eq!((reply[0], reply[1]), (MESSAGE_SYNC, 1), "SyncStep2, not an error");
+        assert_eq!(state.rate_limit_rejections(), rejections);
+
+        // An update (empty, v1) still draws from the bucket.
+        handle_sync(client_id, &[MESSAGE_SYNC, 2, 2, 0, 0], &state).await;
+        assert!(is_rate_limit_error(&rx.try_recv().expect("an error frame")));
+        assert_eq!(state.rate_limit_rejections(), rejections + 1);
+    }
+
+    /// DSK-210: a frame shaped like a state request that doesn't decode is
+    /// forwarded opaquely to peers, so it is metered like any other write.
+    #[tokio::test]
+    async fn malformed_state_request_still_draws_from_the_bucket() {
+        let (state, client_id, mut rx) = joined_with_one_write().await;
+        assert!(state.write_limiter().check_key(&WorkspaceId::single_tenant()).is_ok());
+
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 0xff, 0xff, 0xff], &state).await;
+        assert!(is_rate_limit_error(&rx.try_recv().expect("an error frame")));
+    }
+
+    /// DSK-210: with no authoritative Y.Doc to answer it, a state request is
+    /// forwarded opaquely to peers, so it is metered too.
+    #[tokio::test]
+    async fn state_request_without_an_authoritative_doc_is_metered() {
+        let (state, client_id, mut rx) = joined_with_one_write().await;
+        if let Some(client) = state.clients.write().await.get_mut(&client_id) {
+            client.current_doc_id = Some(DocId::from_http_path("missing-doc".to_string()).unwrap());
+        }
+        assert!(state.write_limiter().check_key(&WorkspaceId::single_tenant()).is_ok());
+
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+        assert!(is_rate_limit_error(&rx.try_recv().expect("an error frame")));
+    }
+
+    /// DSK-210: pin the limiter's clock. A TSC-backed clock (governor's default
+    /// `QuantaClock`) falls back on hosts that reset the TSC on resume, stalling
+    /// every workspace written before a suspend. This fails to compile if the
+    /// limiter moves off `MonotonicClock`.
+    #[test]
+    fn workspace_limiter_runs_on_the_monotonic_clock() {
+        fn pin(
+            limiter: WorkspaceWriteLimiter,
+        ) -> RateLimiter<
+            WorkspaceId,
+            DefaultKeyedStateStore<WorkspaceId>,
+            MonotonicClock,
+            NoOpMiddleware<std::time::Instant>,
+        > {
+            limiter
+        }
+        let _ = pin(build_workspace_limiter(40, 80));
     }
 
     /// JP-370: with private-doc enforcement on, a workspace member who is

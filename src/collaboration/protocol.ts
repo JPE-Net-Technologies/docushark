@@ -171,6 +171,18 @@ export function isDeletedDocError(error: string): boolean {
 }
 
 /**
+ * Sent by the relay when a SYNC frame is over the workspace's write quota. The
+ * frame is dropped and the connection stays open; the client must back off and
+ * re-sync, or the dropped frame never reaches the relay (DSK-210).
+ */
+export const ERR_RATE_LIMIT = 'ERR_RATE_LIMIT';
+
+/** True for a dropped, over-quota SYNC frame (see {@link ERR_RATE_LIMIT}). */
+export function isRateLimitError(error: string): boolean {
+  return hasErrorCode(error, ERR_RATE_LIMIT);
+}
+
+/**
  * True ONLY for a view/read denial (JP-370 private-doc enforcement on JOIN_DOC):
  * the caller may not read this document. Deliberately narrower than
  * {@link isPermissionError} — a transient {@link ERR_NOT_AUTHENTICATED} (token

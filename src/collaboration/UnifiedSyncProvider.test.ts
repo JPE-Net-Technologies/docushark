@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as Y from 'yjs';
+import * as syncProtocol from 'y-protocols/sync';
+import * as encoding from 'lib0/encoding';
 import { UnifiedSyncProvider, type UnifiedSyncProviderOptions } from './UnifiedSyncProvider';
 import {
   MESSAGE_AUTH,
@@ -748,6 +750,109 @@ describe('UnifiedSyncProvider', () => {
       );
 
       expect(provider.getStatus()).toBe('connected');
+    });
+  });
+
+  describe('Dropped sync frames (DSK-210)', () => {
+    const rateLimited = () =>
+      encodeMessage(MESSAGE_ERROR, { error: 'ERR_RATE_LIMIT' } satisfies ErrorResponse);
+    const relayState = () => {
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, MESSAGE_SYNC);
+      syncProtocol.writeSyncStep2(encoder, new Y.Doc());
+      return encoding.toUint8Array(encoder);
+    };
+    const sent = () => mockWebSocket?.sentMessages ?? [];
+    const joins = () => sent().filter((m) => decodeMessageType(m) === MESSAGE_JOIN_DOC).length;
+    const stateRequests = () => sent().filter((m) => m[0] === MESSAGE_SYNC && m[1] === 0).length;
+
+    function openOn(docId: string, overrides: Partial<UnifiedSyncProviderOptions> = {}): void {
+      provider = createProvider({ documentId: docId, onError: vi.fn(), ...overrides });
+      provider.connect();
+      mockWebSocket?.simulateOpen();
+      mockWebSocket?.clearSentMessages();
+    }
+
+    it('re-joins and re-requests state after a rate-limited handshake, then syncs', () => {
+      openOn('doc-A');
+      mockWebSocket?.simulateMessage(rateLimited());
+
+      vi.advanceTimersByTime(499);
+      expect(joins()).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(joins()).toBe(1);
+      expect(stateRequests()).toBe(1);
+
+      mockWebSocket?.simulateMessage(relayState());
+      expect(provider.isSynced()).toBe(true);
+      expect(onSynced).toHaveBeenCalledTimes(1);
+    });
+
+    it('backs off while frames keep being dropped, one retry at a time, and starts over after a quiet spell', () => {
+      openOn('doc-A');
+      mockWebSocket?.simulateMessage(rateLimited());
+      mockWebSocket?.simulateMessage(rateLimited()); // joins the pending retry
+      vi.advanceTimersByTime(500);
+      expect(joins()).toBe(1);
+
+      mockWebSocket?.simulateMessage(rateLimited());
+      vi.advanceTimersByTime(999);
+      expect(joins()).toBe(1);
+      vi.advanceTimersByTime(1);
+      expect(joins()).toBe(2);
+
+      mockWebSocket?.simulateMessage(relayState());
+      vi.advanceTimersByTime(31000);
+      mockWebSocket?.simulateMessage(rateLimited());
+      vi.advanceTimersByTime(500);
+      expect(joins()).toBe(3);
+    });
+
+    it('stops retrying once the relay refuses the join', () => {
+      openOn('doc-A');
+      mockWebSocket?.simulateMessage(rateLimited());
+      mockWebSocket?.simulateMessage(encodeMessage(MESSAGE_ERROR, { error: 'ERR_DELETED' }));
+      vi.advanceTimersByTime(60000);
+      expect(joins()).toBe(0);
+    });
+
+    it('retries a handshake the relay never answers, and keeps watching the retry', () => {
+      openOn('doc-A');
+      vi.advanceTimersByTime(10000 + 499);
+      expect(joins()).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(joins()).toBe(1);
+      expect(stateRequests()).toBe(1);
+
+      // The retry goes unanswered too: watched again, then retried after a longer backoff.
+      vi.advanceTimersByTime(10000 + 1000);
+      expect(joins()).toBe(2);
+    });
+
+    it('leaves an answered handshake alone', () => {
+      openOn('doc-A');
+      mockWebSocket?.simulateMessage(relayState());
+      vi.advanceTimersByTime(60000);
+      expect(joins()).toBe(0);
+    });
+
+    it("doesn't retry a document the relay doesn't host", () => {
+      openOn('local-doc', { shouldJoinDocument: () => false });
+      mockWebSocket?.simulateMessage(rateLimited());
+      vi.advanceTimersByTime(60000);
+      expect(joins()).toBe(0);
+      expect(stateRequests()).toBe(0);
+    });
+
+    it("doesn't carry a pending retry onto the next connection", () => {
+      openOn('doc-A');
+      mockWebSocket?.simulateMessage(rateLimited());
+      mockWebSocket?.simulateClose();
+      provider.connect();
+      mockWebSocket?.simulateOpen(); // the new connection joins on its own
+      mockWebSocket?.clearSentMessages();
+      vi.advanceTimersByTime(500);
+      expect(joins()).toBe(0);
     });
   });
 
