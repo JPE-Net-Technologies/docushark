@@ -119,14 +119,18 @@ function isOwnEdit(transaction: Transaction): boolean {
 
 function nameFromHeading(name: string): void {
   usePersistenceStore.getState().renameDocument(name);
+  // The id after the rename: naming a new local document saves it, giving it one.
+  const docId = currentDocId();
   useNotificationStore.getState().success(`Named “${name}” from its heading.`, {
     // Long enough to notice an automatic rename and take it back.
     duration: 10000,
     actionLabel: 'Undo',
     onAction: () => {
-      const docId = currentDocId();
       if (docId) namingMemory.markDeclined(docId);
-      usePersistenceStore.getState().renameDocument(UNTITLED_DOCUMENT_NAME);
+      // Only that document, and only the name it was given: another document
+      // opened since, or a name typed since, is left alone.
+      const now = usePersistenceStore.getState();
+      if (now.currentDocumentId === docId && now.currentDocumentName === name) now.renameDocument(UNTITLED_DOCUMENT_NAME);
     },
   });
 }
@@ -138,7 +142,10 @@ function promptForName(editor: Editor): void {
   namingMemory.markPrompted(docId);
   useNotificationStore.getState().info('Give this document a name?', {
     actionLabel: 'Rename',
-    onAction: () => useDocumentNamingStore.getState().requestTitleEdit(),
+    // The title of this document, not one opened since.
+    onAction: () => {
+      if (currentDocId() === docId) useDocumentNamingStore.getState().requestTitleEdit();
+    },
     duration: 10000,
   });
 }

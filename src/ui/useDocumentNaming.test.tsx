@@ -57,6 +57,24 @@ describe('naming a document from a leading heading (DSK-209)', () => {
     expect(name()).toBe(UNTITLED_DOCUMENT_NAME);
   });
 
+  it("lets Undo touch only that document's automatic name", () => {
+    open();
+    editor.commands.insertContent('<h1>Quarterly Report</h1>');
+    editor.commands.splitBlock();
+    const undo = toasts()[0]!.onAction!;
+
+    // Renamed by hand since: Undo leaves it.
+    usePersistenceStore.setState({ currentDocumentName: 'Q3 report (final)' });
+    undo();
+    expect(name()).toBe('Q3 report (final)');
+
+    // Another document open since: Undo leaves that one too.
+    usePersistenceStore.setState({ currentDocumentId: 'doc-2', currentDocumentName: 'Quarterly Report' });
+    undo();
+    expect(name()).toBe('Quarterly Report');
+    expect(rename).toHaveBeenCalledTimes(1);
+  });
+
   it('names it at once when the heading arrives by paste', () => {
     open();
     editor.commands.focus();
@@ -109,6 +127,12 @@ describe('prompting for a name (DSK-209)', () => {
     const before = useDocumentNamingStore.getState().titleEditRequest;
     toasts()[0]!.onAction!();
     expect(useDocumentNamingStore.getState().titleEditRequest).toBe(before + 1);
+
+    // From another document, Rename opens nothing.
+    usePersistenceStore.setState({ currentDocumentId: 'doc-9' });
+    toasts()[0]!.onAction!();
+    expect(useDocumentNamingStore.getState().titleEditRequest).toBe(before + 1);
+    usePersistenceStore.setState({ currentDocumentId: 'doc-1' });
 
     editor.commands.insertContent(' and more words');
     vi.advanceTimersByTime(PROMPT_AFTER_PAUSE_MS * 2);
