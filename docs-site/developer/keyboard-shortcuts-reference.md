@@ -88,4 +88,5 @@ When editing text in the Document Editor:
 | Italic | `Ctrl+I` / `Cmd+I` |
 | Underline | `Ctrl+U` / `Cmd+U` |
 | Inline code | `Ctrl+E` / `Cmd+E` |
+| Paste without formatting | `Ctrl+Shift+V` / `Cmd+Shift+V` |
 | Finish editing | `Escape` |

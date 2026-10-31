@@ -964,3 +964,14 @@
     transition: none;
   }
 }
+
+/* Where pasted image files will land while they're stored (DSK-208): a
+   decoration, never document content. */
+.prose-paste-placeholder {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}

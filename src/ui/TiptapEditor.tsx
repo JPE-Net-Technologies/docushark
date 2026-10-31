@@ -52,9 +52,17 @@ import { CodeBlock } from '../tiptap/CodeBlockExtension';
 import { Figure, Figcaption } from '../tiptap/FigureExtension';
 import { Gallery } from '../tiptap/GalleryExtension';
 import type { EditorView } from '@tiptap/pm/view';
+import type { Slice } from '@tiptap/pm/model';
 import { device } from '../platform/device';
 import { handleProseFileDrop } from '../tiptap/proseDropGuard';
-import { handleCitationDoiPaste } from '../tiptap/citationPaste';
+import {
+  handleProseImageDrop,
+  handleProsePaste,
+  notePlainPasteShortcut,
+  transformPastedProseHtml,
+} from '../tiptap/clipboard/prosePaste';
+import { upgradeCopiedImages } from '../tiptap/clipboard/proseCopy';
+import { PastePlaceholder } from '../tiptap/clipboard/PastePlaceholder';
 import { isProjectionTransaction } from '../tiptap/proseProjection';
 import { CodeBlockKeymap } from '../tiptap/CodeBlockKeymap';
 import { SpellcheckExtension } from '../tiptap/SpellcheckExtension';
@@ -271,6 +279,9 @@ export const sharedProseExtensions = [
   // fill (JP-416 item 1). No nodes/marks, so the shared schema + collab are
   // unaffected; inert outside a CellSelection.
   TableSelection,
+  // Holds the place of pasted image files while they're stored (DSK-208). A
+  // decoration, so the shared schema + collab are unaffected.
+  PastePlaceholder,
 ];
 
 /**
@@ -309,11 +320,34 @@ export const sharedProseEditorProps = {
   attributes: {
     class: 'tiptap-prose',
   },
-  // Paste a bare DOI → resolve + add to the library + insert a citation.
-  handlePaste: (view: EditorView, event: ClipboardEvent) => handleCitationDoiPaste(view, event),
+  // Paste (DSK-208): Word and Google Docs markup tidied before the parse, a paste
+  // whose images need storing held until they're stored, image files (a
+  // screenshot) inserted, and a bare DOI resolved into a citation. See
+  // `tiptap/clipboard/prosePaste.ts`.
+  transformPastedHTML: (html: string, view: EditorView) => transformPastedProseHtml(html, view),
+  handlePaste: (view: EditorView, event: ClipboardEvent, slice: Slice) => handleProsePaste(view, event, slice),
+  // Copy and cut keep the editor's own clipboard data, then follow it with a
+  // copy whose stored images other apps can load. Mod+Shift+V marks the next
+  // paste as plain text (DSK-208).
+  handleDOMEvents: {
+    keydown: (view: EditorView, event: KeyboardEvent) => {
+      notePlainPasteShortcut(view, event);
+      return false;
+    },
+    copy: (view: EditorView) => {
+      upgradeCopiedImages(view);
+      return false;
+    },
+    cut: (view: EditorView) => {
+      upgradeCopiedImages(view);
+      return false;
+    },
+  },
   // Swallow file drops — the browser's default is to navigate away to the
-  // dropped file, discarding unsaved editor state (JP-495).
-  handleDrop: (view: EditorView, event: Event) => handleProseFileDrop(view, event as DragEvent),
+  // dropped file, discarding unsaved editor state (JP-495). Content dropped from
+  // outside has its images stored, as a paste does (DSK-208).
+  handleDrop: (view: EditorView, event: Event, slice: Slice, moved: boolean) =>
+    handleProseFileDrop(view, event as DragEvent) || handleProseImageDrop(view, event as DragEvent, slice, moved),
   // Keep a touch selection's handles clear of the bottom bar (DSK-197). The
   // pointer type is read once, at load.
   ...proseScrollProps(device.isTouch()),
