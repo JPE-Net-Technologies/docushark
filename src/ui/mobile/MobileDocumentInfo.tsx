@@ -12,7 +12,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Icon } from '../icons';
-import { usePersistenceStore } from '../../store/persistenceStore';
+import { usePersistenceStore, UNTITLED_DOCUMENT_NAME } from '../../store/persistenceStore';
+import { useDocumentNamingStore } from '../../services/documentNaming';
 import { useAutoSave } from '../../hooks/useAutoSave';
 import './MobileDocumentInfo.css';
 
@@ -25,15 +26,40 @@ export function MobileDocumentInfo() {
   const [name, setName] = useState(currentDocumentName);
   const wrapRef = useRef<HTMLDivElement>(null);
 
+  // An unnamed document opens with a name suggested from its content (DSK-209).
+  // Enter accepts the suggestion; closing renames only if the text was edited.
+  const untitled = currentDocumentName === UNTITLED_DOCUMENT_NAME;
+  const suggestion = useDocumentNamingStore((s) => s.suggestion);
+  const titleEditRequest = useDocumentNamingStore((s) => s.titleEditRequest);
+  const prefillRef = useRef(currentDocumentName);
+  const openWithPrefill = useCallback(() => {
+    const prefill = untitled && suggestion ? suggestion : currentDocumentName;
+    prefillRef.current = prefill;
+    setName(prefill);
+    setOpen(true);
+  }, [untitled, suggestion, currentDocumentName]);
+
+  // The "Give this document a name?" prompt's Rename opens the chip here.
+  const seenTitleEditRequest = useRef(titleEditRequest);
+  useEffect(() => {
+    if (titleEditRequest === seenTitleEditRequest.current) return;
+    seenTitleEditRequest.current = titleEditRequest;
+    openWithPrefill();
+  }, [titleEditRequest, openWithPrefill]);
+
   // Keep the field in sync with external renames while the popover is closed.
   useEffect(() => {
     if (!open) setName(currentDocumentName);
   }, [currentDocumentName, open]);
 
-  const commit = useCallback(() => {
-    const trimmed = name.trim();
-    if (trimmed && trimmed !== currentDocumentName) renameDocument(trimmed);
-  }, [name, currentDocumentName, renameDocument]);
+  const commit = useCallback(
+    (accept = false) => {
+      const trimmed = name.trim();
+      const edited = trimmed !== prefillRef.current.trim();
+      if (trimmed && trimmed !== currentDocumentName && (accept || edited)) renameDocument(trimmed);
+    },
+    [name, currentDocumentName, renameDocument],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -68,9 +94,9 @@ export function MobileDocumentInfo() {
           all. Tapping it opens the same rename and status popover. */}
       <button
         type="button"
-        className={`mobile-doc-info-btn${isDirty ? ' is-dirty' : ''}`}
-        onClick={() => setOpen((v) => !v)}
-        title={currentDocumentName}
+        className={`mobile-doc-info-btn${isDirty ? ' is-dirty' : ''}${untitled ? ' is-untitled' : ''}`}
+        onClick={() => (open ? setOpen(false) : openWithPrefill())}
+        title={untitled ? 'Name this document' : currentDocumentName}
         aria-label={`Document: ${currentDocumentName}. ${statusLabel}.`}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -90,7 +116,7 @@ export function MobileDocumentInfo() {
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  commit();
+                  commit(true);
                   setOpen(false);
                 }
               }}

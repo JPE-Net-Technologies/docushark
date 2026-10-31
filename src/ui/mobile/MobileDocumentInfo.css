@@ -131,3 +131,9 @@
     font-size: 16px;
   }
 }
+
+/* Not named yet (DSK-209): muted, like the desktop title. */
+.mobile-doc-info-btn.is-untitled .mobile-doc-info-name {
+  color: var(--text-muted);
+  font-style: italic;
+}

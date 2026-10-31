@@ -13,7 +13,7 @@ Let's create your first diagram. This should take about five minutes.
 
 2. **Create a new document** — Click the gold **New** button in the top-right. The document opens immediately. When you're signed in to a workspace, it's created there and syncs right away; otherwise it's a local document on this device. The arrow beside **New** lets you choose explicitly: **New workspace document** or **New local document**.
 
-3. **Name your document** — Click its name (“Untitled Document”) in the toolbar and type a new one.
+3. **Name your document** — Start with a heading and DocuShark names the document after it once you move on; **Undo** in the message keeps it untitled. Without a heading, a message offers to name it after you've written a few words, suggesting your first line. You can always click the name in the toolbar (“Untitled Document” until it has one) and type a new one. A name you choose yourself is never changed.
 
 Your document opens with an infinite canvas ready for drawing. To get back to your library at any time, click **Documents** in the top-left.
 
