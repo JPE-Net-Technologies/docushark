@@ -75,9 +75,12 @@ describe('prose editorProps parity', () => {
       'sharedProseEditorProps is not exported from TiptapEditor.tsx',
     ).toBeGreaterThan(0);
 
-    for (const key of ['attributes', 'handlePaste', 'handleDrop']) {
+    // The object literal itself, so a long comment can't push a key out of view.
+    const literal = definition.slice(0, definition.indexOf('} as const'));
+    const keys = ['attributes', 'handlePaste', 'handleDrop', 'transformPastedHTML', 'handleDOMEvents'];
+    for (const key of keys) {
       expect(
-        definition.slice(0, 800).includes(key),
+        new RegExp(`\\b${key}:`).test(literal),
         `sharedProseEditorProps no longer defines '${key}' — either both editors just lost it, ` +
           `or it moved and this guard needs updating`,
       ).toBe(true);
