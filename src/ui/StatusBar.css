@@ -30,10 +30,6 @@
   min-width: 120px;
 }
 
-.status-bar-center {
-  flex: 0 0 auto;
-}
-
 .status-bar-right {
   min-width: 120px;
   justify-content: flex-end;
@@ -55,12 +51,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-}
-
-/* Tool Display */
-.status-bar-tool {
-  color: var(--color-primary, var(--color-primary));
-  font-weight: var(--font-weight-medium);
 }
 
 /* Drill-down Badge */
@@ -157,39 +147,6 @@
   margin: 0 var(--space-1);
 }
 
-/* Zoom Controls */
-.status-bar-zoom-btn {
-  width: 20px;
-  height: 18px;
-  padding: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.status-bar-zoom-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--color-primary, var(--color-primary));
-}
-
-.status-bar-zoom-btn:active {
-  background: var(--color-cta);
-  color: var(--color-cta-text);
-}
-
-.status-bar-zoom-value {
-  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
-  color: var(--text-primary);
-  min-width: 36px;
-  text-align: center;
-}
-
 /* Buttons */
 .status-bar-btn {
   padding: var(--space-0-5) var(--space-1-5);
@@ -213,15 +170,6 @@
 [data-theme="dark"] .status-bar {
   background: var(--bg-secondary);
   border-top-color: var(--border-color);
-}
-
-[data-theme="dark"] .status-bar-zoom-btn {
-  background: var(--bg-tertiary);
-  border-color: var(--border-color);
-}
-
-[data-theme="dark"] .status-bar-zoom-btn:hover {
-  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .status-bar-btn {
@@ -282,11 +230,6 @@
 
   /* 44px is the touch-target size already adopted for the Relaxed focus
      segments; matching it keeps one answer in the codebase rather than two. */
-  .status-bar-zoom-btn {
-    min-width: 44px;
-    min-height: 44px;
-  }
-
   .status-bar-btn {
     min-width: 44px;
     min-height: 44px;
@@ -294,7 +237,6 @@
   }
 
   /* Text scaled for a 24px strip is too small to read at arm's length. */
-  .status-bar-zoom-value,
   .status-bar-value {
     font-size: var(--font-size-sm);
   }

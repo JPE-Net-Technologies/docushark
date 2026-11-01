@@ -1,0 +1,75 @@
+/* The canvas's own zoom controls (DSK-211): bottom-right of the canvas, with the
+   minimap stacked above them. */
+.canvas-zoom-pill {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-md);
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.canvas-zoom-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.canvas-zoom-pill-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.canvas-zoom-pill-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.canvas-zoom-pill-btn.is-active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+/* Wide enough for "400%" so the pill doesn't jump as the zoom changes. */
+.canvas-zoom-pill-percent {
+  min-width: 48px;
+}
+
+.canvas-zoom-pill-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border-color);
+}
+
+/* Finger-sized targets on touch: 44px, the size StatusBar.css and the Relaxed
+   focus segments already use. */
+@media (pointer: coarse) {
+  .canvas-zoom-pill-btn {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .canvas-zoom-pill-percent {
+    min-width: 60px;
+  }
+}

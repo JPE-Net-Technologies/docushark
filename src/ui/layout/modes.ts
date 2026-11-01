@@ -9,7 +9,7 @@
  */
 
 import type { ViewportBand } from '../../platform/device';
-import type { LayoutMode, LayoutPanelMap, PanelId, PanelState, RelaxedFocus } from './types';
+import type { EditingSurface, LayoutMode, LayoutPanelMap, PanelId, PanelState, RelaxedFocus } from './types';
 
 /**
  * Whether a layout renders unpinned panels as fly-outs. Layouts not listed
@@ -151,8 +151,39 @@ export function isCanvasHidden(
   focus: RelaxedFocus,
   band: ViewportBand
 ): boolean {
+  return !surfacesOnScreen(mode, focus, band, true).canvas;
+}
+
+/**
+ * Which editing surfaces are on screen (DSK-211), from the same inputs App
+ * renders with: the canvas shows unless prose fills the page alone, and prose
+ * shows while its panel is visible, except in Relaxed's diagram focus, which
+ * collapses it.
+ */
+export function surfacesOnScreen(
+  mode: LayoutMode,
+  focus: RelaxedFocus,
+  band: ViewportBand,
+  documentVisible: boolean
+): Record<EditingSurface, boolean> {
   const regions = resolveRegions(mode, focus, band);
-  return regions.primary === 'document' && !regions.split;
+  return {
+    canvas: !(regions.primary === 'document' && !regions.split),
+    prose: documentVisible && !(mode === 'relaxed' && regions.primary === 'canvas'),
+  };
+}
+
+/**
+ * The surface the shared chrome describes (DSK-211): the only one on screen,
+ * otherwise the one last worked in, otherwise the layout's primary region.
+ */
+export function resolveActiveSurface(
+  onScreen: Record<EditingSurface, boolean>,
+  last: EditingSurface | null,
+  primary: EditingSurface
+): EditingSurface {
+  if (onScreen.prose !== onScreen.canvas) return onScreen.prose ? 'prose' : 'canvas';
+  return last ?? primary;
 }
 
 /** Human-readable label for a layout mode (UI display). */

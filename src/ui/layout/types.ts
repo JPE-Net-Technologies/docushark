@@ -24,6 +24,13 @@ export type DockSide = 'left' | 'right';
 export type RelaxedFocus = 'write' | 'split' | 'diagram';
 
 /**
+ * The two editing surfaces (DSK-211). The shared chrome describes whichever one
+ * you're working in: the only one on screen, or the one last focused or pointed
+ * at when both are. See `resolveActiveSurface` in ui/layout/modes.ts.
+ */
+export type EditingSurface = 'prose' | 'canvas';
+
+/**
  * Per-panel state within a given layout. `dock` always holds a side (so the
  * user's preferred side survives a hide-then-show round trip); `visible`
  * drives rendering.

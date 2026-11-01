@@ -14,6 +14,7 @@ import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
 import { resetEditorHistory } from '../tiptap/resetEditorHistory';
 import { useDocumentNaming } from './useDocumentNaming';
+import { useProseStats } from './useProseStats';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { MobileProseToolbar } from './mobile/MobileProseToolbar';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
@@ -210,6 +211,7 @@ export function DocumentEditorPanel({
   const [editor, setEditor] = useState<Editor | null>(null);
   // Name a new document from its first heading, or prompt once (DSK-209).
   useDocumentNaming(editor);
+  useProseStats(editor);
   const editorRef = useRef<Editor | null>(null);
 
   // The actual scroll container is `.tiptap-editor` (overflow-y: auto). Tiptap's

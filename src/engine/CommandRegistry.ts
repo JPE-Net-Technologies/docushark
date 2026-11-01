@@ -37,8 +37,10 @@ import {
   MousePointer2,
   Network,
   PanelLeft,
+  Percent,
   Redo2,
   Save,
+  Scan,
   ScanSearch,
   Search,
   Spline,
@@ -78,6 +80,7 @@ import {
   canAutoLayoutSelection,
 } from './selectionLayout';
 import type { ShortcutCategory } from './KeyboardShortcuts';
+import { zoomTo100, zoomToFit } from './canvasZoom';
 import { LAYOUT_LABELS, LAYOUT_PRESETS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
@@ -431,6 +434,9 @@ function buildCommands(): Command[] {
     // --- View ---
     { id: 'view.zoomIn', icon: ZoomIn, label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
     { id: 'view.zoomOut', icon: ZoomOut, label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
+    // Clickable zoom (DSK-211): the canvas's zoom pill runs the same functions.
+    { id: 'view.zoomToFit', icon: Scan, label: 'Zoom to fit', category: 'Navigation', execute: zoomToFit },
+    { id: 'view.zoomTo100', icon: Percent, label: 'Zoom to 100%', category: 'Navigation', execute: zoomTo100 },
 
     // --- Clipboard + grouping (canvas scope). Copy/paste are engine-coupled
     // (clipboard + spatial index) so they bridge to the engine via an event;
