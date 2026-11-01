@@ -1,7 +1,8 @@
-/* Minimap styles */
+/* Minimap styles. Stacked above the canvas's zoom pill (CanvasZoomPill.css):
+   the pill's 36px plus an 8px gap; 52px on touch. */
 .minimap-container {
   position: absolute;
-  bottom: 16px;
+  bottom: 60px;
   right: 16px;
   z-index: 100;
   border-radius: 8px;
@@ -20,6 +21,12 @@
   display: block;
   cursor: crosshair;
   background: var(--bg-primary);
+}
+
+@media (pointer: coarse) {
+  .minimap-container {
+    bottom: 76px;
+  }
 }
 
 /* Dark mode */

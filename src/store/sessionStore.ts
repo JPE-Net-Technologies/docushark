@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useDocumentStore } from './documentStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import type { Shape } from '../shapes/Shape';
-import type { RelaxedFocus } from '../ui/layout/types';
+import type { EditingSurface, RelaxedFocus } from '../ui/layout/types';
 import type { FileDescriptor } from '../ui/fileDescriptor';
 
 /** What the file viewer is currently showing. */
@@ -180,6 +180,12 @@ export interface SessionState {
    * Relaxed layout. See `resolveRegions` in ui/layout/modes.ts.
    */
   relaxedFocus: RelaxedFocus;
+  /**
+   * The editing surface last focused or pointed at (DSK-211); null until the
+   * first interaction. Ephemeral. Only consulted while both surfaces are on
+   * screen — see `resolveActiveSurface` in ui/layout/modes.ts.
+   */
+  lastSurface: EditingSurface | null;
 }
 
 /**
@@ -258,6 +264,8 @@ export interface SessionActions {
   setRelaxedFocus: (focus: RelaxedFocus) => void;
   /** Advance the Relaxed focus write → split → diagram → write. */
   cycleRelaxedFocus: () => void;
+  /** Record the editing surface last focused or pointed at. */
+  setLastSurface: (surface: EditingSurface) => void;
 
   // Page Camera
   /** Save current camera state for a page */
@@ -320,6 +328,7 @@ const initialState: SessionState = {
   blobSyncProgress: null,
   editingGroupId: null,
   relaxedFocus: 'write',
+  lastSurface: null,
 };
 
 /**
@@ -552,6 +561,10 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
     const idx = order.indexOf(get().relaxedFocus);
     const next = order[(idx + 1) % order.length] ?? 'write';
     set({ relaxedFocus: next });
+  },
+
+  setLastSurface: (surface: EditingSurface) => {
+    if (get().lastSurface !== surface) set({ lastSurface: surface });
   },
 
 

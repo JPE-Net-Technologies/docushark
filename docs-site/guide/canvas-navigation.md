@@ -43,11 +43,11 @@ An additional option alongside the trackpad/mouse controls above — hold multip
 
 Arrow keys also pan the canvas when no shapes are selected.
 
-Click the zoom percentage in the status bar to reset to 100%, or the **Fit** button to frame all shapes in view.
+The zoom controls sit in the canvas's bottom-right corner: **−** and **+** step the zoom, clicking the percentage returns to 100%, and **Fit** frames every shape. Press and hold the percentage to see the whole diagram at once; let go and the view goes back exactly where it was. **Zoom to fit** and **Zoom to 100%** are also in the command palette.
 
 ## Minimap
 
-Enable the minimap in **Settings → Canvas** to see a bird's-eye view of your entire document. Click anywhere on the minimap to jump directly to that area.
+Show the minimap with the map button beside the zoom controls, or in **Settings → Canvas**, to see a bird's-eye view of your entire document. Click anywhere on the minimap to jump directly to that area.
 
 The minimap is especially useful for large diagrams where you need to navigate quickly between different areas.
 

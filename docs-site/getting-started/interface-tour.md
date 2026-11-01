@@ -26,7 +26,7 @@ flowchart TB
             canvas["🎨 Canvas<br/>Infinite drawing surface"]
             panels["⚙️ Side Panels<br/>Properties · Layers"]
         end
-        status["📊 Status Bar<br/>Coordinates · Zoom · Shape count · Tool"]
+        status["📊 Status Bar<br/>Words while writing · Shapes while drawing"]
     end
     toolbar --> middle --> status
 ```
@@ -87,20 +87,25 @@ Also on the right side (toggle between Property and Layer panels):
 
 ## Status Bar
 
-The bottom bar shows you:
+The bottom bar describes your document, following whichever part you're working in:
 
-- **Mouse coordinates** in world space
-- **Zoom level** (click to reset)
-- **Shape count** for the current page
-- **Active tool** name
+- **While you write:** the page's word count (with text selected, how many of
+  those words are selected) and, in a document with several pages, which page
+  you're on. Click the count for **Document stats**: words, characters,
+  paragraphs and reading time for the page, every page's word count, and the
+  canvas's pages and shapes.
+- **While you draw:** the number of shapes, how many are selected, and the
+  pointer's coordinates in world space.
 - **Connection status** when collaborating (🟢 Connected, 🟡 Reconnecting, 🔴 Offline)
 
-On a small screen or a touch device the bar reduces to what still applies there:
-the zoom controls whenever a canvas is on screen, plus connection status. Mouse
-coordinates, shape count and the tool name are left out — the first has no
-meaning without a hovering pointer, and the others cost more width than they
-earn. When you're writing with no canvas in view and there's nothing to report,
-the bar steps aside entirely and returns the space to the page. On a phone it
+With the writing and the canvas side by side, the bar follows the one you last
+clicked or typed in. The canvas's zoom controls sit on the canvas itself; see
+[Canvas & Navigation](/guide/canvas-navigation).
+
+On a small screen or a touch device the bar keeps only what still applies
+there: connection status, and notices such as working inside a group. When
+there's nothing to report, it steps aside entirely and returns the space to the
+page. On a phone it
 also steps aside while the Documents home is open: it describes the editor, not
 your library.
 

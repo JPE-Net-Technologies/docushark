@@ -50,7 +50,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 |--------|-----|
 | Pan | Middle-click + drag, or hold Space + drag |
 | Zoom | Scroll wheel (zooms toward your cursor), or `E` / `Q` |
-| Reset zoom / fit | Use the **%** and **Fit** buttons in the status bar |
+| Reset zoom / fit | Click the zoom **%** or **Fit** in the canvas's bottom-right corner |
 | WASD navigation | `W`/`A`/`S`/`D` keys pan like a game |
 
 ## Save and Export

@@ -7,6 +7,7 @@ import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { NavigatorPanel } from './NavigatorPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
+import { noteSurface } from './layout/useActiveSurface';
 import {
   isCanvasHidden,
   isFlyoutLayout,
@@ -494,7 +495,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             onOpenDocuments={handleOpenDocuments}
           />
         )}
-        <main className="app-main">
+        <main className="app-main" onPointerDownCapture={noteSurface} onFocusCapture={noteSurface}>
           {/* Document on left. In Relaxed the editor is the primary reading
               column (not a fixed sidebar); the focus switch in the toolbar
               decides whether the canvas shows alongside it. Hidden — not
