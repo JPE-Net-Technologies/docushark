@@ -56,14 +56,18 @@ import {
   familyBlock,
   isFamilyRoot,
 } from '../services/mirrorFamily';
-import { refreshMirrorPage, detachMirrorPage } from '../services/mirrorPageService';
+import { refreshMirrorPage } from '../services/mirrorPageService';
+import {
+  detachMirrorPageWithConfirm,
+  openMirrorSource,
+  refreshMirrorPageWithFeedback,
+} from '../services/mirrorPageActions';
 import { IngestSubpagesDialog } from './integrations/IngestSubpagesDialog';
 import { ProviderIcon } from './integrations/ProviderIcon';
 import { ReorderableList } from './properties/ReorderableList';
 import { DropdownMenu, menuAction, MENU_SEPARATOR, type DropdownMenuEntry } from './components/DropdownMenu';
 import { confirmDialog, promptDialog } from './confirm/confirmStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
-import { opener } from '../platform/opener';
 import './NavigatorPanel.css';
 
 /** Width of one guide column. Also the twisty's box, so a branch toggle costs
@@ -262,34 +266,22 @@ export function NavigatorPanel() {
       menuAction({
         id: 'refresh',
         label: 'Refresh from source',
-        onSelect: () => {
-          void refreshMirrorPage(pageId).catch((e: unknown) => {
-            useNotificationStore.getState().error(e instanceof Error ? e.message : 'Refresh failed.');
-          });
-        },
+        onSelect: () => void refreshMirrorPageWithFeedback(pageId),
       }),
-      menuAction({ id: 'ingest', label: 'Ingest subpages…', onSelect: () => setIngestPageId(pageId) }),
+      menuAction({ id: 'ingest', label: 'Add subpages…', onSelect: () => setIngestPageId(pageId) }),
       ...(m.url
         ? [
             menuAction({
               id: 'open-external',
               label: `Open in ${label}`,
-              onSelect: () => void opener.openExternalUrl(m.url!),
+              onSelect: () => openMirrorSource(m.url!),
             }),
           ]
         : []),
       menuAction({
         id: 'detach',
         label: `Detach from ${label}`,
-        onSelect: () => {
-          void confirmDialog({
-            title: `Detach from ${label}?`,
-            message: 'The page becomes a normal, editable page with the content as last synced.',
-            confirmLabel: 'Detach',
-          }).then((confirmed) => {
-            if (confirmed) detachMirrorPage(pageId);
-          });
-        },
+        onSelect: () => void detachMirrorPageWithConfirm(pageId, label),
       }),
     ];
   };
@@ -437,6 +429,7 @@ export function NavigatorPanel() {
           trigger={<Icon icon={MoreHorizontal} size={14} />}
           triggerTitle={`Actions for ${page.name}`}
           triggerClassName="navigator-row-menu"
+          sheetTitle={page.name}
           entries={proseMenuEntries(pageId)}
         />
       </div>
@@ -543,6 +536,7 @@ export function NavigatorPanel() {
                 trigger={<Icon icon={MoreHorizontal} size={14} />}
                 triggerTitle={`Actions for ${canvasPages[id]?.name ?? 'this page'}`}
                 triggerClassName="navigator-row-menu"
+                sheetTitle={canvasPages[id]?.name ?? 'Untitled'}
                 entries={canvasMenuEntries(id)}
               />
             </div>
@@ -559,6 +553,11 @@ export function NavigatorPanel() {
             if (!next) setRowMenu(null);
           }}
           anchorPoint={{ x: rowMenu.x, y: rowMenu.y }}
+          // On a phone a long-press opens this as a sheet, which needs a title.
+          sheetTitle={
+            (rowMenu.kind === 'prose' ? pages[rowMenu.pageId]?.name : canvasPages[rowMenu.pageId]?.name) ??
+            'Untitled'
+          }
           entries={
             rowMenu.kind === 'prose' ? proseMenuEntries(rowMenu.pageId) : canvasMenuEntries(rowMenu.pageId)
           }

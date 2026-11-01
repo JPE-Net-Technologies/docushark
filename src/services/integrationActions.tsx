@@ -46,6 +46,7 @@ import { Plug } from 'lucide-react';
 import { ProviderIcon } from '../ui/integrations/ProviderIcon';
 import { loadConnection, DEFAULT_CLOUD_BASE_URL } from '../api/relayConnection';
 import { opener } from '../platform/opener';
+import { canAddMirrorPage } from './mirrorPageService';
 
 /** Event the editor listens for to open a provider's resource picker. */
 export const OPEN_MIRROR_PICKER = 'docushark:open-mirror-picker';
@@ -77,6 +78,11 @@ function actionsForProvider({ provider }: WorkspaceProviderState): Command[] {
       // says "Notion" should look like the one beside it.
       iconNode: <ProviderIcon provider={provider.id} size={18} />,
       surfaces: ['palette', 'tools'],
+      // A mirror page lives in a workspace document's shared doc. On a local
+      // document the add could only fail, so the action isn't offered there
+      // (DSK-194); the document browser's Import > From <provider> makes a
+      // workspace document for it instead.
+      canExecute: canAddMirrorPage,
       execute: () => openMirrorPicker(provider.id),
     },
   ];
@@ -119,11 +125,17 @@ export function currentIntegrationActions(): Command[] {
   ];
 }
 
-/** Open the account site's integrations page in the user's browser. */
-export async function openAccountIntegrations(): Promise<void> {
+/**
+ * Open the account site's integrations page in the user's browser; with a
+ * provider, at that provider's card, where its consent screen can share more
+ * pages (DSK-194). The editor can't start consent itself: it needs the
+ * account site's session.
+ */
+export async function openAccountIntegrations(provider?: string): Promise<void> {
   const conn = await loadConnection();
   const base = (conn?.cloudBaseUrl ?? DEFAULT_CLOUD_BASE_URL).replace(/\/+$/, '');
-  await opener.openExternalUrl(`${base}/account/integrations`);
+  const query = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+  await opener.openExternalUrl(`${base}/account/integrations${query}`);
 }
 
 /**

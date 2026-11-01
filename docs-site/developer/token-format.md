@@ -158,7 +158,7 @@ The `[tenancy.limits]` block configures per-workspace traffic limits, enforced f
 
 | Field | Meaning |
 | -- | -- |
-| `writes_per_sec` | Token-bucket refill rate. Applies to WS CRDT sync frames and MCP write tools. Over-quota WS frames are silently dropped with an `ERR_RATE_LIMIT` reply; over-quota MCP calls return HTTP `429` with `Retry-After`. |
+| `writes_per_sec` | Token-bucket refill rate. Applies to WS CRDT sync frames that carry writes and to MCP write tools; a state request (SyncStep1) that the relay answers doesn't draw from it. Over-quota WS frames are dropped with an `ERR_RATE_LIMIT` reply, and the client should back off and re-sync (the editor re-joins the document); over-quota MCP calls return HTTP `429` with `Retry-After`. |
 | `writes_burst` | Token-bucket capacity. Short spikes up to this size pass through without throttling. |
 | `max_ws_connections_per_workspace` | Authenticated WS connection cap per workspace (editors + viewers — the total-connection safety ceiling that also guards pure-viewer flooding). The Nth + 1 connect fails with `ERR_WORKSPACE_CONNECTION_LIMIT` on the `AUTH_RESPONSE`. |
 | `max_ws_payload_bytes` | Per-frame payload size cap. Pathologically large WS frames are rejected before dispatch; the connection is dropped. |

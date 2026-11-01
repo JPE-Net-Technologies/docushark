@@ -12,6 +12,7 @@
  */
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { formatCombo } from '../engine/keybindings';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { useColorPaletteStore } from '../store/colorPaletteStore';
 import { NOTE_PRESET_COLORS } from '../types/Whiteboard';
@@ -275,21 +276,21 @@ export const StickyNote: React.FC<StickyNoteProps> = ({ id }) => {
           <button
             className={`note-format-btn note-format-btn-bold ${formatState.bold ? 'active' : ''}`}
             onMouseDown={(e) => handleFormat('bold', e)}
-            title="Bold (Ctrl+B)"
+            title={`Bold (${formatCombo('Mod+B')})`}
           >
             B
           </button>
           <button
             className={`note-format-btn note-format-btn-italic ${formatState.italic ? 'active' : ''}`}
             onMouseDown={(e) => handleFormat('italic', e)}
-            title="Italic (Ctrl+I)"
+            title={`Italic (${formatCombo('Mod+I')})`}
           >
             I
           </button>
           <button
             className={`note-format-btn note-format-btn-underline ${formatState.underline ? 'active' : ''}`}
             onMouseDown={(e) => handleFormat('underline', e)}
-            title="Underline (Ctrl+U)"
+            title={`Underline (${formatCombo('Mod+U')})`}
           >
             U
           </button>

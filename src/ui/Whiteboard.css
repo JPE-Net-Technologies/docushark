@@ -26,17 +26,12 @@
   position: relative;
   width: 90vw;
   height: 85vh;
-  background-color: rgba(248, 248, 248, 0.95);
+  background-color: color-mix(in srgb, var(--bg-primary) 95%, transparent);
   border-radius: 12px;
   box-shadow: var(--shadow-xl);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.dark-mode .whiteboard-container {
-  background-color: rgba(30, 30, 30, 0.95);
-  color: #e5e5e5;
 }
 
 /* ── Header ─────────────────────────────────────────── */
@@ -47,13 +42,8 @@
   justify-content: space-between;
   padding: 10px 16px;
   background-color: rgba(0, 0, 0, 0.05);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
-}
-
-.dark-mode .whiteboard-header {
-  background-color: rgba(255, 255, 255, 0.05);
-  border-bottom-color: rgba(255, 255, 255, 0.1);
 }
 
 .whiteboard-header-left {
@@ -66,25 +56,16 @@
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #333;
-}
-
-.dark-mode .whiteboard-title {
-  color: #e5e5e5;
+  color: var(--text-primary);
 }
 
 .whiteboard-note-count {
   font-size: 11px;
-  color: #888;
+  color: var(--text-muted);
   background: rgba(0, 0, 0, 0.06);
   padding: 2px 8px;
   border-radius: 10px;
   font-weight: 500;
-}
-
-.dark-mode .whiteboard-note-count {
-  background: rgba(255, 255, 255, 0.08);
-  color: #999;
 }
 
 .whiteboard-close-btn {
@@ -92,7 +73,7 @@
   height: 28px;
   border: none;
   background-color: transparent;
-  color: #666;
+  color: var(--text-muted);
   font-size: 20px;
   cursor: pointer;
   border-radius: 4px;
@@ -104,16 +85,7 @@
 
 .whiteboard-close-btn:hover {
   background-color: rgba(0, 0, 0, 0.1);
-  color: #333;
-}
-
-.dark-mode .whiteboard-close-btn {
-  color: #999;
-}
-
-.dark-mode .whiteboard-close-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 /* ── Board tabs ──────────────────────────────────────── */
@@ -123,15 +95,10 @@
   align-items: center;
   padding: 0 12px;
   background-color: rgba(0, 0, 0, 0.02);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   gap: 4px;
   min-height: 34px;
-}
-
-.dark-mode .whiteboard-board-tabs {
-  background-color: rgba(255, 255, 255, 0.02);
-  border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
 .whiteboard-board-tabs-list {
@@ -150,7 +117,7 @@
   padding: 6px 14px;
   font-size: 12px;
   font-weight: 500;
-  color: #666;
+  color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px 6px 0 0;
   border: 1px solid transparent;
@@ -162,15 +129,15 @@
 }
 
 .whiteboard-board-tab:hover {
-  color: #333;
+  color: var(--text-primary);
   background-color: rgba(0, 0, 0, 0.04);
 }
 
 .whiteboard-board-tab.active {
-  color: #333;
+  color: var(--text-primary);
   font-weight: 600;
-  background-color: rgba(248, 248, 248, 0.95);
-  border-color: rgba(0, 0, 0, 0.08);
+  background-color: color-mix(in srgb, var(--bg-primary) 95%, transparent);
+  border-color: var(--border-color);
   position: relative;
 }
 
@@ -182,26 +149,7 @@
   left: 0;
   right: 0;
   height: 1px;
-  background-color: rgba(248, 248, 248, 0.95);
-}
-
-.dark-mode .whiteboard-board-tab {
-  color: #888;
-}
-
-.dark-mode .whiteboard-board-tab:hover {
-  color: #ccc;
-  background-color: rgba(255, 255, 255, 0.04);
-}
-
-.dark-mode .whiteboard-board-tab.active {
-  color: #e5e5e5;
-  background-color: rgba(30, 30, 30, 0.95);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-.dark-mode .whiteboard-board-tab.active::after {
-  background-color: rgba(30, 30, 30, 0.95);
+  background-color: color-mix(in srgb, var(--bg-primary) 95%, transparent);
 }
 
 .whiteboard-board-tab-input {
@@ -220,7 +168,7 @@
   height: 24px;
   border: none;
   background: transparent;
-  color: #888;
+  color: var(--text-muted);
   font-size: 16px;
   cursor: pointer;
   border-radius: 4px;
@@ -233,31 +181,20 @@
 
 .whiteboard-board-tab-add:hover {
   background-color: rgba(0, 0, 0, 0.06);
-  color: #333;
-}
-
-.dark-mode .whiteboard-board-tab-add:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 /* ── Board tab context menu ──────────────────────────── */
 
 .whiteboard-board-context-menu {
   position: fixed;
-  background: #fff;
+  background: var(--bg-primary);
   border-radius: 8px;
   box-shadow: var(--shadow-lg);
   padding: 4px;
   z-index: 1100;
   min-width: 140px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-}
-
-.dark-mode .whiteboard-board-context-menu {
-  background: #2a2a2a;
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border-color);
 }
 
 .whiteboard-board-context-menu button {
@@ -269,7 +206,7 @@
   background: transparent;
   cursor: pointer;
   border-radius: 4px;
-  color: #333;
+  color: var(--text-primary);
   transition: background-color 0.1s ease;
 }
 
@@ -277,16 +214,8 @@
   background-color: rgba(0, 0, 0, 0.06);
 }
 
-.dark-mode .whiteboard-board-context-menu button {
-  color: #ddd;
-}
-
-.dark-mode .whiteboard-board-context-menu button:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-}
-
 .whiteboard-board-context-menu button.disabled {
-  color: #aaa;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -323,12 +252,8 @@
 
 .whiteboard-empty-text {
   font-size: 14px;
-  color: #888;
+  color: var(--text-muted);
   opacity: 0.6;
-}
-
-.dark-mode .whiteboard-empty-text {
-  color: #999;
 }
 
 /* ── Add note FAB ────────────────────────────────────── */

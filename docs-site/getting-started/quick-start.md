@@ -11,9 +11,9 @@ Let's create your first diagram. This should take about five minutes.
 
 1. **Launch DocuShark** — Open the application. You'll land on the **Documents** home: your library, with preview cards of what you worked on recently once you have a few documents.
 
-2. **Create a new document** — Click the gold **New** button in the top-right. The document opens immediately.
+2. **Create a new document** — Click the gold **New** button in the top-right. The document opens immediately. When you're signed in to a workspace, it's created there and syncs right away; otherwise it's a local document on this device. The arrow beside **New** lets you choose explicitly: **New workspace document** or **New local document**.
 
-3. **Name your document** — Click its name (“Untitled Document”) in the toolbar and type a new one.
+3. **Name your document** — Start with a heading and DocuShark names the document after it once you move on; **Undo** in the message keeps it untitled. Without a heading, a message offers to name it after you've written a few words, suggesting your first line. You can always click the name in the toolbar (“Untitled Document” until it has one) and type a new one. A name you choose yourself is never changed.
 
 Your document opens with an infinite canvas ready for drawing. To get back to your library at any time, click **Documents** in the top-left.
 
@@ -57,7 +57,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 
 DocuShark **auto-saves** your work, so you won't lose anything. You can also:
 
-- Press `Ctrl+S` to save immediately
+- Press `Ctrl+S` (`Cmd+S` on a Mac) to save at once
 - Use **Export** to save as PNG, SVG, PDF, or JSON
 - Click the document name in the toolbar to rename it
 

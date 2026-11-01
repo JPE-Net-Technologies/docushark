@@ -52,6 +52,7 @@ The complete list. For the shortcuts most people actually use day to day — and
 | Delete | `Delete` or `Backspace` |
 | Undo | `Ctrl+Z` / `Cmd+Z` |
 | Redo | `Ctrl+Shift+Z` or `Ctrl+Y` / `Cmd+Shift+Z` |
+| Save now | `Ctrl+S` / `Cmd+S` |
 
 ## Movement (with shapes selected)
 
@@ -87,4 +88,5 @@ When editing text in the Document Editor:
 | Italic | `Ctrl+I` / `Cmd+I` |
 | Underline | `Ctrl+U` / `Cmd+U` |
 | Inline code | `Ctrl+E` / `Cmd+E` |
+| Paste without formatting | `Ctrl+Shift+V` / `Cmd+Shift+V` |
 | Finish editing | `Escape` |

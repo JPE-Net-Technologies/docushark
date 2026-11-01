@@ -192,6 +192,17 @@
   }
 }
 
+/* Touch (DSK-196): 44px buttons, and a 16px field — iOS Safari zooms the page
+   into a focused input set smaller, and leaves it zoomed. */
+@media (pointer: coarse) {
+  .confirm-dialog__btn {
+    min-height: 44px;
+  }
+  .confirm-dialog__input {
+    font-size: 16px;
+  }
+}
+
 @keyframes confirm-overlay-in {
   from {
     opacity: 0;

@@ -11,7 +11,24 @@
   background-color: transparent;
 }
 
+/* The content wrapper fills the scroll area, and the editor fills the wrapper
+   (DSK-197): a percentage min-height on the editor itself resolved against the
+   wrapper's auto height, leaving the editable area as tall as its text, so a
+   tap on the empty page below a short document did nothing. */
+.tiptap-editor-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* Native scrolls into view (focus, find) keep the same clearance above the
+   mobile bar as ProseMirror's own (DSK-197, proseScrollProps). */
+.app[data-mobile='true'] .tiptap-editor {
+  scroll-padding-bottom: 48px;
+}
+
 .tiptap-editor .ProseMirror {
+  flex: 1 0 auto;
   min-height: 100%;
   padding: 1rem;
   outline: none;
@@ -946,4 +963,15 @@
   .ds-caret--smooth {
     transition: none;
   }
+}
+
+/* Where pasted image files will land while they're stored (DSK-208): a
+   decoration, never document content. */
+.prose-paste-placeholder {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.85em;
 }

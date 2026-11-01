@@ -10,8 +10,10 @@
 
 .text-editor-textarea {
   pointer-events: auto;
-  background: #ffffff;
-  color: #1e293b;
+  /* The canvas's own surface (DSK-204), so editing a label doesn't punch a
+     white hole in the warm canvas. */
+  background: var(--bg-primary);
+  color: var(--text-primary);
   border: 2px solid var(--selection-color, var(--color-primary));
   border-radius: 4px;
   padding: 4px 8px;

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { useIntegrationHubStore, workspaceIntegrationState, providerLabel } from './integrationHubStore';
+import {
+  useIntegrationHubStore,
+  workspaceIntegrationState,
+  providerLabel,
+  refreshHubOnFocus,
+  refreshIfNothingConnected,
+} from './integrationHubStore';
 import { webClient, type IntegrationsHub } from '../api/webClient';
 
 const HUB: IntegrationsHub = {
@@ -113,5 +119,43 @@ describe('providerLabel', () => {
     expect(providerLabel(HUB, 'linear')).toBe('Linear');
     expect(providerLabel(null, 'notion')).toBe('Notion');
     expect(providerLabel(null, '')).toBe('');
+  });
+});
+
+describe('hub refreshes (DSK-194)', () => {
+  // The workspace the fixture has Notion connected in.
+  const connectedWs = HUB.connections[0]!.workspaceId;
+
+  beforeEach(reset);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reloads on focus once the hub has loaded, at most every 30 seconds', () => {
+    const spy = vi.spyOn(webClient, 'getIntegrationsHub').mockResolvedValue(HUB);
+    const stop = refreshHubOnFocus();
+
+    window.dispatchEvent(new Event('focus'));
+    expect(spy).not.toHaveBeenCalled(); // never loaded: no request
+
+    useIntegrationHubStore.setState({ status: 'ready', hub: HUB, loadedAt: Date.now() });
+    window.dispatchEvent(new Event('focus'));
+    expect(spy).not.toHaveBeenCalled(); // loaded a moment ago
+
+    useIntegrationHubStore.setState({ loadedAt: Date.now() - 31_000 });
+    window.dispatchEvent(new Event('focus'));
+    expect(spy).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it('reloads past the cache when Tools opens with nothing connected', () => {
+    const spy = vi.spyOn(webClient, 'getIntegrationsHub').mockResolvedValue(HUB);
+    useIntegrationHubStore.setState({ status: 'ready', hub: HUB, loadedAt: Date.now() });
+    refreshIfNothingConnected(connectedWs);
+    expect(spy).not.toHaveBeenCalled(); // connected: the cache stands
+
+    useIntegrationHubStore.setState({ hub: { ...HUB, connections: [] } });
+    refreshIfNothingConnected(connectedWs);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

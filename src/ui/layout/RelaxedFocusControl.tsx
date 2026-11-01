@@ -12,6 +12,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { commandShortcut } from '../../engine/CommandRegistry';
 import { PenLine, Columns2, Workflow } from 'lucide-react';
 import { Icon } from '../icons';
 import { useSessionStore } from '../../store/sessionStore';
@@ -52,7 +53,7 @@ export function RelaxedFocusControl() {
           className={`relaxed-focus-segment ${active === seg.id ? 'active' : ''}`}
           onClick={() => setRelaxedFocus(seg.id)}
           aria-pressed={active === seg.id}
-          title={`${seg.label} (Ctrl+Shift+\\ to cycle)`}
+          title={`${seg.label} (${commandShortcut('view.cycleRelaxedFocus') ?? ''} to cycle)`}
         >
           {seg.icon}
           <span className="relaxed-focus-segment-label">{seg.label}</span>

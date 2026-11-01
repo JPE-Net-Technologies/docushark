@@ -105,6 +105,7 @@ export function useCollaborationSync(): void {
   useEffect(() => {
     if (!isActive) {
       initializedRef.current = false;
+      useCollaborationStore.getState()._setAdopted(false);
       return;
     }
 
@@ -116,6 +117,7 @@ export function useCollaborationSync(): void {
     // effect re-runs against the new instance; otherwise it stays `true` from
     // the previous session and the new doc is never adopted into the view.
     initializedRef.current = false;
+    useCollaborationStore.getState()._setAdopted(false);
 
     // Handle remote shape changes
     const unsubShapes = yjsDoc.onShapeChange((added, updated, removed) => {
@@ -334,6 +336,9 @@ export function useCollaborationSync(): void {
       if (adoptedDocId) {
         healOrphanedProseFragments(yjsDoc, adoptedDocId);
       }
+      // The views now follow this Y.Doc; a write from here on lands in it rather
+      // than being replaced by the adopt (DSK-194: importing into a new document).
+      useCollaborationStore.getState()._setAdopted(true);
     }
   }, [isActive, isSynced, isIdbSynced, hasProvider, getYjsDocument, sessionEpoch]);
 

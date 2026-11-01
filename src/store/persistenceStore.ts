@@ -23,12 +23,13 @@ import { useNotificationStore } from './notificationStore';
 import type { Page } from '../types/Document';
 import { useRichTextStore } from './richTextStore';
 import { useRichTextPagesStore } from './richTextPagesStore';
+import { runPreSaveFlushes } from './preSaveFlush';
 import { usePendingSyncPages } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
 import { useUserStore } from './userStore';
-import { isRelayAuthenticated, useConnectionStore } from './connectionStore';
-import { useRelayDocumentStore } from './relayDocumentStore';
+import { isRelayAuthenticated, relaySessionUsable, useConnectionStore } from './connectionStore';
+import { useRelayDocumentStore, hasRelayDocumentProvider } from './relayDocumentStore';
 import { useCollectionStore } from './collectionStore';
 import { stampCollectionMembership } from './collectionMembership';
 import { RelayDocumentCache } from '../storage/RelayDocumentCache';
@@ -40,6 +41,7 @@ import { useDocumentRegistry } from './documentRegistry';
 import { useTrashStore } from './trashStore';
 import { isRemoteDocument, isCachedDocument } from '../types/DocumentRegistry';
 import { isCollabContentDoc, ensureCollabSessionForDoc, useCollaborationStore } from '../collaboration';
+import { registerOpenDocumentIdSource } from '../collaboration/openDocumentSource';
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences, deriveBlobReferences } from '../storage/AssetBundler';
@@ -369,6 +371,13 @@ export interface PersistenceActions {
   transferToPersonal: (docId: string) => boolean;
   /** Create a new relay document with the given name, awaiting the relay push */
   createRelayDocumentAs: (name: string) => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
+  /**
+   * New, in the workspace (DSK-195): a fresh, empty document created on the
+   * relay and opened with its own collab session, in one step. Without a
+   * workspace connection, or when the relay refuses, the user still has the
+   * new document, as a local one, and the result says why.
+   */
+  newWorkspaceDocument: () => Promise<{ ok: true; docId: string } | { ok: false; error: string }>;
   /** Rename any document by id (handles active/non-active, local/relay) */
   renameDocumentById: (docId: string, newName: string) => Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'version-conflict' | 'network-error'; message?: string }>;
   /** Set a document's tags by id (handles active/non-active, local/relay; JP-388) */
@@ -629,6 +638,10 @@ function createDocumentFromPageStore(
   name: string,
   existingDoc?: DiagramDocument
 ): DiagramDocument {
+  // Live editors first copy what they hold into the stores read below
+  // (DSK-199): the local prose editor's page copy otherwise trails it by up to
+  // a save cycle, and a reload reads that copy back.
+  runPreSaveFlushes();
   const pageSnapshot = usePageStore.getState().getSnapshot();
 
   const issues = findPageIntegrityIssues(pageSnapshot.pages);
@@ -794,6 +807,27 @@ function loadDocumentToPageStore(input: DiagramDocument): void {
  * if (isDirty) { ... }
  * ```
  */
+/**
+ * The relay→local exit: any transition that makes a LOCAL document the open one
+ * must first leave a relay document's collab session, so its engine stops
+ * broadcasting and the presence "collaborate" frame (gated on `isActive`)
+ * clears (JP-188).
+ *
+ * `leaveDocument`, NOT `stopSession`: it stays signed in to the relay
+ * (preserves the token), so reopening a relay doc reconnects authenticated
+ * instead of dropping to offline/re-login (JP-190). Durable state stays on disk
+ * (relay binary + y-indexeddb), so reopening the relay doc re-hydrates.
+ *
+ * Every path needs it, not just opening a local doc. `newDocument` and
+ * `saveDocumentAs` used to skip it, which left the previous relay document
+ * bound: page-list, field and metadata writes from the new document landed in
+ * that document and the relay persisted them (DSK-192).
+ */
+function leaveCollabSessionForLocalDocument(): void {
+  const collab = useCollaborationStore.getState();
+  if (collab.isActive) collab.leaveDocument();
+}
+
 export const usePersistenceStore = create<PersistenceState & PersistenceActions>()(
   persist(
     (set, get) => ({
@@ -803,6 +837,11 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       // Create a new empty document
       newDocument: (name?: string) => {
         const docName = name ?? UNTITLED_DOCUMENT_NAME;
+
+        // A new document is local until it is saved to a workspace. Leave the
+        // previous relay document's session BEFORE the store resets below, so
+        // nothing they trigger can reach its Y.Doc (DSK-192).
+        leaveCollabSessionForLocalDocument();
 
         // These store resets are a programmatic reset, NOT user edits — suppress
         // autosave so their subscriptions (and any nodeView reaction to
@@ -973,6 +1012,11 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Save to localStorage
         saveDocumentToStorage(doc);
 
+        // The copy is a LOCAL document. If the original is a relay document,
+        // leave its session before the copy becomes the open document, or the
+        // copy's edits would keep writing into the original (DSK-192).
+        leaveCollabSessionForLocalDocument();
+
         // Update metadata index
         const metadata = getDocumentMetadata(doc);
 
@@ -1048,17 +1092,10 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         if (doc.isRelayDocument) {
           void ensureCollabSessionForDoc(id);
         } else {
-          // Opening a local doc means we've LEFT any relay doc — leave the
-          // doc's collab session so its engine stops broadcasting and the
-          // presence "collaborate" frame (gated on `isActive`) clears (JP-188).
-          // Use `leaveDocument`, NOT `stopSession`: it stays signed in to the
-          // relay (preserves the token), so reopening a relay doc reconnects
-          // authenticated instead of dropping to offline/re-login (JP-190). A
-          // relay→relay switch is handled by `switchDocument` above; this is the
-          // relay→local exit. Durable state stays on disk (relay binary +
-          // y-indexeddb), so reopening the relay doc re-hydrates.
-          const collab = useCollaborationStore.getState();
-          if (collab.isActive) collab.leaveDocument();
+          // Opening a local doc means we've LEFT any relay doc. A relay→relay
+          // switch is handled by `switchDocument` above; this is the
+          // relay→local exit.
+          leaveCollabSessionForLocalDocument();
         }
 
         // Save current document ID
@@ -1488,6 +1525,22 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       // and then marks the new doc as a relay doc + pushes it to the relay.
       // Awaits the relay push so callers can surface success/failure in the UI.
       createRelayDocumentAs: async (name: string) => {
+        // Check the connection BEFORE creating anything. This used to save and
+        // flag a local copy as a relay document first, then return "not
+        // connected", leaving a local document that claimed to be a relay one
+        // (DSK-195).
+        //
+        // The creation goes over REST, so the gate is the REST session (a valid
+        // token), as for transfers (JP-211), not the live WebSocket: New leaves
+        // the previous document's session first (DSK-192), which takes the
+        // socket down while REST stays usable.
+        if (!relaySessionUsable()) {
+          return { ok: false, error: 'Not connected to a relay' };
+        }
+        if (!hasRelayDocumentProvider()) {
+          return { ok: false, error: 'Not connected to your workspace' };
+        }
+
         // Save locally first via the existing path (sets currentDocumentId).
         get().saveDocumentAs(name);
 
@@ -1520,17 +1573,19 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           documents: { ...state.documents, [newId]: metadata },
         }));
 
-        if (!isRelayAuthenticated()) {
-          return { ok: false, error: 'Not connected to a relay' };
-        }
-
         const relayDocStore = useRelayDocumentStore.getState();
-        if (!relayDocStore.authenticated) {
-          return { ok: false, error: 'Not authenticated to relay' };
+        try {
+          await relayDocStore.saveToHost(doc);
+        } catch (err) {
+          // The relay never got it. Keep the copy, honestly, as a local
+          // document rather than one that claims a relay record it doesn't
+          // have (DSK-195).
+          get().demoteCurrentDocumentToLocal();
+          const message = err instanceof Error ? err.message : 'Unknown relay error';
+          return { ok: false, error: message };
         }
 
         try {
-          await relayDocStore.saveToHost(doc);
 
           // Make the just-created relay doc the live collab target. Without this
           // the session stays pinned to the previously open doc: `collabDocId`
@@ -1549,6 +1604,13 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           const message = err instanceof Error ? err.message : 'Unknown relay error';
           return { ok: false, error: message };
         }
+      },
+
+      newWorkspaceDocument: async () => {
+        // Leave the previous document and start empty (DSK-192), then create
+        // the empty document in the workspace and bind its own session.
+        get().newDocument();
+        return get().createRelayDocumentAs(UNTITLED_DOCUMENT_NAME);
       },
 
       // Rename a document by id (any document, active or not, local or relay).
@@ -1743,12 +1805,31 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
     }),
     {
       name: STORAGE_KEYS.DOCUMENT_INDEX,
+      // DSK-207: `autoSaveEnabled` is not persisted. A guest share load turns
+      // it off for its read-only snapshot, and guest pages share the editor's
+      // origin, so persisting it left every later editor session in that
+      // browser without autosave — and without the close-tab flush, which goes
+      // through the same switch. It was never a user setting.
+      //
+      // Deliberately NOT a version bump: code that predates a version can't
+      // read it, and zustand then starts empty and writes the empty index back.
+      // A rollback past a bump would wipe every local document index. Instead
+      // the version stays 1 and `merge` takes only the index from storage, so
+      // a browser that stored "off" recovers on its next load and older code
+      // still reads what this writes.
       version: 1,
       partialize: (state) => ({
-        // Only persist the document index and settings, not current document state
+        // Only the document index, never current-document state or the
+        // autosave switch.
         documents: state.documents,
-        autoSaveEnabled: state.autoSaveEnabled,
       }),
+      merge: (persisted, current) => {
+        const stored = persisted as { documents?: PersistenceState['documents']; autoSaveEnabled?: boolean } | null;
+        if (stored?.autoSaveEnabled === false) {
+          console.info('[persistence] ignored a stored "autosave off" in the document index (DSK-207)');
+        }
+        return { ...current, documents: stored?.documents ?? current.documents };
+      },
     }
   )
 );
@@ -2112,3 +2193,7 @@ export function uploadDocument(): Promise<boolean> {
     input.click();
   });
 }
+
+// DSK-192: the collab sync layer checks every store→CRDT write against the
+// document that is actually open, and drops writes aimed at a stale session.
+registerOpenDocumentIdSource(() => usePersistenceStore.getState().currentDocumentId);

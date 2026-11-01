@@ -114,6 +114,8 @@ Embed images in your documentation:
 2. Upload a file
 3. Image is embedded in the document
 
+You can also paste an image: a screenshot or a copied picture is saved into the document where your cursor is.
+
 ::: tip
 Images are stored as blob references in IndexedDB. They're included when exporting or sharing documents.
 :::
@@ -190,6 +192,35 @@ The document editor supports multiple pages:
 - **Reorder pages** by dragging tabs
 - **Color tabs** for visual organization via right-click
 - Each page has independent content
+
+## Copy and Paste
+
+### Pasting from Word, Google Docs and the web
+
+Pasted content keeps its structure: headings, bold and italics, links, nested lists and tables. Styling that wouldn't suit your document is left out, such as the source's default black text, so pasted text stays readable in the dark theme. Colours that were chosen on purpose are kept.
+
+Pasted images are saved into your document, so they stay after the original is gone and everyone in a workspace sees them. Two kinds can't be saved, and DocuShark tells you when it happens:
+
+- **Images in a selection copied from desktop Word** can be unreadable to the browser. Add them with **Upload image**.
+- **An image from a website that doesn't allow copying** stays linked to that website. Upload it if you want to keep a copy.
+
+### Paste without formatting
+
+Press `Ctrl+Shift+V` (`Cmd+Shift+V` on a Mac), or right-click and choose **Paste without formatting**, to insert the text exactly as it was copied.
+
+### Copy formats
+
+Right-click a selection for **Cut**, **Copy** and **Copy as**:
+
+| Choice | What you get |
+|--------|--------------|
+| **Copy** | Formatted text, as with `Ctrl+C`. Images come along, so they appear when you paste into Word or an email. |
+| **Copy as › Plain text** | The words, with list markers and table rows kept. |
+| **Copy as › Markdown** | GitHub-flavoured Markdown: headings, emphasis, lists, tables, code and math. |
+
+::: tip
+Some browsers don't let a menu read the clipboard. If **Paste** in the menu doesn't work, paste with the keyboard instead.
+:::
 
 ## Export Options
 

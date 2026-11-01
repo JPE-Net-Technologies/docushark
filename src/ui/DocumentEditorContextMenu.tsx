@@ -11,10 +11,10 @@
  */
 
 import { useEffect, useCallback, useState, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
+import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import type { Editor } from '@tiptap/core';
-import { NodeSelection } from '@tiptap/pm/state';
 import {
   ChevronLeft,
   ChevronRight,
@@ -59,11 +59,21 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  Scissors,
+  Copy,
+  ClipboardCopy,
+  ClipboardPaste,
+  ClipboardType,
+  FileText,
+  Hash,
 } from 'lucide-react';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
 import { Icon } from './icons';
-import { uploadProseImage, IMAGE_FILE_ACCEPT } from './proseImageUpload';
+import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
+import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
+import { copySelection, pasteFromClipboard, type CopyFormat } from '../tiptap/clipboard/proseCopy';
+import { useNotificationStore } from '../store/notificationStore';
 import * as cmd from './editorCommands';
 import './DocumentEditorContextMenu.css';
 
@@ -121,7 +131,7 @@ export function DocumentEditorContextMenu({
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [activeSubmenu, setActiveSubmenu] = useState<'format' | 'heading' | 'list' | 'table' | 'group' | null>(null);
+  const [activeSubmenu, setActiveSubmenu] = useState<'copyAs' | 'format' | 'heading' | 'list' | 'table' | 'group' | null>(null);
   // JP-421: self-aligning submenu placement (viewport coords + height cap), and
   // how far the root menu slides left to make room for the open submenu.
   const [submenuPlacement, setSubmenuPlacement] = useState({ x: 0, y: 0, maxHeight: 0 });
@@ -139,19 +149,33 @@ export function DocumentEditorContextMenu({
   const isInTable = editor?.isActive('table') ?? false;
 
   // Image selection (a NodeSelection on an image) → image actions. If the image
-  // is inside a gallery, also offer reordering.
-  const imageMenu = useMemo(() => {
-    const sel = editor?.state.selection;
-    if (!editor || !(sel instanceof NodeSelection) || sel.node.type.name !== 'image') {
-      return null;
-    }
-    const $from = editor.state.doc.resolve(sel.from);
-    if ($from.parent.type.name === 'gallery') {
-      const index = $from.index();
-      return { inGallery: true, canLeft: index > 0, canRight: index < $from.parent.childCount - 1 };
-    }
-    return { inGallery: false, canLeft: false, canRight: false };
-  }, [editor]);
+  // is inside a gallery, also offer reordering. Shared with the phone bar.
+  const imageMenu = useMemo(() => (editor ? selectedImage(editor.state) : null), [editor]);
+
+  // Clipboard (DSK-208). This menu replaces the browser's, so it carries Cut,
+  // Copy and Paste, plus the formats the keyboard can't choose.
+  const hasSelection = !!editor && !editor.state.selection.empty;
+  const handleCopy = useCallback(
+    (format: CopyFormat, cut = false) => {
+      if (!editor || editor.state.selection.empty) return;
+      copySelection(editor, format, { cut });
+      if (!cut) editor.commands.focus();
+      onClose();
+    },
+    [editor, onClose],
+  );
+  const handlePaste = useCallback(
+    (plain: boolean) => {
+      if (!editor) return;
+      onClose();
+      void pasteFromClipboard(editor, { plain }).then((outcome) => {
+        if (outcome !== 'blocked') return;
+        const keys = formatCombo(plain ? 'Mod+Shift+V' : 'Mod+V');
+        useNotificationStore.getState().info(`This browser only lets the keyboard paste here. Press ${keys}.`);
+      });
+    },
+    [editor, onClose],
+  );
 
   // Get group display name
   const getGroupName = useCallback((group: GroupShape): string => {
@@ -288,8 +312,7 @@ export function DocumentEditorContextMenu({
         return;
       }
       try {
-        const { src, alt } = await uploadProseImage(file);
-        editor.chain().focus().replaceSelectedImage({ src, alt }).run();
+        await replaceSelectedImageWithFile(editor, file);
       } catch (err) {
         console.error('Failed to replace image:', err);
       } finally {
@@ -346,6 +369,44 @@ export function DocumentEditorContextMenu({
         }}
       >
         {/* Image actions (when an image node is selected) */}
+        {/* Clipboard (DSK-208) */}
+        <div
+          className={`doc-editor-context-menu-item ${hasSelection ? '' : 'disabled'}`}
+          onClick={() => handleCopy('rich', true)}
+        >
+          <span className="doc-editor-context-menu-icon"><Icon icon={Scissors} /></span>
+          <span className="doc-editor-context-menu-label">Cut</span>
+          <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+X')}</span>
+        </div>
+        <div
+          className={`doc-editor-context-menu-item ${hasSelection ? '' : 'disabled'}`}
+          onClick={() => handleCopy('rich')}
+        >
+          <span className="doc-editor-context-menu-icon"><Icon icon={Copy} /></span>
+          <span className="doc-editor-context-menu-label">Copy</span>
+          <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+C')}</span>
+        </div>
+        <div
+          className={`doc-editor-context-menu-item ${hasSelection ? 'has-submenu' : 'disabled'}`}
+          onMouseEnter={(e) => hasSelection && handleSubmenuEnter('copyAs', e)}
+          onMouseLeave={handleMenuItemLeave}
+        >
+          <span className="doc-editor-context-menu-icon"><Icon icon={ClipboardCopy} /></span>
+          <span className="doc-editor-context-menu-label">Copy as</span>
+          <SubmenuArrow />
+        </div>
+        <div className="doc-editor-context-menu-item" onClick={() => handlePaste(false)}>
+          <span className="doc-editor-context-menu-icon"><Icon icon={ClipboardPaste} /></span>
+          <span className="doc-editor-context-menu-label">Paste</span>
+          <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+V')}</span>
+        </div>
+        <div className="doc-editor-context-menu-item" onClick={() => handlePaste(true)}>
+          <span className="doc-editor-context-menu-icon"><Icon icon={ClipboardType} /></span>
+          <span className="doc-editor-context-menu-label">Paste without formatting</span>
+          <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+Shift+V')}</span>
+        </div>
+        <div className="doc-editor-context-menu-divider" />
+
         {imageMenu && (
           <>
             {imageMenu.inGallery && (
@@ -498,6 +559,25 @@ export function DocumentEditorContextMenu({
       </div>
 
       {/* Format submenu */}
+      {activeSubmenu === 'copyAs' && hasSelection && (
+        <div
+          ref={submenuRef}
+          className="doc-editor-context-submenu"
+          style={submenuStyle}
+          onMouseEnter={handleSubmenuHover}
+          onMouseLeave={handleSubmenuLeave}
+        >
+          <div className="doc-editor-context-menu-item" onClick={() => handleCopy('plain')}>
+            <span className="doc-editor-context-menu-icon"><Icon icon={FileText} /></span>
+            <span className="doc-editor-context-menu-label">Plain text</span>
+          </div>
+          <div className="doc-editor-context-menu-item" onClick={() => handleCopy('markdown')}>
+            <span className="doc-editor-context-menu-icon"><Icon icon={Hash} /></span>
+            <span className="doc-editor-context-menu-label">Markdown</span>
+          </div>
+        </div>
+      )}
+
       {activeSubmenu === 'format' && (
         <div
           ref={submenuRef}
@@ -512,7 +592,7 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Bold} /></span>
             <span className="doc-editor-context-menu-label">Bold</span>
-            <span className="doc-editor-context-menu-shortcut">Ctrl+B</span>
+            <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+B')}</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('italic') ? 'active' : ''}`}
@@ -520,7 +600,7 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Italic} /></span>
             <span className="doc-editor-context-menu-label">Italic</span>
-            <span className="doc-editor-context-menu-shortcut">Ctrl+I</span>
+            <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+I')}</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('underline') ? 'active' : ''}`}
@@ -528,7 +608,7 @@ export function DocumentEditorContextMenu({
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Underline} /></span>
             <span className="doc-editor-context-menu-label">Underline</span>
-            <span className="doc-editor-context-menu-shortcut">Ctrl+U</span>
+            <span className="doc-editor-context-menu-shortcut">{formatCombo('Mod+U')}</span>
           </div>
           <div
             className={`doc-editor-context-menu-item ${editor?.isActive('strike') ? 'active' : ''}`}

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { currentIntegrationActions, OPEN_MIRROR_PICKER, openMirrorPicker } from './integrationActions';
+import { canAddMirrorPage } from './mirrorPageService';
 import { useIntegrationHubStore } from '../store/integrationHubStore';
 import type { IntegrationsHub } from '../api/webClient';
 
@@ -27,6 +28,13 @@ describe('currentIntegrationActions', () => {
     const actions = currentIntegrationActions();
     expect(actions.map((a) => a.id)).toEqual(['integration.notion.newPage']);
     expect(actions[0]?.label).toBe('New page from Notion…');
+  });
+
+  it('offers the action only where a mirror page can be added (DSK-194)', () => {
+    // On a local document the add always failed. The Tools grid and the
+    // palette both drop a command whose canExecute is false, and this is the
+    // same test the add makes.
+    expect(currentIntegrationActions()[0]?.canExecute).toBe(canAddMirrorPage);
   });
 
   it('puts the action on BOTH the palette and the Tools grid', () => {

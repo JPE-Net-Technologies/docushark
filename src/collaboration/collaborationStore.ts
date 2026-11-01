@@ -18,6 +18,7 @@
 import { create } from 'zustand';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { YjsDocument } from './YjsDocument';
+import { hasOpenDocumentIdSource, readOpenDocumentId } from './openDocumentSource';
 import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
 import { collabIdbRoom } from './collabRoom';
 import { UnifiedSyncProvider, AwarenessUserState } from './UnifiedSyncProvider';
@@ -128,6 +129,14 @@ interface CollaborationState {
    * edits + relay state) rather than a partial one.
    */
   isIdbSynced: boolean;
+  /**
+   * Whether the views have adopted this session's Y.Doc: the page list, shapes
+   * and name now come from it, and edits flow into it (DSK-194). Set once per
+   * session by the adopt in `useCollaborationSync`, cleared on teardown. Code
+   * that writes into a document it has only just opened must wait for this: a
+   * write before the adopt is replaced by it.
+   */
+  isAdopted: boolean;
   /** Connection error message */
   error: string | null;
   /** Remote users currently viewing the document */
@@ -276,6 +285,8 @@ interface CollaborationActions {
   _markSyncedHandshake: () => void;
   /** Set IndexedDB-loaded state (internal) */
   _setIdbSynced: (synced: boolean) => void;
+  /** Set adopted state (internal; the adopt in useCollaborationSync) */
+  _setAdopted: (adopted: boolean) => void;
   /** Set error (internal) */
   _setError: (error: string | null) => void;
   /** Update remote users (internal) */
@@ -318,6 +329,37 @@ const TOKEN_WAKE_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 const WAKE_RECOVERY_GRACE_MS = 3_000;
 /** JP-402: unsubscribe from the YjsDocument undo-stack change feed. */
 let undoStackUnsubscribe: (() => void) | null = null;
+
+/** The last stale pairing reported, so a burst of dropped writes warns once. */
+let staleBindingReported: string | null = null;
+
+/**
+ * The Y.Doc a store→CRDT write may target (DSK-192): the session's document,
+ * but only while it is still the document the editor has open.
+ *
+ * A document switch that forgets to leave the session would otherwise route
+ * the new document's pages, shapes, fields, references and name into the
+ * PREVIOUS document: live for its collaborators, and persisted by the relay.
+ * On a mismatch the write is dropped (the local stores keep the edit) and the
+ * pairing is reported once.
+ */
+function syncTarget(boundDocId: string | undefined): YjsDocument | null {
+  if (!yjsDoc) return null;
+  // Without a reader (unit tests that never load the persistence store) the
+  // guard stands aside.
+  if (!hasOpenDocumentIdSource()) return yjsDoc;
+  const openDocId = readOpenDocumentId();
+  if (openDocId === boundDocId) return yjsDoc;
+  const pairing = `${boundDocId ?? '(none)'} -> ${openDocId ?? '(unsaved)'}`;
+  if (staleBindingReported !== pairing) {
+    staleBindingReported = pairing;
+    console.warn(
+      `[collab] Dropped a sync write: the session is bound to ${boundDocId ?? 'no document'}, ` +
+        `but ${openDocId ?? 'an unsaved document'} is open (DSK-192).`,
+    );
+  }
+  return null;
+}
 
 /**
  * Cursor + selection broadcasts are throttled to the device's collab cadence
@@ -418,6 +460,7 @@ function teardownSession(
     yjsDoc.destroy();
     yjsDoc = null;
   }
+  staleBindingReported = null;
 
   // Always clear presence (you've left the doc either way).
   usePresenceStore.getState().setLocalUser(null);
@@ -443,6 +486,7 @@ function teardownSession(
     // syncEpoch deliberately survives teardown (monotonic — see its doc).
     isSynced: false,
     isIdbSynced: false,
+    isAdopted: false,
     error: null,
     remoteUsers: [],
     config: null,
@@ -462,6 +506,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     isSynced: false,
     syncEpoch: 0,
     isIdbSynced: false,
+    isAdopted: false,
     error: null,
     remoteUsers: [],
     config: null,
@@ -834,114 +879,131 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     syncShape: (shape: Shape) => {
-      if (yjsDoc) {
-        yjsDoc.setShape(shape);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setShape(shape);
       }
     },
 
     syncShapes: (shapes: Shape[]) => {
-      if (yjsDoc) {
-        yjsDoc.setShapes(shapes);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setShapes(shapes);
       }
     },
 
     syncDeleteShape: (shapeId: string) => {
-      if (yjsDoc) {
-        yjsDoc.deleteShape(shapeId);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.deleteShape(shapeId);
       }
     },
 
     syncShapeOrder: (order: string[]) => {
-      if (yjsDoc) {
-        yjsDoc.setShapeOrder(order);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setShapeOrder(order);
       }
     },
 
     syncReference: (item: CSLItem) => {
-      if (yjsDoc) {
-        yjsDoc.setReference(item);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setReference(item);
       }
     },
 
     syncDeleteReference: (id: string) => {
-      if (yjsDoc) {
-        yjsDoc.deleteReference(id);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.deleteReference(id);
       }
     },
 
     syncReferenceStyle: (style: CitationStyle) => {
-      if (yjsDoc) {
-        yjsDoc.setReferenceStyle(style);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setReferenceStyle(style);
       }
     },
 
     syncField: (field: Field) => {
-      if (yjsDoc) {
-        yjsDoc.setField(field);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setField(field);
       }
     },
 
     syncDeleteField: (name: string) => {
-      if (yjsDoc) {
-        yjsDoc.deleteField(name);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.deleteField(name);
       }
     },
 
     syncProsePage: (meta: ProsePageMeta) => {
-      if (yjsDoc) {
-        yjsDoc.setProsePage(meta);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setProsePage(meta);
       }
     },
 
     syncDeleteProsePage: (id: string) => {
-      if (yjsDoc) {
-        yjsDoc.deleteProsePage(id);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.deleteProsePage(id);
       }
     },
 
     syncProsePageOrder: (order: string[]) => {
-      if (yjsDoc) {
-        yjsDoc.setProsePageOrder(order);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setProsePageOrder(order);
       }
     },
 
     syncCanvasPage: (meta: CanvasPageMeta) => {
-      if (yjsDoc) {
-        yjsDoc.setCanvasPage(meta);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setCanvasPage(meta);
       }
     },
 
     syncDeleteCanvasPage: (id: string) => {
-      if (yjsDoc) {
-        yjsDoc.deleteCanvasPage(id);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.deleteCanvasPage(id);
       }
     },
 
     syncCanvasPageOrder: (order: string[]) => {
-      if (yjsDoc) {
-        yjsDoc.setCanvasPageOrder(order);
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setCanvasPageOrder(order);
       }
     },
 
     syncDocumentName: (name: string) => {
-      if (yjsDoc) {
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
         // Stored under `title` in the metadata map (the relay seeds it from the
         // doc `name` on hydrate and flattens it back). `updatedAt` lets the
         // relay order this against a possibly-concurrent REST rename.
-        yjsDoc.setMetadata({ title: name, updatedAt: Date.now() });
+        doc.setMetadata({ title: name, updatedAt: Date.now() });
       }
     },
 
     syncDocumentTags: (tags: string[]) => {
-      if (yjsDoc) {
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
         // Same shape as the rename above: metadata-map write + `updatedAt`
         // bump so the relay flatten adopts it (JP-388).
-        yjsDoc.setMetadata({ tags, updatedAt: Date.now() });
+        doc.setMetadata({ tags, updatedAt: Date.now() });
       }
     },
 
     appendProse: (pageId: string, docJSON: JSONContent) => {
-      const doc = yjsDoc;
+      const doc = syncTarget(get().config?.documentId);
       if (!doc) return;
       // Tag as `programmatic` (JP-192) — distinct from a keystroke, but still a
       // real authored write. The CRDT fragment is the truth; a mounted editor
@@ -950,7 +1012,7 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
     },
 
     setProse: (pageId: string, docJSON: JSONContent) => {
-      const doc = yjsDoc;
+      const doc = syncTarget(get().config?.documentId);
       if (!doc) return;
       mutateDocument('programmatic', () => doc.setProse(pageId, docJSON));
     },
@@ -1031,6 +1093,10 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
 
     _setIdbSynced: (synced: boolean) => {
       set({ isIdbSynced: synced });
+    },
+
+    _setAdopted: (adopted: boolean) => {
+      set({ isAdopted: adopted });
     },
 
     _setError: (error: string | null) => {
@@ -1189,11 +1255,9 @@ export function initializeCRDTFromState(
   shapes: Shape[],
   order: string[]
 ): void {
-  const store = useCollaborationStore.getState();
-  const yjsDoc = store.getYjsDocument();
-
-  if (yjsDoc) {
-    yjsDoc.initializeFromState(shapes, order);
+  const doc = syncTarget(useCollaborationStore.getState().config?.documentId);
+  if (doc) {
+    doc.initializeFromState(shapes, order);
   }
 }
 

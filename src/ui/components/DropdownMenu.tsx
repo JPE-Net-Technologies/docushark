@@ -20,12 +20,17 @@
  * Positioning reuses the ToolbarDropdown strategy (below the trigger, clamped
  * to the viewport, repositioned on scroll/resize) and `placeFlyout` for
  * submenu placement (viewport-aware side flip; already unit-tested).
+ *
+ * On a phone (the JP-332 mobile chrome) the same entries open as a bottom
+ * action sheet instead (DSK-196, `DropdownMenuSheet`), so every caller gets
+ * touch-sized rows with no code of its own.
  */
 
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -33,6 +38,8 @@ import {
 import { createPortal } from 'react-dom';
 import { Check, ChevronRight } from 'lucide-react';
 import { placeFlyout, type FlyoutPlacement } from '../contextMenuUtils';
+import { readMobileActive } from '../layout/useMobileAdaptation';
+import { DropdownMenuSheet } from './DropdownMenuSheet';
 import './DropdownMenu.css';
 
 export interface DropdownMenuAction {
@@ -59,6 +66,8 @@ export type DropdownMenuEntry =
       id: string;
       label: string;
       icon?: ReactNode | undefined;
+      /** The submenu's current choice, shown muted after the label ("Sort  Name (A–Z)"). */
+      detail?: string | undefined;
       entries: DropdownMenuEntry[];
     };
 
@@ -122,6 +131,14 @@ export interface DropdownMenuProps {
    * Uncontrolled use only — pass `open` or this, not both.
    */
   openOnHover?: boolean | undefined;
+  /**
+   * The action sheet's title (defaults to `triggerTitle`): what is acted on.
+   * The menu opens as a bottom sheet instead of the anchored panel while the
+   * mobile chrome is active (DSK-196); a hover menu always uses the panel.
+   */
+  sheetTitle?: string | undefined;
+  /** A line under the sheet title, e.g. the document's location and size. */
+  sheetSubtitle?: string | undefined;
 }
 
 /** Grace period for travelling between the trigger and the portaled panel. */
@@ -163,17 +180,25 @@ export function DropdownMenu({
   anchorPoint,
   autoFocusFirstItem = true,
   openOnHover = false,
+  sheetTitle,
+  sheetSubtitle,
 }: DropdownMenuProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   // Controlled only when the parent actually passes `open`; every existing
   // consumer omits it and keeps the original self-owned behaviour.
   const isControlled = openProp !== undefined;
   const open = isControlled ? openProp : uncontrolledOpen;
+  // Decided as the menu opens, then held for that opening: the panel and the
+  // sheet must not swap under the user's finger if the viewport changes.
+  const asSheet = useMemo(() => open && !openOnHover && readMobileActive(), [open, openOnHover]);
   const [position, setPosition] = useState<PanelPosition>({ top: 0, left: 0 });
   const [openSubId, setOpenSubId] = useState<string | null>(null);
   const [subPlacement, setSubPlacement] = useState<FlyoutPlacement | null>(null);
 
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // Whether the trigger was activated from the keyboard (a click with no
+  // pointer behind it), so a sheet knows to start on its first row.
+  const openedByKeyboardRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const subPanelRef = useRef<HTMLDivElement>(null);
   const subAnchorRef = useRef<HTMLButtonElement | null>(null);
@@ -253,12 +278,12 @@ export function DropdownMenu({
   }, [align, anchorPoint]);
 
   useLayoutEffect(() => {
-    if (open) updatePosition();
-  }, [open, updatePosition]);
+    if (open && !asSheet) updatePosition();
+  }, [open, asSheet, updatePosition]);
 
   // Reposition on scroll/resize while open.
   useEffect(() => {
-    if (!open) return;
+    if (!open || asSheet) return;
     const handleUpdate = () => updatePosition();
     window.addEventListener('scroll', handleUpdate, true);
     window.addEventListener('resize', handleUpdate);
@@ -266,11 +291,12 @@ export function DropdownMenu({
       window.removeEventListener('scroll', handleUpdate, true);
       window.removeEventListener('resize', handleUpdate);
     };
-  }, [open, updatePosition]);
+  }, [open, asSheet, updatePosition]);
 
-  // Click outside (trigger + both panels count as inside) closes.
+  // Click outside (trigger + both panels count as inside) closes. The sheet
+  // brings its own scrim, so this is the panel's job only.
   useEffect(() => {
-    if (!open) return;
+    if (!open || asSheet) return;
     const handleOutside = (e: MouseEvent) => {
       const target = e.target as Node;
       if (
@@ -289,7 +315,7 @@ export function DropdownMenu({
       clearTimeout(timeoutId);
       document.removeEventListener('mousedown', handleOutside);
     };
-  }, [open, closeAll]);
+  }, [open, asSheet, closeAll]);
 
   // A controlled parent can close the menu without routing through
   // `setOpenNotify` (it just flips its own state), so a submenu left open at
@@ -511,6 +537,7 @@ export function DropdownMenu({
         >
           {entry.icon && <span className="dropdown-menu__icon">{entry.icon}</span>}
           <span className="dropdown-menu__label">{entry.label}</span>
+          {entry.detail && <span className="dropdown-menu__detail">{entry.detail}</span>}
           <ChevronRight className="dropdown-menu__chevron" size={14} aria-hidden="true" />
         </button>
       );
@@ -538,6 +565,7 @@ export function DropdownMenu({
             // hover flag so the panel takes focus as it normally would.
             cancelHoverClose();
             hoverOpenedRef.current = false;
+            openedByKeyboardRef.current = e.detail === 0;
             setOpenNotify(!open);
           }}
           onMouseEnter={handleHoverEnter}
@@ -547,7 +575,19 @@ export function DropdownMenu({
         </button>
       )}
 
+      {asSheet && (
+        <DropdownMenuSheet
+          title={sheetTitle ?? triggerTitle ?? ''}
+          subtitle={sheetSubtitle}
+          entries={entries}
+          onSelect={handleSelect}
+          onClose={() => closeAll(true)}
+          focusFirstItem={openedByKeyboardRef.current}
+        />
+      )}
+
       {open &&
+        !asSheet &&
         createPortal(
           <div
             ref={panelRef}
@@ -573,6 +613,7 @@ export function DropdownMenu({
         )}
 
       {open &&
+        !asSheet &&
         openSubEntries?.kind === 'submenu' &&
         createPortal(
           <div

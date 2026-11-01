@@ -3,15 +3,26 @@
  * StarterKit schema (the proseInvariant.test.ts pattern) so the fragment
  * write path is the production one; only the control-plane fetch is faked.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getSchema } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 
 import { YjsDocument } from '../collaboration/YjsDocument';
 import { registerProseSchema, __resetProseSchemaForTests } from '../collaboration/proseSchema';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { usePersistenceStore } from '../store/persistenceStore';
+import { useCollaborationStore, type CollaborationConfig } from '../collaboration/collaborationStore';
 import type { FetchedMirrorContent } from '../api/webClient';
-import { addMirrorPage, refreshMirrorPage, detachMirrorPage, ingestSubpages, listSubpages, MirrorPageError } from './mirrorPageService';
+import {
+  addMirrorPage,
+  canAddMirrorPage,
+  importAsNewDocument,
+  refreshMirrorPage,
+  detachMirrorPage,
+  ingestSubpages,
+  listSubpages,
+  MirrorPageError,
+} from './mirrorPageService';
 
 const schema = getSchema([StarterKit.configure({ history: false })]);
 
@@ -278,5 +289,174 @@ describe('subpage ingestion (JP-475)', () => {
     const outcome = await ingestSubpages(parentId, [{ externalId: 'ext-c1', title: 'C1' }], { signal: ac.signal }, deps);
     expect(outcome.aborted).toBe(true);
     expect(outcome.added).toBe(0);
+  });
+});
+
+/**
+ * DSK-192: the mirror service resolved "the live document" from the collab
+ * session alone. A session left bound to the previously open document sent
+ * the mirror there, and a document switch during the fetch did the same.
+ */
+describe('mirror writes follow the open document (DSK-192)', () => {
+  let yjsDoc: YjsDocument;
+  const realGetYjsDocument = useCollaborationStore.getState().getYjsDocument;
+  const boundTo = (documentId: string): CollaborationConfig => ({
+    serverUrl: 'ws://localhost:9876/ws',
+    documentId,
+    user: { id: 'u-1', name: 'Tester', color: '#4a90d9' },
+  });
+
+  beforeEach(() => {
+    registerProseSchema(schema);
+    yjsDoc = new YjsDocument();
+    useRichTextPagesStore.setState({ pages: {}, pageOrder: [], activePageId: null });
+    useCollaborationStore.setState({ isActive: true, config: boundTo('doc-A'), getYjsDocument: () => yjsDoc });
+  });
+  afterEach(() => {
+    useCollaborationStore.setState({ isActive: false, config: null, getYjsDocument: realGetYjsDocument });
+    usePersistenceStore.setState({ currentDocumentId: null });
+    yjsDoc.destroy();
+    __resetProseSchemaForTests();
+  });
+
+  describe('importAsNewDocument (DSK-194)', () => {
+    const realNew = usePersistenceStore.getState().newWorkspaceDocument;
+    const realRename = usePersistenceStore.getState().renameDocument;
+    afterEach(() => {
+      usePersistenceStore.setState({ newWorkspaceDocument: realNew, renameDocument: realRename });
+      useCollaborationStore.setState({ isAdopted: false });
+    });
+
+    /**
+     * A workspace document that opens as `docId`, its session bound and its
+     * Y.Doc adopted into the views now, or after `bindAfterMs`.
+     */
+    function newDocumentOpens(docId: string, bindAfterMs?: number) {
+      const ready = () => useCollaborationStore.setState({ config: boundTo(docId), isAdopted: true });
+      const create = vi.fn(async () => {
+        usePersistenceStore.setState({ currentDocumentId: docId });
+        useCollaborationStore.setState({ isAdopted: false });
+        if (bindAfterMs === undefined) ready();
+        else setTimeout(ready, bindAfterMs);
+        return { ok: true as const, docId };
+      });
+      const rename = vi.fn();
+      usePersistenceStore.setState({ newWorkspaceDocument: create, renameDocument: rename });
+      return { create, rename };
+    }
+
+    it('makes a new document whose first page is the mirror, named after it', async () => {
+      useRichTextPagesStore.getState().createPage('Page 1');
+      const { create, rename } = newDocumentOpens('doc-new', 150);
+      const stages: string[] = [];
+
+      const { pageId } = await importAsNewDocument(
+        'notion',
+        'p-1',
+        { onStage: (s) => stages.push(s) },
+        { fetchResource: async () => fetched() },
+      );
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(useRichTextPagesStore.getState().pageOrder[0]).toBe(pageId);
+      expect(useRichTextPagesStore.getState().pages[pageId]?.mirror?.externalId).toBe('p-1');
+      expect(rename).toHaveBeenCalledWith(fetched().title);
+      expect(stages).toEqual(['fetching', 'adding']);
+    });
+
+    it('waits for the new session to adopt before writing into it', async () => {
+      // Bound at once, adopted later: the relay's page list and name replace
+      // anything written in between, which is what the local stack showed.
+      newDocumentOpens('doc-new');
+      useCollaborationStore.setState({ isAdopted: false });
+      const createdBeforeAdopt: number[] = [];
+      const adopt = vi.fn(() => {
+        createdBeforeAdopt.push(useRichTextPagesStore.getState().pageOrder.length);
+        useCollaborationStore.setState({ isAdopted: true });
+      });
+      const create = usePersistenceStore.getState().newWorkspaceDocument;
+      usePersistenceStore.setState({
+        newWorkspaceDocument: vi.fn(async () => {
+          const result = await create();
+          useCollaborationStore.setState({ isAdopted: false });
+          setTimeout(adopt, 200);
+          return result;
+        }),
+      });
+
+      await importAsNewDocument('notion', 'p-1', {}, { fetchResource: async () => fetched() });
+
+      expect(adopt).toHaveBeenCalledTimes(1);
+      expect(createdBeforeAdopt).toEqual([0]);
+      expect(useRichTextPagesStore.getState().pageOrder).toHaveLength(1);
+    });
+
+    it('creates nothing when the fetch fails', async () => {
+      const { create } = newDocumentOpens('doc-new');
+      await expect(
+        importAsNewDocument('notion', 'p-1', {}, {
+          fetchResource: async () => {
+            throw new Error('provider down');
+          },
+        }),
+      ).rejects.toThrow('provider down');
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('adds nothing when the document cannot be created in the workspace', async () => {
+      usePersistenceStore.setState({ newWorkspaceDocument: vi.fn(async () => ({ ok: false as const, error: 'offline' })) });
+      await expect(
+        importAsNewDocument('notion', 'p-1', {}, { fetchResource: async () => fetched() }),
+      ).rejects.toMatchObject({ code: 'no_live_doc' });
+      expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
+    });
+
+    it('gives up when the new document never binds', async () => {
+      newDocumentOpens('doc-new', 10_000);
+      await expect(
+        importAsNewDocument('notion', 'p-1', {}, { fetchResource: async () => fetched(), bindTimeoutMs: 250 }),
+      ).rejects.toMatchObject({ code: 'no_live_doc' });
+      expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
+    });
+  });
+
+  it('says an add can happen exactly when the add would bind (DSK-194)', () => {
+    // Entry points ask this before offering "New page from …", so it must
+    // agree with the add's own refusal below.
+    usePersistenceStore.setState({ currentDocumentId: 'doc-A' });
+    expect(canAddMirrorPage()).toBe(true);
+    usePersistenceStore.setState({ currentDocumentId: 'doc-B' });
+    expect(canAddMirrorPage()).toBe(false);
+    usePersistenceStore.setState({ currentDocumentId: 'doc-A' });
+    useCollaborationStore.setState({ isActive: false });
+    expect(canAddMirrorPage()).toBe(false);
+  });
+
+  it('writes when the session is bound to the open document', async () => {
+    usePersistenceStore.setState({ currentDocumentId: 'doc-A' });
+    const { pageId } = await addMirrorPage('notion', 'p-1', { fetchResource: async () => fetched() });
+    expect(useRichTextPagesStore.getState().pageOrder).toEqual([pageId]);
+  });
+
+  it('refuses before fetching when the session is bound to another document', async () => {
+    usePersistenceStore.setState({ currentDocumentId: 'doc-B' });
+    const fetchResource = vi.fn(async () => fetched());
+
+    await expect(addMirrorPage('notion', 'p-1', { fetchResource })).rejects.toMatchObject({ code: 'no_live_doc' });
+
+    expect(fetchResource).not.toHaveBeenCalled();
+    expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
+  });
+
+  it('adds nothing when the open document changes while the page is loading', async () => {
+    usePersistenceStore.setState({ currentDocumentId: 'doc-A' });
+    const fetchResource = vi.fn(async () => {
+      usePersistenceStore.setState({ currentDocumentId: 'doc-B' });
+      return fetched();
+    });
+
+    await expect(addMirrorPage('notion', 'p-1', { fetchResource })).rejects.toMatchObject({ code: 'doc_changed' });
+
+    expect(useRichTextPagesStore.getState().pageOrder).toEqual([]);
   });
 });

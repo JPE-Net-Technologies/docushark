@@ -29,8 +29,10 @@ That's the whole model. The rest of this page unpacks each piece.
 A **document** is your unit of work — a design doc, an architecture diagram, a
 research note, a runbook. When you open DocuShark you land on the **Documents**
 home: your library of every document, with recent ones surfaced as preview
-cards. Create a new one with the **New** button; click **Documents** in the
-top-left to return to the library any time.
+cards. Create a new one with the **New** button: signed in, it goes straight
+into your workspace and syncs; signed out or offline, it stays on this device
+(the arrow beside **New** lets you choose a workspace or a local document). Click
+**Documents** in the top-left to return to the library any time.
 
 A single document can hold a *lot*: multiple pages of writing and diagrams,
 embedded files, citations, and reusable fields. You rarely need "a folder of

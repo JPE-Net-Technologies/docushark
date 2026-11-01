@@ -12,11 +12,13 @@ Most things in DocuShark have a shortcut. If you ever forget one, you don't need
 | Action | Shortcut |
 |--------|----------|
 | Command palette | `Ctrl+K` / `Cmd+K` |
+| Save now (DocuShark also saves as you work) | `Ctrl+S` / `Cmd+S` |
 | Search your library (Documents home) | `/` or `Ctrl+K` |
 | Select tool | `V` |
 | Connector tool | `C` |
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
 | Copy / Paste | `Ctrl+C` / `Ctrl+V` |
+| Paste without formatting (in a document) | `Ctrl+Shift+V` |
 | Delete | `Delete` or `Backspace` |
 | Select all | `Ctrl+A` |
 | Group / Ungroup | `Ctrl+G` / `Ctrl+Shift+G` |

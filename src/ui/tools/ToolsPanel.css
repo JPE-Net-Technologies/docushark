@@ -7,13 +7,14 @@
  */
 
 .tools-panel {
-  /* Two 150px columns plus the grid gap and this panel's padding. 150 is the
-     settings-sheet column floor, kept deliberately: at the 132 a popover can
-     get away with, a label as ordinary as "Import diagram…" already wraps to
-     the tile's two-line clamp and the grid reads as cramped. Narrower than this
-     and the grid silently collapses to one column, which is a list again. */
-  min-width: 340px;
-  max-width: 380px;
+  /* Two 170px columns (TOOLS_TILE_MIN) plus the grid gap and this panel's
+     padding. At the settings sheet's 150 floor a label beside its shortcut
+     wrapped ("Export to / PDF…", DSK-198); at a popover's 132, even "Import
+     diagram…" did. Narrower than this and the grid silently collapses to one
+     column, which is a list again — except on a phone, where the viewport
+     wins over the floor. */
+  min-width: min(380px, calc(100vw - 24px));
+  max-width: 400px;
   /* Scrolling belongs to the Popover, which owns the surface — a second
      scroll container nested inside it gives two scrollbars and a trap. */
   max-height: min(70vh, 560px);

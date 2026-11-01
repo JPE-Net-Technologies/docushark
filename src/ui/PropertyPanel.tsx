@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { commandShortcut } from '../engine/CommandRegistry';
 import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square, Blend } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
@@ -1844,7 +1845,7 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                   <InfoRow label="Position" value={`${Math.round(groupBounds.minX)}, ${Math.round(groupBounds.minY)}`} />
                 </>
               )}
-              <div className="property-hint">Ctrl+Shift+G to ungroup</div>
+              <div className="property-hint">{commandShortcut('edit.ungroup')} to ungroup</div>
             </PropertySection>
 
             {/* Background Section */}

@@ -10,9 +10,24 @@
  * One trigger of fixed width, present in both views, fixes all three. Sorting
  * in list view still belongs to the column headers (JP-444), so the menu says
  * so rather than offering a second control that silently disagrees with them.
+ * Narrow screens have no column headers (DSK-196), so there the menu sorts in
+ * both views.
+ *
+ * On a phone-width header (DSK-196) the menu is also where the list/grid
+ * toggle and Refresh live, behind an icon trigger: there is no room for them
+ * as buttons. Sort and Group become pages, which keeps the menu short enough to
+ * open as a sheet without scrolling.
  */
 
-import { SlidersHorizontal, ChevronDown } from 'lucide-react';
+import {
+  ArrowUpDown,
+  ChevronDown,
+  Group,
+  LayoutGrid,
+  List,
+  RefreshCw,
+  SlidersHorizontal,
+} from 'lucide-react';
 import {
   DropdownMenu,
   menuAction,
@@ -27,12 +42,25 @@ import type {
   DocumentBrowserView,
 } from '../../store/uiPreferencesStore';
 
-export interface BrowserViewMenuProps {
+/** What the phone-width header folds into the menu. */
+export interface BrowserViewMenuCompact {
   view: DocumentBrowserView;
+  setView: (view: DocumentBrowserView) => void;
+  onRefresh: () => void;
+}
+
+export interface BrowserViewMenuProps {
+  /**
+   * The list's column headers are on screen and own sorting, so the menu
+   * points at them instead of offering a second sort control.
+   */
+  columnSort: boolean;
   sort: DocumentBrowserSort;
   setSort: (sort: DocumentBrowserSort) => void;
   groupBy: DocumentBrowserGroupBy;
   setGroupBy: (groupBy: DocumentBrowserGroupBy) => void;
+  /** Phone-width header: an icon trigger, and the view toggle and Refresh inside. */
+  compact?: BrowserViewMenuCompact | undefined;
 }
 
 const GROUP_LABELS: Record<DocumentBrowserGroupBy, string> = {
@@ -41,18 +69,18 @@ const GROUP_LABELS: Record<DocumentBrowserGroupBy, string> = {
 };
 
 export function BrowserViewMenu({
-  view,
+  columnSort,
   sort,
   setSort,
   groupBy,
   setGroupBy,
+  compact,
 }: BrowserViewMenuProps) {
-  const entries: DropdownMenuEntry[] = [menuHeading('Sort')];
-
-  if (view === 'list') {
+  const sortEntries: DropdownMenuEntry[] = [];
+  if (columnSort) {
     // Sorting is the column headers' job here. Offering a duplicate control
     // would leave two places to change one thing.
-    entries.push(
+    sortEntries.push(
       menuAction({
         id: 'sort-columns',
         label: 'Click a column header to sort',
@@ -62,7 +90,7 @@ export function BrowserViewMenu({
     );
   } else {
     for (const [value, label] of Object.entries(SORT_LABELS)) {
-      entries.push(
+      sortEntries.push(
         menuAction({
           id: `sort-${value}`,
           label,
@@ -73,21 +101,82 @@ export function BrowserViewMenu({
     }
   }
 
-  entries.push(MENU_SEPARATOR, menuHeading('Group by'));
-  for (const value of ['none', 'collection'] as const) {
-    entries.push(
+  const groupEntries: DropdownMenuEntry[] = (['none', 'collection'] as const).map((value) =>
+    menuAction({
+      id: `group-${value}`,
+      label: GROUP_LABELS[value],
+      checked: groupBy === value,
+      onSelect: () => setGroupBy(value),
+    }),
+  );
+
+  const groupActive = groupBy === 'collection';
+
+  if (compact) {
+    const entries: DropdownMenuEntry[] = [
+      menuHeading('Show as'),
       menuAction({
-        id: `group-${value}`,
-        label: GROUP_LABELS[value],
-        checked: groupBy === value,
-        onSelect: () => setGroupBy(value),
+        id: 'view-list',
+        label: 'List',
+        icon: <List size={16} aria-hidden="true" />,
+        checked: compact.view === 'list',
+        onSelect: () => compact.setView('list'),
       }),
+      menuAction({
+        id: 'view-grid',
+        label: 'Grid',
+        icon: <LayoutGrid size={16} aria-hidden="true" />,
+        checked: compact.view === 'grid',
+        onSelect: () => compact.setView('grid'),
+      }),
+      MENU_SEPARATOR,
+      {
+        kind: 'submenu',
+        id: 'sort',
+        label: 'Sort',
+        detail: SORT_LABELS[sort],
+        icon: <ArrowUpDown size={16} aria-hidden="true" />,
+        entries: sortEntries,
+      },
+      {
+        kind: 'submenu',
+        id: 'group',
+        label: 'Group by',
+        detail: GROUP_LABELS[groupBy],
+        icon: <Group size={16} aria-hidden="true" />,
+        entries: groupEntries,
+      },
+      MENU_SEPARATOR,
+      menuAction({
+        id: 'refresh',
+        label: 'Refresh',
+        icon: <RefreshCw size={16} aria-hidden="true" />,
+        onSelect: compact.onRefresh,
+      }),
+    ];
+    return (
+      <DropdownMenu
+        trigger={<SlidersHorizontal size={18} aria-hidden="true" />}
+        triggerClassName={`dh-viewmenu dh-viewmenu--icon${groupActive ? ' dh-viewmenu--active' : ''}`}
+        triggerTitle={groupActive ? 'View options (grouped by collection)' : 'View options'}
+        sheetTitle="View options"
+        entries={entries}
+        align="right"
+      />
     );
   }
 
+  const entries: DropdownMenuEntry[] = [
+    menuHeading('Sort'),
+    ...sortEntries,
+    MENU_SEPARATOR,
+    menuHeading('Group by'),
+    ...groupEntries,
+  ];
+
   // The trigger reports the active grouping, so the one non-default state a
   // user can forget about is visible without opening the menu.
-  const activeHint = groupBy === 'collection' ? 'Collections' : 'View';
+  const activeHint = groupActive ? 'Collections' : 'View';
 
   return (
     <DropdownMenu
@@ -98,7 +187,7 @@ export function BrowserViewMenu({
           <ChevronDown size={12} aria-hidden="true" />
         </>
       }
-      triggerClassName={`dh-viewmenu${groupBy === 'collection' ? ' dh-viewmenu--active' : ''}`}
+      triggerClassName={`dh-viewmenu${groupActive ? ' dh-viewmenu--active' : ''}`}
       triggerTitle="Sorting and grouping"
       entries={entries}
       align="right"

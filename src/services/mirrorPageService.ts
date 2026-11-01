@@ -36,7 +36,7 @@ import { buildMirrorFamilyIndex, externalKey, subtreeInsertionIndex } from './mi
 /** A mirror operation the user can understand failed — message is UI-ready. */
 export class MirrorPageError extends Error {
   constructor(
-    public readonly code: 'no_live_doc' | 'not_a_mirror' | 'fetch_failed',
+    public readonly code: 'no_live_doc' | 'not_a_mirror' | 'fetch_failed' | 'doc_changed',
     message: string,
   ) {
     super(message);
@@ -61,17 +61,59 @@ export interface MirrorPageResult {
   childRefs: ExternalResource[];
 }
 
-function resolveYjsDoc(deps: MirrorPageDeps): YjsDocument {
-  if (deps.yjsDoc) return deps.yjsDoc;
+/**
+ * The live session's shared doc when it is bound to the document that is OPEN,
+ * else null. A stale binding (a doc switch that kept the previous session)
+ * would write the mirror into the previously open document (DSK-192).
+ */
+function boundYjsDoc(): YjsDocument | null {
   const collab = useCollaborationStore.getState();
   const yjsDoc = collab.getYjsDocument();
-  if (!collab.isActive || !yjsDoc) {
+  const openDocId = usePersistenceStore.getState().currentDocumentId;
+  return collab.isActive && yjsDoc && collab.config?.documentId === openDocId ? yjsDoc : null;
+}
+
+/**
+ * Can a mirror page be added to the open document right now? The same test
+ * the add itself makes, so an entry point that asks never offers an add that
+ * would fail (DSK-194): a local document, or one whose session isn't live, has
+ * no shared doc to write the page into.
+ */
+export function canAddMirrorPage(): boolean {
+  return boundYjsDoc() !== null;
+}
+
+function resolveYjsDoc(deps: MirrorPageDeps): YjsDocument {
+  if (deps.yjsDoc) return deps.yjsDoc;
+  const yjsDoc = boundYjsDoc();
+  if (!yjsDoc) {
     throw new MirrorPageError(
       'no_live_doc',
-      'Mirror pages need a live workspace document — open the document online and try again.',
+      'Mirror pages need a workspace document. Open one, or move this document to your workspace, and try again.',
     );
   }
   return yjsDoc;
+}
+
+/**
+ * Re-check the binding after a network await. The user can switch documents
+ * while the provider fetch is in flight; writing then would land in whichever
+ * document the resolved Y.Doc belongs to, not the one now open (DSK-192).
+ */
+function assertStillBound(expected: YjsDocument, deps: MirrorPageDeps): void {
+  if (deps.yjsDoc) return;
+  let current: YjsDocument | null = null;
+  try {
+    current = resolveYjsDoc(deps);
+  } catch {
+    current = null;
+  }
+  if (current !== expected) {
+    throw new MirrorPageError(
+      'doc_changed',
+      'The document changed while the page was loading, so nothing was added. Try again.',
+    );
+  }
 }
 
 function defaultFetch(provider: string, externalId: string): Promise<FetchedMirrorContent> {
@@ -109,7 +151,16 @@ export interface AddMirrorPageOpts {
   parentExternalId?: string;
   /** Make the new page active (default true; batch ingest passes false). */
   activate?: boolean;
+  /** Told as each step begins, for a progress line (DSK-194). */
+  onStage?: (stage: MirrorAddStage) => void;
 }
+
+/**
+ * The steps of adding a mirror page. `fetching` covers the source and its
+ * images: the control plane ingests images during the same fetch, so the two
+ * are one step from here.
+ */
+export type MirrorAddStage = 'fetching' | 'adding';
 
 /**
  * Mirror one external resource into a NEW read-only page of the open document
@@ -124,7 +175,10 @@ export async function addMirrorPage(
   opts: AddMirrorPageOpts = {},
 ): Promise<MirrorPageResult> {
   const yjsDoc = resolveYjsDoc(deps);
+  opts.onStage?.('fetching');
   const fetched = await (deps.fetchResource ?? defaultFetch)(provider, externalId);
+  assertStillBound(yjsDoc, deps);
+  opts.onStage?.('adding');
   const content = proseJsonFromHtml(fetched.proseHtml);
 
   const pages = useRichTextPagesStore.getState();
@@ -141,6 +195,81 @@ export async function addMirrorPage(
   return { pageId, warnings: fetched.warnings, childRefs: fetched.childRefs ?? [] };
 }
 
+/** How long a new document's session gets to bind before an import gives up. */
+const BIND_TIMEOUT_MS = 15_000;
+const BIND_POLL_MS = 100;
+
+/**
+ * Ready to write into a document that was only just created: bound to its
+ * session, and that session's Y.Doc adopted into the views. Before the adopt, a
+ * new page would be replaced by the relay's page list a moment later, and the
+ * rename by its name (both seen on the local stack).
+ */
+function newDocumentReady(): boolean {
+  return canAddMirrorPage() && useCollaborationStore.getState().isAdopted;
+}
+
+/** Resolve once the new document is ready for the mirror page. */
+function untilMirrorTarget(timeoutMs: number): Promise<void> {
+  if (newDocumentReady()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (newDocumentReady()) {
+        clearInterval(timer);
+        resolve();
+      } else if (Date.now() - started >= timeoutMs) {
+        clearInterval(timer);
+        reject(
+          new MirrorPageError(
+            'no_live_doc',
+            'The new document did not connect to your workspace in time, so the page was not added. Open the document and add it from Tools.',
+          ),
+        );
+      }
+    }, BIND_POLL_MS);
+  });
+}
+
+export interface ImportAsNewDocumentDeps {
+  /** Fetch override (tests). Defaults to the control-plane client. */
+  fetchResource?: (provider: string, externalId: string) => Promise<FetchedMirrorContent>;
+  /** How long to wait for the new document's session (tests shorten it). */
+  bindTimeoutMs?: number;
+}
+
+/**
+ * Import one external resource as a NEW workspace document whose first page is
+ * its mirror, named after it (DSK-194). The one import model: the document
+ * browser's New > From <provider> and the account site's "Import a page" (handed
+ * off to the editor) both come here, so an import is the same thing wherever it
+ * starts.
+ *
+ * The source is fetched before anything is created, so a failed fetch leaves no
+ * empty document behind. The new document opens in place of the current one.
+ */
+export async function importAsNewDocument(
+  provider: string,
+  externalId: string,
+  opts: { onStage?: (stage: MirrorAddStage) => void } = {},
+  deps: ImportAsNewDocumentDeps = {},
+): Promise<MirrorPageResult> {
+  opts.onStage?.('fetching');
+  const fetched = await (deps.fetchResource ?? defaultFetch)(provider, externalId);
+  opts.onStage?.('adding');
+  const created = await usePersistenceStore.getState().newWorkspaceDocument();
+  if (!created.ok) {
+    throw new MirrorPageError(
+      'no_live_doc',
+      `Couldn't create a document in your workspace (${created.error}), so the page was not imported.`,
+    );
+  }
+  await untilMirrorTarget(deps.bindTimeoutMs ?? BIND_TIMEOUT_MS);
+  const result = await addMirrorPage(provider, externalId, { fetchResource: async () => fetched }, { index: 0 });
+  usePersistenceStore.getState().renameDocument(fetched.title || 'Untitled mirror');
+  return result;
+}
+
 /**
  * Re-fetch a mirror page's source and update content (merge-safe fragment
  * diff), title (follows the source), and provenance stamps in place.
@@ -155,6 +284,7 @@ export async function refreshMirrorPage(pageId: string, deps: MirrorPageDeps = {
   }
   const yjsDoc = resolveYjsDoc(deps);
   const fetched = await (deps.fetchResource ?? defaultFetch)(mirror.provider, mirror.externalId);
+  assertStillBound(yjsDoc, deps);
 
   yjsDoc.setProse(pageId, proseJsonFromHtml(fetched.proseHtml));
   const pages = useRichTextPagesStore.getState();

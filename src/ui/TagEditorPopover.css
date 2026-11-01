@@ -105,3 +105,10 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* Touch (DSK-196): a 16px field, so iOS Safari doesn't zoom into it. */
+@media (pointer: coarse) {
+  .tag-editor__input {
+    font-size: 16px;
+  }
+}

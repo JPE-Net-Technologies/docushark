@@ -75,12 +75,44 @@ describe('prose editorProps parity', () => {
       'sharedProseEditorProps is not exported from TiptapEditor.tsx',
     ).toBeGreaterThan(0);
 
-    for (const key of ['attributes', 'handlePaste', 'handleDrop']) {
+    // The object literal itself, so a long comment can't push a key out of view.
+    const literal = definition.slice(0, definition.indexOf('} as const'));
+    const keys = ['attributes', 'handlePaste', 'handleDrop', 'transformPastedHTML', 'handleDOMEvents'];
+    for (const key of keys) {
       expect(
-        definition.slice(0, 800).includes(key),
+        new RegExp(`\\b${key}:`).test(literal),
         `sharedProseEditorProps no longer defines '${key}' — either both editors just lost it, ` +
           `or it moved and this guard needs updating`,
       ).toBe(true);
     }
+  });
+});
+
+/**
+ * Every prose surface renders its content through `ProseEditorContent`
+ * (DSK-197), the wrapper that lets the editor fill the page. A bare
+ * EditorContent left the editable area as tall as its text, so a tap on the
+ * empty page below a short document did nothing; a surface that drifts back
+ * to one brings that back for its users only.
+ */
+describe('prose content wrapper parity (DSK-197)', () => {
+  const SURFACES = ['TiptapEditor.tsx', 'CollaborativeProseEditor.tsx', 'ProsePreview.tsx'] as const;
+
+  for (const file of SURFACES) {
+    it(`${file} renders ProseEditorContent, not a bare EditorContent`, () => {
+      const source = read(file);
+      expect(source).toMatch(/<ProseEditorContent editor=\{editor\} \/>/);
+      // TiptapEditor.tsx defines the wrapper, so it holds the one EditorContent.
+      const bare = [...source.matchAll(/<EditorContent\b/g)].length;
+      expect(bare, `${file} renders EditorContent directly`).toBe(file === 'TiptapEditor.tsx' ? 1 : 0);
+    });
+  }
+
+  it('the wrapper is the class the stylesheet fills', () => {
+    expect(read('TiptapEditor.tsx')).toMatch(/<EditorContent editor=\{editor\} className="tiptap-editor-content" \/>/);
+    const css = read('TiptapEditor.css');
+    const rule = css.slice(css.indexOf('.tiptap-editor-content {'), css.indexOf('}', css.indexOf('.tiptap-editor-content {')));
+    expect(rule).toMatch(/min-height:\s*100%/);
+    expect(rule).toMatch(/flex-direction:\s*column/);
   });
 });

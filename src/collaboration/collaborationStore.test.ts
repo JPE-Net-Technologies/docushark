@@ -6,6 +6,7 @@ import {
   isCollabContentDoc,
   type CollaborationConfig,
 } from './collaborationStore';
+import { registerOpenDocumentIdSource } from './openDocumentSource';
 import type { Shape } from '../shapes/Shape';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import type { DocumentMetadata } from '../types/Document';
@@ -19,6 +20,8 @@ vi.mock('./YjsDocument', () => ({
     deleteShape: vi.fn(),
     setShapeOrder: vi.fn(),
     setMetadata: vi.fn(),
+    setProsePage: vi.fn(),
+    setProsePageOrder: vi.fn(),
     getName: vi.fn(() => undefined),
     clear: vi.fn(),
     destroy: vi.fn(),
@@ -119,6 +122,14 @@ vi.mock('../store/presenceStore', () => ({
     })),
   },
 }));
+
+// The persistence store, loaded through the import chain, registers the real
+// open-document reader. These unit tests start sessions without opening a
+// document there, so model the healthy invariant instead: the open document is
+// the one the session is bound to. The DSK-192 suite overrides this per test.
+beforeEach(() => {
+  registerOpenDocumentIdSource(() => useCollaborationStore.getState().config?.documentId ?? null);
+});
 
 // Helper to create test config
 function createTestConfig(overrides: Partial<CollaborationConfig> = {}): CollaborationConfig {
@@ -755,5 +766,70 @@ describe('handleAppWake (JP-420)', () => {
     wake();
 
     expect(vi.mocked(attemptTokenRefresh)).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * DSK-192: a document switch that forgot to leave the session left the
+ * previous relay document bound, and every store→CRDT write from the newly
+ * open document landed in it. The sync layer now checks each write against
+ * the document that is actually open.
+ */
+describe('sync binding guard (DSK-192)', () => {
+  let warn: { mockRestore(): void };
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    registerOpenDocumentIdSource(null);
+    useCollaborationStore.getState().stopSession();
+    // Only this spy: restoring every mock would also strip the shared
+    // YjsDocument mock's implementation for the tests that follow.
+    warn.mockRestore();
+  });
+
+  it('writes through when the open document is the bound document', () => {
+    registerOpenDocumentIdSource(() => 'doc-1');
+    useCollaborationStore.getState().startSession(createTestConfig({ documentId: 'doc-1' }));
+    const store = useCollaborationStore.getState();
+
+    store.syncProsePageOrder(['p-1']);
+    store.syncShape(createTestShape('s-1'));
+
+    const yjsDoc = store.getYjsDocument();
+    expect(yjsDoc?.setProsePageOrder).toHaveBeenCalledWith(['p-1']);
+    expect(yjsDoc?.setShape).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops writes aimed at a session bound to another document, and warns once', () => {
+    registerOpenDocumentIdSource(() => 'doc-2');
+    useCollaborationStore.getState().startSession(createTestConfig({ documentId: 'doc-1' }));
+    const store = useCollaborationStore.getState();
+
+    store.syncProsePageOrder(['p-1']);
+    store.syncProsePage({ id: 'p-1', name: 'New page', order: 0 });
+    store.syncShape(createTestShape('s-1'));
+    store.syncDocumentName('Renamed in the other document');
+
+    const yjsDoc = store.getYjsDocument();
+    expect(yjsDoc?.setProsePageOrder).not.toHaveBeenCalled();
+    expect(yjsDoc?.setProsePage).not.toHaveBeenCalled();
+    expect(yjsDoc?.setShape).not.toHaveBeenCalled();
+    expect(yjsDoc?.setMetadata).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Renamed in the other document' }),
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops writes while an unsaved document is open', () => {
+    registerOpenDocumentIdSource(() => null);
+    useCollaborationStore.getState().startSession(createTestConfig({ documentId: 'doc-1' }));
+    const store = useCollaborationStore.getState();
+
+    store.syncProsePageOrder(['p-1']);
+
+    expect(store.getYjsDocument()?.setProsePageOrder).not.toHaveBeenCalled();
   });
 });

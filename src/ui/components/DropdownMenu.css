@@ -114,6 +114,17 @@
   color: var(--text-muted);
 }
 
+/* A submenu's current choice, between its label and chevron. */
+.dropdown-menu__detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .dropdown-menu__swatch {
   flex: 0 0 auto;
   width: 10px;

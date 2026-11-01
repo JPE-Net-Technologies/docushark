@@ -180,7 +180,7 @@
   position: absolute;
   top: 22px;
   right: 0;
-  background: #fff;
+  background: var(--bg-primary);
   border-radius: 8px;
   box-shadow:
     0 4px 16px rgba(0, 0, 0, 0.15),
@@ -188,7 +188,7 @@
   padding: 10px;
   z-index: 100;
   min-width: 172px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-color);
 }
 
 .note-color-grid {
@@ -221,7 +221,7 @@
 
 .note-color-section-label {
   font-size: 9px;
-  color: #888;
+  color: var(--text-muted);
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -368,53 +368,3 @@
   opacity: 1;
 }
 
-/* ── Dark mode ──────────────────────────────────────────── */
-
-.dark-mode .note-color-dropdown {
-  background: #2a2a2a;
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.4),
-    0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.dark-mode .note-color-swatch {
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.dark-mode .note-color-swatch.selected {
-  border-color: #fff;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
-}
-
-.dark-mode .note-color-section-label {
-  color: #888;
-}
-
-.dark-mode .note-toolbar {
-  border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-.dark-mode .note-format-btn:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-}
-
-.dark-mode .note-format-btn.active {
-  background-color: rgba(255, 255, 255, 0.12);
-}
-
-.dark-mode .note-delete-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-.dark-mode .note-delete-btn.confirming {
-  background-color: rgba(255, 120, 120, 0.2);
-}
-
-.dark-mode .note-delete-btn.confirming:hover {
-  background-color: rgba(255, 120, 120, 0.32);
-}
-
-.dark-mode .note-resize-handle::before {
-  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.25) 1px, transparent 1px);
-}

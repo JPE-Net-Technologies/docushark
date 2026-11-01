@@ -45,9 +45,23 @@ A **mirrored page** shows a live copy of a page from a connected source, such
 as a Notion page, inside your document. Available on paid workspace plans with
 the source connected from your account's Integrations page.
 
-To add one, open **Tools** and choose **New page from Notion…**, then search
-for the page you want and pick it. The same action is in the command palette —
-press <kbd>Mod</kbd>+<kbd>K</kbd> and start typing the source's name. The content —
+To add one to a workspace document, open **Tools** and choose **New page from
+Notion…**, then search for the page you want and pick it. Use the arrow keys to
+move through the results and <kbd>Enter</kbd> to pick one; each result shows
+what kind of page it is and the page or database it sits in. The same action is
+in the command palette — press <kbd>Mod</kbd>+<kbd>K</kbd> and start typing the
+source's name. It isn't offered in a local document: a mirrored page lives in
+your workspace, so move the document there first.
+
+To start a new document from a page instead, open **Documents**, then the
+arrow beside **New**, and choose **From Notion…**. The page becomes a new
+workspace document named after it, with the mirrored page first. **Import a
+page** on your account's Integrations page does the same and opens the new
+document in the editor.
+
+Only pages you've shared with DocuShark in Notion can be found. If a page is
+missing, choose **Choose pages in Notion…** in the search window: it opens your
+account's Integrations page, where Notion asks which pages to share. The content —
 headings, lists, tables, images, and file attachments — is imported as a
 read-only page, and the tab carries the source's icon so you can spot mirrored
 pages at a glance. Attachments come across as files you can open from the page,
@@ -57,24 +71,27 @@ Mirrored pages behave differently from normal pages:
 
 - **Read-only** — the content belongs to the source; edit it there.
 - **The name follows the source** — renaming happens on refresh, not locally.
-- **Right-click the tab** for the mirror actions: **Open in Notion** jumps to
-  the original, **Refresh from source** pulls the latest content, **Ingest
-  subpages…** brings the source's subpages in (below), and **Detach** converts
-  it into a normal editable page (keeping the content as last synced — this
-  can't be undone).
+- **A banner replaces the formatting toolbar.** It names the source and says
+  when the page last synced, and it carries the mirror actions: **Refresh**
+  pulls the latest content, **Open in Notion** jumps to the original, and
+  **Detach** converts the page into a normal editable page (keeping the
+  content as last synced — this can't be undone). If you start typing, the
+  banner reminds you the page is read-only.
+- **Right-click the tab** for the same actions, plus **Add subpages…**, which
+  brings the source's subpages in (below).
 
 Anything the import can't represent faithfully is reported when the page is
 added, so you always know if something was left behind.
 
 ### Subpages
 
-When the source page has its own subpages, **Ingest subpages…** (on the tab's
+When the source page has its own subpages, **Add subpages…** (on the tab's
 right-click menu) lists them so you can mirror any or all of them — optionally
 including nested subpages, a few levels deep. Each one becomes its own mirrored
 page, placed directly after its parent so the document reads top-to-bottom in
 the same order as the source.
 
-A page with ingested subpages shows a **single tab for the whole group**, with
+A page with added subpages shows a **single tab for the whole group**, with
 a count and a chevron. Click the chevron to open the group and jump to any
 subpage; the tab shows *Parent › Subpage* while a subpage is active. The
 overflow menu (when tabs don't fit) lists grouped pages indented under their
@@ -97,7 +114,7 @@ From the Navigator you can:
 - **Jump** to any page, including subpages, with one click.
 - **Reorder** pages by dragging — a parent drags its whole subpage group.
 - **See freshness** — each mirrored page shows how long ago it was synced.
-- **Act on any mirrored page** via its row menu: refresh, ingest subpages,
+- **Act on any mirrored page** via its row menu: refresh, add subpages,
   open the source, detach, or delete.
 - **Refresh all** pages from a source with one button.
 - **Match structure** — if pages have been moved around, one click reorders

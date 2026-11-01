@@ -9,11 +9,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { usePersistenceStore, saveDocumentToStorage } from './persistenceStore';
+import { usePersistenceStore, saveDocumentToStorage, UNTITLED_DOCUMENT_NAME } from './persistenceStore';
 import { useRelayDocumentStore } from './relayDocumentStore';
 import type { DocumentProvider } from './relayDocumentStore';
 import { useConnectionStore } from './connectionStore';
 import { useUserStore } from './userStore';
+import { useRichTextPagesStore } from './richTextPagesStore';
 import { VersionConflictError } from '../api/relayClient';
 import type { DiagramDocument } from '../types/Document';
 
@@ -46,6 +47,8 @@ function installProvider(saveImpl?: SaveDocFn): ProviderRecorder {
   useConnectionStore.setState({
     status: 'authenticated',
     host: { address: 'localhost:9876', url: 'http://localhost:9876' },
+    token: 'test-token',
+    tokenExpiresAt: null,
   });
   useUserStore.setState({
     currentUser: { id: 'user-1', username: 'test-user', displayName: 'Test User', role: 'admin' },
@@ -94,6 +97,12 @@ describe('createRelayDocumentAs (JP-13)', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toContain('Relay unreachable');
+
+    // DSK-195: the copy stays, honestly, as a LOCAL document. It used to keep
+    // a relay flag for a record the relay never received.
+    const openId = usePersistenceStore.getState().currentDocumentId;
+    expect(openId).toBeTruthy();
+    expect(usePersistenceStore.getState().documents[openId!]?.isRelayDocument).toBeFalsy();
   });
 
   it('returns ok:false without pushing when not authenticated', async () => {
@@ -107,10 +116,76 @@ describe('createRelayDocumentAs (JP-13)', () => {
     useRelayDocumentStore.getState().setProvider(provider as unknown as DocumentProvider);
     useRelayDocumentStore.setState({ authenticated: false });
 
+    const docsBefore = Object.keys(usePersistenceStore.getState().documents).length;
     const result = await usePersistenceStore.getState().createRelayDocumentAs('offline');
 
     expect(result.ok).toBe(false);
     expect(provider.saveDocument).not.toHaveBeenCalled();
+    // DSK-195: nothing is created. It used to save a local copy flagged as a
+    // relay document before it noticed there was no connection.
+    expect(Object.keys(usePersistenceStore.getState().documents)).toHaveLength(docsBefore);
+    expect(usePersistenceStore.getState().currentDocumentName).toBe('Fresh');
+  });
+});
+
+describe('newWorkspaceDocument (DSK-195)', () => {
+  beforeEach(() => resetWorld());
+
+  it('creates an empty, untitled document in the workspace and opens it', async () => {
+    const provider = installProvider();
+    // Content of the document open before New must not travel into the new one.
+    useRichTextPagesStore.getState().createPage('Page of the previous document');
+
+    const result = await usePersistenceStore.getState().newWorkspaceDocument();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(provider.saveDocument).toHaveBeenCalledTimes(1);
+    const savedArg = provider.saveDocument.mock.calls[0]?.[0] as DiagramDocument;
+    expect(savedArg.name).toBe(UNTITLED_DOCUMENT_NAME);
+    expect(savedArg.isRelayDocument).toBe(true);
+    expect(JSON.stringify(savedArg.richTextPages ?? {})).not.toContain('Page of the previous document');
+    expect(usePersistenceStore.getState().currentDocumentId).toBe(result.docId);
+  });
+
+  it('creates the document over REST after New takes the live socket down', async () => {
+    // New leaves the previous document's session first (DSK-192), which tears
+    // down the WebSocket. The REST session (a valid token) is what creation
+    // needs; gating on the socket refused every workspace New in the browser.
+    const provider = installProvider();
+    // What leaving the session leaves behind: the socket down, the host flag
+    // cleared (setHostConnected(false)), the token and REST provider intact.
+    useConnectionStore.setState({ status: 'disconnected' });
+    useRelayDocumentStore.setState({ authenticated: false });
+
+    const result = await usePersistenceStore.getState().newWorkspaceDocument();
+
+    expect(result.ok).toBe(true);
+    expect(provider.saveDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a fresh local document, and creates nothing, without a connection', async () => {
+    const docsBefore = Object.keys(usePersistenceStore.getState().documents).length;
+
+    const result = await usePersistenceStore.getState().newWorkspaceDocument();
+
+    expect(result.ok).toBe(false);
+    expect(usePersistenceStore.getState().currentDocumentId).toBeNull();
+    expect(usePersistenceStore.getState().currentDocumentName).toBe(UNTITLED_DOCUMENT_NAME);
+    expect(Object.keys(usePersistenceStore.getState().documents)).toHaveLength(docsBefore);
+  });
+
+  it('keeps the new document as a local one when the relay refuses it', async () => {
+    installProvider(async () => {
+      throw new Error('Relay unreachable');
+    });
+
+    const result = await usePersistenceStore.getState().newWorkspaceDocument();
+
+    expect(result.ok).toBe(false);
+    const openId = usePersistenceStore.getState().currentDocumentId;
+    expect(openId).toBeTruthy();
+    expect(usePersistenceStore.getState().documents[openId!]?.isRelayDocument).toBeFalsy();
   });
 });
 

@@ -13,9 +13,96 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="DocuShark" />
     <title>DocuShark — Documents, diagrams, and files in one place</title>
+    <!-- Boot (DSK-205). The app applies the saved theme when its bundle runs;
+         until then the page painted in the browser default, white even in dark
+         mode. This applies it first, from the same `docushark-theme` record
+         themeStore persists (default "system"), and sets the status-bar colour
+         to match. -->
+    <script>
+      (function () {
+        var dark = false;
+        try {
+          var stored = JSON.parse(localStorage.getItem('docushark-theme') || 'null');
+          var preference = (stored && stored.state && stored.state.preference) || 'system';
+          dark =
+            preference === 'dark' ||
+            (preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        } catch (e) {
+          dark = false;
+        }
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#0e1c30' : '#f9f6ee');
+      })();
+    </script>
+    <!-- The boot splash's own styles: the app's CSS arrives with the bundle.
+         The colours copy src/index.css (the body background, --text-primary and
+         the brand golds); src/bootSplash.test.ts keeps them in step. -->
+    <style>
+      html { background: #f6f4ec; color-scheme: light; }
+      html[data-theme='dark'] { background: #060c17; color-scheme: dark; }
+      .boot-splash {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 14px;
+        color: #0a1525;
+        font: 600 20px/1 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        letter-spacing: -0.01em;
+        /* A fast (cached) boot never shows it: it only fades in after 150ms. */
+        animation: boot-splash-in 0.3s ease 0.15s both;
+      }
+      html[data-theme='dark'] .boot-splash { color: #f6f4ec; }
+      .boot-splash__mark { width: 64px; height: 64px; border-radius: 14px; }
+      .boot-splash__name span { color: #9a7a3e; }
+      html[data-theme='dark'] .boot-splash__name span { color: #e0c690; }
+      .boot-splash__bar {
+        width: 120px;
+        height: 3px;
+        border-radius: 3px;
+        overflow: hidden;
+        background: rgba(10, 21, 37, 0.1);
+      }
+      html[data-theme='dark'] .boot-splash__bar { background: rgba(246, 244, 236, 0.12); }
+      .boot-splash__bar span {
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: 3px;
+        background: currentColor;
+        opacity: 0.45;
+        animation: boot-splash-slide 1.1s ease-in-out infinite;
+      }
+      .boot-splash__label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+      @keyframes boot-splash-in { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes boot-splash-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash { animation: none; }
+        .boot-splash__bar span { animation: none; width: 100%; opacity: 0.25; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Shown while the bundle loads (and while a sign-in hand-off finishes).
+           React replaces #root's children on its first render, so it needs no
+           teardown and no load logic changes. -->
+      <div class="boot-splash" role="status">
+        <img class="boot-splash__mark" src="/icon-192x192.png" width="64" height="64" alt="" />
+        <div class="boot-splash__name">Docu<span>Shark</span></div>
+        <div class="boot-splash__bar" aria-hidden="true"><span></span></div>
+        <span class="boot-splash__label">Loading DocuShark…</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

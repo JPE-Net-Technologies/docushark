@@ -38,6 +38,7 @@ import {
   Network,
   PanelLeft,
   Redo2,
+  Save,
   ScanSearch,
   Search,
   Spline,
@@ -63,6 +64,8 @@ import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { isGroup, type RectangleShape } from '../shapes/Shape';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { isActiveDocReadOnly, getActiveDocumentRecord } from '../store/documentRegistry';
+import { useNotificationStore } from '../store/notificationStore';
+import { requestSaveNow } from '../store/autoSaveGuard';
 import { relaySessionUsable } from '../store/connectionStore';
 import { opener } from '../platform/opener';
 import { Vec2 } from '../math/Vec2';
@@ -104,14 +107,20 @@ export type ActionSurface = 'palette' | 'tools';
  */
 const commandSources = new Map<string, () => Command[]>();
 
+// id → display shortcut, built on first use. A command's keys never change
+// while the app runs; contributed sources reset it when they come and go.
+let shortcutCache: Map<string, string> | null = null;
+
 /** Contribute commands from a feature area. Replaces any source with the same id. */
 export function registerCommandSource(id: string, source: () => Command[]): void {
   commandSources.set(id, source);
+  shortcutCache = null;
 }
 
 /** Remove a contributed source (tests, and teardown of an optional feature). */
 export function unregisterCommandSource(id: string): void {
   commandSources.delete(id);
+  shortcutCache = null;
 }
 
 function contributedCommands(): Command[] {
@@ -337,6 +346,22 @@ function buildCommands(): Command[] {
       // The palette can't reach React state; App listens for this event.
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-documents')),
     },
+    {
+      id: 'file.save', icon: Save,
+      label: 'Save now',
+      category: 'File',
+      keys: 'Mod+S', scope: 'global', whileTyping: true,
+      // Autosave already runs; this saves at once (DSK-203). Deliberately no
+      // canExecute: dispatchKey hands the key back to the browser when that is
+      // false, and Mod+S would then open "Save page as" over the document.
+      execute: () => {
+        if (isActiveDocReadOnly()) {
+          useNotificationStore.getState().info('This document is view only, so there is nothing to save.');
+          return;
+        }
+        requestSaveNow();
+      },
+    },
 
     // --- Page navigation (JP-357) --- steps the focused surface's pages (prose
     // when the editor is focused, canvas otherwise). Literal Ctrl (not Mod):
@@ -515,6 +540,23 @@ export function getAllCommands(): Command[] {
   return [...buildCommands(), ...contributedCommands()].map((c) =>
     c.keys ? { ...c, shortcut: formatCombo(c.keys) } : c,
   );
+}
+
+/**
+ * One command's shortcut as the user should read it ("Ctrl+Shift+O" on Linux
+ * and Windows, "⇧⌘O" on macOS), from the keys the command is actually bound
+ * to; undefined when it has none (DSK-198). Every surface that names a
+ * shortcut — tiles, tooltips, menus, hints — asks here, so none can hard-code
+ * one platform's spelling or drift from the real binding.
+ */
+export function commandShortcut(id: string): string | undefined {
+  if (!shortcutCache) {
+    shortcutCache = new Map();
+    for (const c of getAllCommands()) {
+      if (c.shortcut) shortcutCache.set(c.id, c.shortcut);
+    }
+  }
+  return shortcutCache.get(id);
 }
 
 /** True when `c` is offered on `surface` (absent `surfaces` = palette only). */

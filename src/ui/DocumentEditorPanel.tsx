@@ -12,7 +12,8 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { EllipsisVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
-import { history } from 'prosemirror-history';
+import { resetEditorHistory } from '../tiptap/resetEditorHistory';
+import { useDocumentNaming } from './useDocumentNaming';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { MobileProseToolbar } from './mobile/MobileProseToolbar';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
@@ -30,7 +31,8 @@ import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
 import { useDocumentRegistry } from '../store/documentRegistry';
 import { usePresenceStore } from '../store/presenceStore';
-import { shouldPersistLeavingPage } from './proseLeavingPageGuard';
+import { shouldFlushMountedPage, shouldPersistLeavingPage } from './proseLeavingPageGuard';
+import { registerPreSaveFlush } from '../store/preSaveFlush';
 import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
@@ -206,6 +208,8 @@ export function DocumentEditorPanel({
   const restoreInProgressRef = useRef(false);
   const pendingLoadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
+  // Name a new document from its first heading, or prompt once (DSK-209).
+  useDocumentNaming(editor);
   const editorRef = useRef<Editor | null>(null);
 
   // The actual scroll container is `.tiptap-editor` (overflow-y: auto). Tiptap's
@@ -235,33 +239,9 @@ export function DocumentEditorPanel({
     initializeRichTextPages();
   }, []);
 
-  /**
-   * Wipe Tiptap's undo/redo history without disturbing the current document.
-   *
-   * Tiptap (via StarterKit's History extension) keeps one shared undo stack
-   * for the editor instance. When we swap in a new page's content with
-   * `setContent`, that swap itself is recorded as a transaction — so undoing
-   * later walks back through old page loads and resurrects content from
-   * other pages. Clearing history at every page boundary makes undo/redo a
-   * per-page-session operation, which is what users intuitively expect.
-   *
-   * Implementation: replace the history plugin *instance* in the plugin
-   * array, then `reconfigure` the state. ProseMirror's reconfigure preserves
-   * plugin state for plugin instances that are unchanged and reinitializes
-   * only those that differ — so the history plugin gets a fresh empty stack
-   * while @tiptap/react's ReactNodeView tracking plugin (and every other
-   * plugin) keeps its state intact. Using `EditorState.create` here instead
-   * would reinit *every* plugin and crash mid-render with
-   * "curDesc.parent.children is undefined" because ReactNodeView would try
-   * to remount synchronously against a partial desc tree.
-   */
-  const clearTiptapHistory = useCallback((ed: Editor) => {
-    const newPlugins = ed.state.plugins.map((p) => {
-      const key = (p as unknown as { key?: string }).key;
-      return typeof key === 'string' && key.startsWith('history$') ? history() : p;
-    });
-    ed.view.updateState(ed.state.reconfigure({ plugins: newPlugins }));
-  }, []);
+  // Undo/redo is a per-page-session operation: every page load empties the
+  // undo stack, so undo can neither revert the load (blanking the page) nor
+  // walk back into a previous page's content (DSK-201, resetEditorHistory).
 
   // Handle editor ready callback from TiptapEditor
   const handleEditorReady = useCallback((ed: Editor | null, pageId: string | null) => {
@@ -347,7 +327,7 @@ export function DocumentEditorPanel({
         // cannot walk back into transactions from previously-loaded pages.
         // This is the actual fix for the "undo on page 3 starts applying
         // page 1's content" bug.
-        clearTiptapHistory(editorRef.current);
+        resetEditorHistory(editorRef.current);
         // Keep richTextStore in sync so TiptapEditor's content-watcher
         // never sees a mismatch and overwrites the freshly-loaded page.
         useRichTextStore.getState().loadContent({
@@ -381,7 +361,7 @@ export function DocumentEditorPanel({
     }, 0);
     // `pages` is intentionally excluded from deps — it is read imperatively
     // inside the timeout to avoid stale closures and spurious re-runs.
-  }, [activePageId, updatePageContent, editor, clearTiptapHistory, isRelayDoc, currentDocId]);
+  }, [activePageId, updatePageContent, editor, isRelayDoc, currentDocId]);
 
   // Relay docs: the collab editor is keyed per page (`docId:pageId:sessionEpoch`)
   // so a page-switch remounts it and scroll resets to 0. The page-switch effect
@@ -438,21 +418,43 @@ export function DocumentEditorPanel({
     };
   }, [editor, getScrollEl]);
 
-  // Auto-save current page content periodically
+  // Copy the mounted editor's content into the pages store, the copy a save
+  // serializes and a reload reads back (DSK-199). Writes to the page the editor
+  // is showing (not the store's activePageId — see the cross-page guard in the
+  // scroll handler above), and only when that is the open document's page:
+  // until the load effect runs, the editor still holds the previous document,
+  // whose page ids the new one may share.
+  const isRelayDocRef = useRef(isRelayDoc);
   useEffect(() => {
-    const saveInterval = setInterval(() => {
-      // Use the page whose content is currently mounted in the editor, not the
-      // store's activePageId — see cross-page guard comment in the scroll
-      // handler above.
-      const pageId = lastActivePageRef.current;
-      if (editorRef.current && pageId && !isLoadingRef.current) {
-        const content = editorRef.current.getHTML();
-        updatePageContent(pageId, content);
-      }
-    }, 5000);
-
-    return () => clearInterval(saveInterval);
+    isRelayDocRef.current = isRelayDoc;
+  }, [isRelayDoc]);
+  const flushMountedPage = useCallback(() => {
+    const ed = editorRef.current;
+    const pageId = lastActivePageRef.current;
+    if (!ed || ed.isDestroyed || !pageId) return;
+    const flush = shouldFlushMountedPage({
+      editorPageId: editorPageIdRef.current,
+      shownPageId: pageId,
+      panelDocId: lastDocIdRef.current,
+      openDocId: usePersistenceStore.getState().currentDocumentId,
+      loading: isLoadingRef.current,
+      editable: ed.isEditable,
+      relay: isRelayDocRef.current,
+    });
+    if (flush) updatePageContent(pageId, ed.getHTML());
   }, [updatePageContent]);
+
+  // Every save captures the editor first (DSK-199). Before this, a save took
+  // the pages store as it stood, so text typed since the last copy below missed
+  // every save, the unload and app-switch flushes included.
+  useEffect(() => registerPreSaveFlush(flushMountedPage), [flushMountedPage]);
+
+  // Keep the pages store current for its other readers (outline, offline
+  // cache, export) between saves.
+  useEffect(() => {
+    const saveInterval = setInterval(flushMountedPage, 5000);
+    return () => clearInterval(saveInterval);
+  }, [flushMountedPage]);
 
   // Save on unmount
   useEffect(() => {
