@@ -33,6 +33,10 @@ import {
   MESSAGE_HEARTBEAT,
   encodeMessage,
   decodePayload,
+  isDeletedDocError,
+  isRateLimitError,
+  isUnknownDocError,
+  isViewForbiddenError,
   type AuthResponse,
   type DocEvent,
   type ErrorResponse,
@@ -159,6 +163,20 @@ export class UnifiedSyncProvider {
    *  a false disconnect (feature detection in lieu of a PROTOCOL_VERSION bump). */
   private heartbeatSupported = false;
 
+  /**
+   * Recovery from dropped SYNC frames (DSK-210). The relay answers an over-quota
+   * frame with ERR_RATE_LIMIT and otherwise forgets it, so a dropped handshake
+   * would leave this connection unsynced (and the document read-only) until a
+   * reconnect, and a dropped update would never reach the relay. After a backoff
+   * we re-join, so the relay's own SyncStep1 pulls back what it missed, and
+   * re-request its state. A watchdog does the same for a handshake that goes
+   * unanswered.
+   */
+  private resyncTimer: ReturnType<typeof setTimeout> | null = null;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private resyncAttempts = 0;
+  private lastResyncRequestAt = 0;
+
   /** Current document ID for CRDT routing */
   private currentDocId: string | null = null;
 
@@ -245,6 +263,7 @@ export class UnifiedSyncProvider {
   disconnect(): void {
     this.clearReconnectTimeout();
     this.stopHeartbeat();
+    this.cancelResync();
 
     if (this.ws) {
       this.ws.close();
@@ -347,22 +366,24 @@ export class UnifiedSyncProvider {
   // the store via `RestDocumentProvider`. The WS keeps SYNC,
   // AWARENESS, AUTH, JOIN_DOC, and DOC_EVENT broadcasts.
 
-  /** Join a document for CRDT routing */
-  joinDocument(docId: string): void {
+  /** Join a document for CRDT routing. Returns whether a JOIN_DOC was sent. */
+  joinDocument(docId: string): boolean {
     this.currentDocId = docId;
 
     // Don't fire a JOIN_DOC the relay is guaranteed to reject (e.g. a
     // local-only doc it has no record of). Avoids a doomed round-trip and
     // the misleading silent-rejection path.
     if (!this.options.shouldJoinDocument(docId)) {
-      return;
+      return false;
     }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
       const request: JoinDocRequest = { docId };
       const data = encodeMessage(MESSAGE_JOIN_DOC, request);
       this.ws.send(data);
+      return true;
     }
+    return false;
   }
 
   /** Request initial sync after joining a document */
@@ -410,6 +431,9 @@ export class UnifiedSyncProvider {
 
     // Send initial CRDT sync step 1 (now routed to correct document)
     this.sendSyncStep1();
+
+    // DSK-210: a handshake the relay drops is retried, not waited on forever.
+    this.armHandshakeWatchdog();
 
     // Send initial awareness
     this.sendAwarenessUpdate();
@@ -463,6 +487,7 @@ export class UnifiedSyncProvider {
     this.synced = false;
     this.authenticated = false;
     this.stopHeartbeat();
+    this.cancelResync();
 
     if (this.status !== 'disconnected') {
       this.setStatus('disconnected');
@@ -664,6 +689,13 @@ export class UnifiedSyncProvider {
     try {
       const response = decodePayload<ErrorResponse>(data);
       console.warn('[UnifiedSyncProvider] Relay error frame:', response.error);
+      // DSK-210: a dropped frame is recovered by re-syncing; a refused join is
+      // final for this connection, so stop retrying it.
+      if (isRateLimitError(response.error)) {
+        this.scheduleResync();
+      } else if (isJoinRefusal(response.error)) {
+        this.cancelResync();
+      }
       this.options.onError(response.error, this.currentDocId);
     } catch (e) {
       console.error('[UnifiedSyncProvider] Failed to parse error frame:', e);
@@ -722,6 +754,70 @@ export class UnifiedSyncProvider {
     if (this.pongTimer !== null) {
       clearTimeout(this.pongTimer);
       this.pongTimer = null;
+    }
+  }
+
+  // ============ Dropped-frame recovery (DSK-210) ============
+
+  /** First re-sync delay after a dropped frame; doubles per attempt. */
+  private static readonly RESYNC_BASE_DELAY_MS = 500;
+  private static readonly RESYNC_MAX_DELAY_MS = 10000;
+  /** A quiet spell this long since the last dropped frame starts the backoff over. */
+  private static readonly RESYNC_QUIET_RESET_MS = 30000;
+  /** How long a handshake may go unanswered before it is retried. */
+  private static readonly HANDSHAKE_TIMEOUT_MS = 10000;
+
+  /** Re-sync after a backoff. One re-sync is pending at a time. */
+  private scheduleResync(): void {
+    const now = Date.now();
+    if (now - this.lastResyncRequestAt > UnifiedSyncProvider.RESYNC_QUIET_RESET_MS) {
+      this.resyncAttempts = 0;
+    }
+    this.lastResyncRequestAt = now;
+    if (this.resyncTimer !== null) return;
+
+    const base = Math.min(
+      UnifiedSyncProvider.RESYNC_BASE_DELAY_MS * Math.pow(2, this.resyncAttempts),
+      UnifiedSyncProvider.RESYNC_MAX_DELAY_MS,
+    );
+    const delay = this.options.reconnectJitter
+      ? Math.round(base * (0.8 + Math.random() * 0.4))
+      : base;
+    this.resyncAttempts++;
+    this.resyncTimer = setTimeout(() => {
+      this.resyncTimer = null;
+      this.resync();
+    }, delay);
+  }
+
+  /**
+   * Re-join and re-request state on the open socket. The relay answers the join
+   * with its own SyncStep1, whose reply carries anything it missed, and answers
+   * our SyncStep1 with its state.
+   */
+  private resync(): void {
+    const docId = this.currentDocId ?? this.options.documentId;
+    if (!docId || !this.joinDocument(docId)) return;
+    this.sendSyncStep1();
+    if (!this.synced) this.armHandshakeWatchdog();
+  }
+
+  private armHandshakeWatchdog(): void {
+    if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = setTimeout(() => {
+      this.handshakeTimer = null;
+      if (!this.synced) this.scheduleResync();
+    }, UnifiedSyncProvider.HANDSHAKE_TIMEOUT_MS);
+  }
+
+  private cancelResync(): void {
+    if (this.resyncTimer !== null) {
+      clearTimeout(this.resyncTimer);
+      this.resyncTimer = null;
+    }
+    if (this.handshakeTimer !== null) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
     }
   }
 
@@ -807,6 +903,11 @@ export class UnifiedSyncProvider {
       this.reconnectTimeout = null;
     }
   }
+}
+
+/** A JOIN_DOC the relay refused outright: retrying the handshake won't change it. */
+function isJoinRefusal(error: string): boolean {
+  return isDeletedDocError(error) || isViewForbiddenError(error) || isUnknownDocError(error);
 }
 
 export default UnifiedSyncProvider;
