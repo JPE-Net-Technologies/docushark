@@ -35,7 +35,7 @@ They're first-class surfaces now, not settings tabs — you'll find them on
 | Default style profile | Dropdown | Style profile applied to new shapes |
 | Static properties | On/Off | Show read-only properties (like ID) in the Property Panel |
 | Hide default style profiles | On/Off | Show only your custom profiles in the Property Panel |
-| Minimap | On/Off | Minimap overlay for navigating large canvases (experimental) |
+| Minimap | On/Off | An overview for getting around large canvases; also the map button in the zoom controls |
 | Auto-focus on layer click | On/Off | Pan the camera to a shape when you click it in the Layers panel |
 
 **Reset settings** returns everything on this tab to its shipped value.

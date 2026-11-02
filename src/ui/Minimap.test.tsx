@@ -12,6 +12,7 @@ import { glideCamera } from '../engine/canvasZoom';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useDocumentStore } from '../store/documentStore';
+import { useThemeStore } from '../store/themeStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import type { ConnectorShape, LineShape, RectangleShape } from '../shapes/Shape';
 import { Vec2 } from '../math/Vec2';
@@ -171,6 +172,15 @@ describe('Minimap (DSK-212)', () => {
     const [endX, endY] = ctx.lineTo.mock.calls[3] as [number, number];
     expect(endX).toBeCloseTo(startX);
     expect(Math.abs(endY - startY)).toBeGreaterThan(1);
+  });
+
+  it('redraws when the theme changes, for its colours', () => {
+    const preference = useThemeStore.getState().preference;
+    renderMap();
+    const draws = ctx.drawImage.mock.calls.length;
+    act(() => useThemeStore.getState().setPreference(useThemeStore.getState().resolvedTheme === 'dark' ? 'light' : 'dark'));
+    expect(ctx.drawImage.mock.calls.length).toBeGreaterThan(draws);
+    act(() => useThemeStore.getState().setPreference(preference));
   });
 
   it('refits to frame new content that lands outside the map', () => {

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { useThemeStore } from '../store/themeStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { resolveConnectorPoints } from '../shapes/Connector';
 import type { ConnectorShape, LineShape, Shape } from '../shapes/Shape';
@@ -186,6 +187,8 @@ function MinimapView({ canvasWidth, canvasHeight }: MinimapProps) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const camera = useSessionStore((state) => state.camera);
   const content = useMemo(() => contentBounds(shapes, shapeOrder), [shapes, shapeOrder]);
+  // Redraw on a theme switch: the drawing takes its colours from the theme.
+  useThemeStore((state) => state.resolvedTheme);
 
   // The world area the map shows. Held in a ref so a drag can freeze it; bumped
   // into state only to redraw.
