@@ -86,6 +86,11 @@
   margin-left: auto;
 }
 
+/* Marks which slash command an Insert control stands for, without a box of its own. */
+.ribbon-insert-item {
+  display: contents;
+}
+
 /* Each cluster stays atomic — it never splits across rows when the ribbon wraps;
  * whole groups wrap as units. */
 .document-editor-toolbar-group {

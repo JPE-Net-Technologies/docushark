@@ -132,6 +132,21 @@ describe('the ribbon (DSK-200, DSK-27)', () => {
     click.mockRestore();
   });
 
+  it('offers on Insert everything "/" inserts, code included', () => {
+    render(<DocumentEditorToolbar />);
+    // Home keeps the formatting toggles; code moved to Insert.
+    expect(screen.queryByRole('button', { name: 'Inline code' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Insert code block' })).toBeNull();
+
+    fireEvent.click(tab('Insert')!);
+    const panel = screen.getByRole('tabpanel');
+    const offered = [...panel.querySelectorAll('[data-slash-id]')].map((item) => item.getAttribute('data-slash-id'));
+    const inserts = SLASH_COMMANDS.filter((command) => command.place === 'insert').map((command) => command.id);
+    expect(offered).toEqual(inserts);
+    within(panel).getByRole('button', { name: 'Inline code' });
+    within(panel).getByRole('button', { name: 'Insert code block' });
+  });
+
   it('ends the row with Find', () => {
     render(<DocumentEditorToolbar />);
     const buttons = within(screen.getByRole('tablist').parentElement!).getAllByRole('button');

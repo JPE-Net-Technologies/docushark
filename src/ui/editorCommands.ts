@@ -7,6 +7,7 @@
 
 import type { Editor } from '@tiptap/core';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
+import { useNotificationStore } from '../store/notificationStore';
 import {
   addColumnAfterKeepHeader,
   addColumnBeforeKeepHeader,
@@ -135,3 +136,19 @@ export const setCitation = (editor: Editor, refId: string, locator?: string) =>
   editor.chain().focus().setCitation(refId, locator).run();
 export const insertBibliography = (editor: Editor) =>
   editor.chain().focus().insertBibliography().run();
+
+/**
+ * Insert the bibliography unless the document has one already: a second would
+ * only repeat the first. The one path for the ribbon and `/bibliography`.
+ */
+export function insertBibliographyOnce(editor: Editor): void {
+  let exists = false;
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === 'bibliography') exists = true;
+  });
+  if (exists) {
+    useNotificationStore.getState().info('Bibliography already added');
+    return;
+  }
+  insertBibliography(editor);
+}

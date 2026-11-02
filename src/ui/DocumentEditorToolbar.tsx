@@ -27,15 +27,14 @@
  * it last synced, and carries Refresh, Open and Detach.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from 'react';
 import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import {
   Bold, Italic, Underline, Strikethrough, Code, Subscript, Superscript,
-  Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, Quote, SquareCode,
+  Highlighter, RemoveFormatting, List, ListOrdered, ListTodo, TextQuote,
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
-  BookMarked, Library, Info, Braces,
+  Sigma, SquareSigma, Search, Settings2, PaintBucket, Trash2, Library, Info,
   BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
   ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X, Undo2, Redo2, ImageUp,
 } from 'lucide-react';
@@ -45,7 +44,7 @@ import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useActivePageMirror, useRichTextPagesStore } from '../store/richTextPagesStore';
 import { MirrorBanner } from './integrations/MirrorBanner';
 import * as cmd from './editorCommands';
-import { registerSlashUiHandler } from '../tiptap/slashCommands';
+import { registerSlashUiHandler, SLASH_COMMANDS, type SlashCommand } from '../tiptap/slashCommands';
 import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
 import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import { ImageUploadButton } from './ImageUploadButton';
@@ -59,7 +58,6 @@ import { InsertLinkDialog } from './InsertLinkDialog';
 import { CitationPickerDialog } from './CitationPickerDialog';
 import { ReferenceManagerDialog } from './ReferenceManagerDialog';
 import { FieldsManagerDialog } from './FieldsManagerDialog';
-import { useNotificationStore } from '../store/notificationStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
@@ -70,6 +68,12 @@ type PlainTab = 'home' | 'insert';
 type RibbonTab = PlainTab | 'table' | 'image';
 
 const TAB_LABELS: Record<RibbonTab, string> = { home: 'Home', insert: 'Insert', table: 'Table', image: 'Image' };
+
+/** The Insert tab offers what "/" inserts, in the registry's groups and order. */
+const INSERT_COMMANDS = SLASH_COMMANDS.filter((command) => command.place === 'insert');
+const INSERT_GROUPS = [...new Set(INSERT_COMMANDS.map((command) => command.group))];
+/** Insert controls that light up when the selection is already one of theirs. */
+const INSERT_ACTIVE_NODE: Partial<Record<string, string>> = { code: 'codeBlock' };
 
 /** The text-level select values. */
 type HeadingValue = 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
@@ -310,19 +314,6 @@ export function DocumentEditorToolbar() {
   }, []);
 
   // Citations (JP-89): insert a bibliography, but only one per document.
-  const insertBibliographyOnce = useCallback(() => {
-    if (!editor) return;
-    let exists = false;
-    editor.state.doc.descendants((n) => {
-      if (n.type.name === 'bibliography') exists = true;
-    });
-    if (exists) {
-      useNotificationStore.getState().info('Bibliography already added');
-      return;
-    }
-    cmd.insertBibliography(editor);
-  }, [editor]);
-
   const insertMath = useCallback(() => {
     if (!mathInput.trim() || !editor) return;
     if (mathIsBlock) {
@@ -345,6 +336,58 @@ export function DocumentEditorToolbar() {
 
   const isActive = (type: string, attrs?: Record<string, unknown>) =>
     editor?.isActive(type, attrs) ?? false;
+
+  /**
+   * One Insert control per registry command. Some keep richer controls: the
+   * uploads show their progress, callouts offer their variants, and a block
+   * equation opens the same LaTeX entry as the inline one.
+   */
+  const renderInsert = (command: SlashCommand) => {
+    switch (command.id) {
+      case 'image':
+        return <ImageUploadButton className="document-editor-toolbar-btn" />;
+      case 'file':
+        return <FileUploadButton className="document-editor-toolbar-btn" />;
+      case 'gallery':
+        return <GalleryUploadButton className="document-editor-toolbar-btn" />;
+      case 'callout':
+        return (
+          <ToolbarDropdown
+            trigger={<Info {...ICON} />}
+            isOpen={showCalloutMenu}
+            onToggle={() => setShowCalloutMenu(!showCalloutMenu)}
+            onClose={() => setShowCalloutMenu(false)}
+            triggerClassName="document-editor-toolbar-btn"
+            title="Insert Callout"
+            isActive={isActive('callout')}
+          >
+            <div className="callout-variant-menu">
+              {CALLOUT_VARIANTS.map(({ value, label }) => (
+                <button key={value} onClick={() => { if (editor) cmd.setCallout(editor, value); setShowCalloutMenu(false); }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </ToolbarDropdown>
+        );
+      case 'math':
+        return (
+          <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} title="Insert Block Equation ($$...$$)" aria-label="Insert block equation">
+            <SquareSigma {...ICON} />
+          </button>
+        );
+      default: {
+        const CommandIcon = command.icon;
+        const activeNode = INSERT_ACTIVE_NODE[command.id];
+        const label = `Insert ${command.title.toLowerCase()}`;
+        return (
+          <button className={`document-editor-toolbar-btn ${activeNode && isActive(activeNode) ? 'active' : ''}`} onClick={() => editor && command.run(editor)} title={label} aria-label={label}>
+            <CommandIcon {...ICON} />
+          </button>
+        );
+      }
+    }
+  };
 
   // Placed after every hook above — an early return before them would change
   // hook order between renders when a document's permission flips in place.
@@ -448,9 +491,6 @@ export function DocumentEditorToolbar() {
               <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} title="Strikethrough" aria-label="Strikethrough">
                 <Strikethrough {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} title="Inline Code" aria-label="Inline code">
-                <Code {...ICON} />
-              </button>
             </div>
 
 
@@ -526,10 +566,7 @@ export function DocumentEditorToolbar() {
                 <ListTodo {...ICON} />
               </button>
               <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} title="Block Quote" aria-label="Block quote">
-                <Quote {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('codeBlock') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCodeBlock(editor)} title="Code Block" aria-label="Code block">
-                <SquareCode {...ICON} />
+                <TextQuote {...ICON} />
               </button>
               <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} title="Insert / Edit Link" aria-label="Insert or edit link">
                 <Link {...ICON} />
@@ -559,79 +596,32 @@ export function DocumentEditorToolbar() {
             shows: its upload buttons register the /image, /file and /gallery
             commands, which did nothing whenever Insert wasn't open. */}
         <div className="ribbon-panel-content" role="tabpanel" hidden={activeTab !== 'insert'}>
-            {/* Table insert */}
-            <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table" aria-label="Insert table">
-                <Table {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Math/LaTeX */}
-            <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} title="Insert Inline Equation ($...$)" aria-label="Insert inline equation">
-                <Sigma {...ICON} />
-              </button>
-              <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} title="Insert Block Equation ($$...$$)" aria-label="Insert block equation">
-                <SquareSigma {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Media */}
-            <div className="document-editor-toolbar-group">
-              <ImageUploadButton className="document-editor-toolbar-btn" />
-              <FileUploadButton className="document-editor-toolbar-btn" />
-              <GalleryUploadButton className="document-editor-toolbar-btn" />
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertHorizontalRule(editor)} title="Horizontal Rule" aria-label="Horizontal rule">
-                <Minus {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Blocks */}
-            <div className="document-editor-toolbar-group">
-              <ToolbarDropdown
-                trigger={<Info {...ICON} />}
-                isOpen={showCalloutMenu}
-                onToggle={() => setShowCalloutMenu(!showCalloutMenu)}
-                onClose={() => setShowCalloutMenu(false)}
-                triggerClassName="document-editor-toolbar-btn"
-                title="Insert Callout"
-                isActive={isActive('callout')}
-              >
-                <div className="callout-variant-menu">
-                  {CALLOUT_VARIANTS.map(({ value, label }) => (
-                    <button key={value} onClick={() => { if (editor) cmd.setCallout(editor, value); setShowCalloutMenu(false); }}>
-                      {label}
+          {INSERT_GROUPS.map((group) => (
+            <div key={group} className="document-editor-toolbar-group">
+              {INSERT_COMMANDS.filter((command) => command.group === group).map((command) => (
+                <Fragment key={command.id}>
+                  {command.id === 'code' && (
+                    <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} title={`Inline code (${formatCombo('Mod+E')})`} aria-label="Inline code">
+                      <Code {...ICON} />
                     </button>
-                  ))}
-                </div>
-              </ToolbarDropdown>
+                  )}
+                  {command.id === 'math' && (
+                    <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} title="Insert Inline Equation ($...$)" aria-label="Insert inline equation">
+                      <Sigma {...ICON} />
+                    </button>
+                  )}
+                  <span className="ribbon-insert-item" data-slash-id={command.id}>
+                    {renderInsert(command)}
+                  </span>
+                  {command.id === 'bibliography' && (
+                    <button className="document-editor-toolbar-btn" onClick={() => setShowRefManager(true)} title="Manage References" aria-label="Manage references">
+                      <Library {...ICON} />
+                    </button>
+                  )}
+                </Fragment>
+              ))}
             </div>
-
-
-            {/* Citations (JP-89) */}
-            <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && setShowCitationPicker(true)} title="Insert Citation" aria-label="Insert citation">
-                <Quote {...ICON} />
-              </button>
-              <button className="document-editor-toolbar-btn" onClick={insertBibliographyOnce} title="Insert Bibliography" aria-label="Insert bibliography">
-                <BookMarked {...ICON} />
-              </button>
-              <button className="document-editor-toolbar-btn" onClick={() => setShowRefManager(true)} title="Manage References" aria-label="Manage references">
-                <Library {...ICON} />
-              </button>
-            </div>
-
-            {/* Document Fields (Phase 3) */}
-            <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && setShowFieldsManager(true)} title="Fields (insert {{value}})" aria-label="Fields">
-                <Braces {...ICON} />
-              </button>
-            </div>
-
-
+          ))}
         </div>
 
         {/* === TABLE TAB (contextual) === */}
