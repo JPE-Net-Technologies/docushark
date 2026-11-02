@@ -67,6 +67,11 @@ Pick how spellcheck works while you write:
 Toggle **rounded tables** on for softer corners in the writing editor, or off for
 a square, grid-style look.
 
+## Formatting on selection
+
+Selecting text in the writing editor shows a small formatting bar beside it.
+Turn **Formatting on selection** off if you'd rather use only the ribbon.
+
 ## Motion
 
 Set **interface animations** to **Full**, **Reduced**, or **System** (which

@@ -19,6 +19,29 @@ The Document Editor appears on the left side of the canvas and provides a full-f
 
 The editor is built on [Tiptap](https://tiptap.dev/) (ProseMirror) and supports rich formatting, tables, math equations, citations, fields, and embedded diagrams.
 
+### The Ribbon
+
+The ribbon above the text keeps everything in one row:
+
+- **Undo** and **Redo** come first, as they do on the canvas toolbar.
+- **Home** holds text styles, formatting, colours, lists and alignment.
+- **Insert** holds everything you can add, the same set as the `/` menu: inline
+  code and code blocks, dividers, callouts, tables, equations, images, files,
+  galleries, fields, citations and the bibliography.
+- **Table** and **Image** appear while your cursor is in a table or an image is
+  selected, and go again when it leaves. They never switch the ribbon over by
+  themselves; you choose them.
+- **Find** sits at the end (`Ctrl+F`).
+
+In a narrow panel, such as Split, the controls scroll sideways instead of
+wrapping onto a second row: scroll over them with the mouse wheel.
+
+### Formatting on Selection
+
+Select some text and a small bar appears beside it with bold, italic,
+underline, strikethrough, headings 1 and 2, highlight, link and clear
+formatting. Turn it off in **Settings → Appearance → Formatting on selection**.
+
 ### Slash Commands
 
 Type `/` at the start of a line to open a quick menu of blocks and actions —
@@ -110,9 +133,12 @@ Prefix any shape label with `=` to render it as LaTeX. For example, a rectangle 
 
 Embed images in your documentation:
 
-1. Click the image button in toolbar
-2. Upload a file
-3. Image is embedded in the document
+1. On the **Insert** tab, click the image button (or type `/image`)
+2. Choose a file
+3. The image is embedded in the document
+
+With an image selected, the **Image** tab offers **Replace image**,
+**Remove image** and, in a gallery, moving the image left or right.
 
 You can also paste an image: a screenshot or a copied picture is saved into the document where your cursor is.
 
@@ -128,7 +154,9 @@ Create tables for structured data:
 
 ### Insert Table
 
-Click **Table** in the toolbar to insert a 3×3 table with header row.
+On the **Insert** tab, click **Insert table** (or type `/table`) to insert a
+3×3 table with a header row. While your cursor is in a table, the **Table** tab
+appears with its row, column and cell tools.
 
 ### Table Editing
 

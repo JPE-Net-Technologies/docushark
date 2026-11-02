@@ -512,7 +512,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     <DocumentEditorPanel
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
-                      onCustomizeLayout={handleOpenLayoutSettings}
                       // Centered reading column whenever prose is the primary
                       // region — write AND split. Keyed on the region's role,
                       // not on `regions.split` (a pane-count boolean): the
@@ -534,7 +533,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                         onCollapse={handleCollapseEditor}
                         isFullscreen={isEditorFullscreen}
                         onToggleFullscreen={handleToggleFullscreen}
-                        onCustomizeLayout={handleOpenLayoutSettings}
                       />
                     </Suspense>
                   </ErrorBoundary>
@@ -680,7 +678,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                       onCollapse={handleCollapseEditor}
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
-                      onCustomizeLayout={handleOpenLayoutSettings}
                     />
                   </Suspense>
                 </ErrorBoundary>

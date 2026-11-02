@@ -64,6 +64,7 @@ Color slots warn inline when a choice falls below a readable contrast ratio.
 | Caret style | Bar / Block | The text cursor shape |
 | Smooth writing | On/Off | Glide the caret between positions. Off automatically when motion is reduced |
 | Rounded tables | On/Off | Off gives square, grid-style tables |
+| Formatting on selection | On/Off | Selecting text shows bold, italic, highlight, link and more beside it |
 | Caret color | Color | Defaults to the theme text color |
 | Spellcheck | Custom / System / Off | Custom uses DocuShark's dictionary and "Add to dictionary"; System uses your browser or OS checker. Only one runs at a time |
 

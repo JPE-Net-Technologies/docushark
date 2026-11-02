@@ -90,8 +90,6 @@ export interface DocumentEditorPanelProps {
   isFullscreen?: boolean;
   /** Toggle full-screen mode */
   onToggleFullscreen?: () => void;
-  /** Open the layout customization settings (overflow menu item) */
-  onCustomizeLayout?: () => void;
   /**
    * How the editor presents itself for the active layout. `reading` is the
    * generous centered column used when the editor is the primary region
@@ -104,7 +102,6 @@ export function DocumentEditorPanel({
   onCollapse,
   isFullscreen,
   onToggleFullscreen,
-  onCustomizeLayout,
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
   const { mobileActive } = useMobileAdaptation();
@@ -522,11 +519,13 @@ export function DocumentEditorPanel({
   // "Hide editor" only makes sense in the docked sidebar presentation; in the
   // primary reading column the focus switch governs prose vs canvas instead.
   const canHideEditor = !!onCollapse && !isFullscreen && presentation === 'docked';
-  const hasMenu = !!onToggleFullscreen || canHideEditor || !!onCustomizeLayout;
 
   // The overflow ("⋮") menu lives in the page-tab row (there's no separate panel
-  // header) so it doesn't cost a dead row of vertical space above the editor.
-  const overflowMenu = hasMenu ? (
+  // header) so it doesn't cost a dead row of vertical space above the editor. It
+  // holds only what isn't elsewhere (DSK-200): full screen has its own button
+  // beside it, and "Customize layout…" is on the layout chip, so the menu now
+  // appears only where the editor can be hidden.
+  const overflowMenu = canHideEditor ? (
     <div className="document-editor-panel-actions" ref={menuRef}>
       <button
         className="document-editor-panel-collapse"
@@ -540,46 +539,22 @@ export function DocumentEditorPanel({
       </button>
       {menuOpen && (
         <div className="document-editor-panel-menu" role="menu">
-          {onToggleFullscreen && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onToggleFullscreen();
-              }}
-            >
-              {isFullscreen ? 'Exit full-screen' : 'Full screen'}
-            </button>
-          )}
-          {canHideEditor && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onCollapse?.();
-              }}
-            >
-              Hide editor
-            </button>
-          )}
-          {onCustomizeLayout && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onCustomizeLayout();
-              }}
-            >
-              Customize layout…
-            </button>
-          )}
+          <button
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onCollapse?.();
+            }}
+          >
+            Hide editor
+          </button>
         </div>
       )}
     </div>
   ) : null;
 
-  // Dedicated full-screen toggle in the tab row, alongside the ⋮ menu (the menu
-  // keeps a fallback entry). Direct button so full-screen isn't buried.
+  // Dedicated full-screen toggle in the tab row, alongside the ⋮ menu. Direct
+  // button so full-screen isn't buried.
   const fullscreenButton = onToggleFullscreen ? (
     <button
       className="document-editor-panel-collapse"
