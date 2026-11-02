@@ -1,10 +1,12 @@
 /**
- * DocumentEditorToolbar - Ribbon-style formatting toolbar for the rich text editor.
+ * DocumentEditorToolbar - the ribbon for the rich text editor, in one row:
+ * undo and redo (DSK-200), the tab switch, the tab's controls, and Find.
  *
- * Organized into 3 tabs:
- * - Home: Text formatting, colors, lists, alignment
- * - Insert: Tables, math, images, search
- * - Table: Table-specific tools (always visible, tools enabled when in table)
+ * - Home: text formatting, colours, lists, alignment.
+ * - Insert: tables, maths, images and files, callouts, citations, fields.
+ * - Table and Image are contextual (DSK-27): each appears while the selection
+ *   is in a table or on an image, is never chosen for you, and gives way to
+ *   the tab you were on when the selection leaves.
  *
  * **Read-only documents get a "View only" strip instead of the ribbon (JP-462).**
  * Every control here drives an editor that is already `editable: false` on a
@@ -25,7 +27,7 @@
  * it last synced, and carries Refresh, Open and Detach.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from 'react';
 import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import {
@@ -35,7 +37,7 @@ import {
   Table, Sigma, SquareSigma, Minus, Search, Settings2, PaintBucket, Trash2,
   BookMarked, Library, Info, Braces,
   BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X, Undo2, Redo2, ImageUp,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
@@ -44,6 +46,8 @@ import { useActivePageMirror, useRichTextPagesStore } from '../store/richTextPag
 import { MirrorBanner } from './integrations/MirrorBanner';
 import * as cmd from './editorCommands';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
+import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
+import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import { ImageUploadButton } from './ImageUploadButton';
 import { FileUploadButton } from './FileUploadButton';
 import { GalleryUploadButton } from './GalleryUploadButton';
@@ -61,7 +65,11 @@ import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 
-type RibbonTab = 'home' | 'insert' | 'table';
+/** Home and Insert are always there; Table and Image only in their context. */
+type PlainTab = 'home' | 'insert';
+type RibbonTab = PlainTab | 'table' | 'image';
+
+const TAB_LABELS: Record<RibbonTab, string> = { home: 'Home', insert: 'Insert', table: 'Table', image: 'Image' };
 
 /** The text-level select values. */
 type HeadingValue = 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
@@ -117,7 +125,10 @@ export function DocumentEditorToolbar() {
     return () => clearTimeout(timer);
   }, [docReadOnly]);
   const [, forceUpdate] = useState({});
-  const [activeTab, setActiveTab] = useState<RibbonTab>('home');
+  // The tab you chose, and the plain tab to go back to when a contextual tab's
+  // context ends.
+  const [chosenTab, setChosenTab] = useState<RibbonTab>('home');
+  const [lastPlainTab, setLastPlainTab] = useState<PlainTab>('home');
 
   // Modal states
   const [showMathInput, setShowMathInput] = useState(false);
@@ -159,13 +170,22 @@ export function DocumentEditorToolbar() {
     };
   }, [editor]);
 
-  // Auto-switch to Table tab when cursor enters a table
+  // Contextual tabs exist only while the selection is in a table or on an
+  // image. They're never chosen for you (DSK-27: the ribbon used to jump to
+  // Table whenever the caret entered one); when the context ends, the ribbon
+  // goes back to the plain tab you were on, so returning to a table later
+  // doesn't take you to its tab again.
   const isInTable = editor?.isActive('table') ?? false;
-  useEffect(() => {
-    if (isInTable) {
-      setActiveTab('table');
-    }
-  }, [isInTable]);
+  const image = editor ? selectedImage(editor.state) : null;
+  const tabs: RibbonTab[] = ['home', 'insert'];
+  if (isInTable) tabs.push('table');
+  if (image) tabs.push('image');
+  if (!tabs.includes(chosenTab)) setChosenTab(lastPlainTab);
+  const activeTab = tabs.includes(chosenTab) ? chosenTab : lastPlainTab;
+  const chooseTab = (tab: RibbonTab) => {
+    setChosenTab(tab);
+    if (tab === 'home' || tab === 'insert') setLastPlainTab(tab);
+  };
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -194,6 +214,23 @@ export function DocumentEditorToolbar() {
   const handleSetCellBg = useCallback((color: string) => {
     if (editor) cmd.setCellBackground(editor, color);
   }, [editor]);
+
+  // The Image tab's Replace: the same swap as the context menu's. The image
+  // stays selected while the file picker is open, so the swap finds it.
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+  const handleReplaceImage = useCallback(
+    async (e: ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file || !editor) return;
+      try {
+        await replaceSelectedImageWithFile(editor, file);
+      } catch (err) {
+        console.error('Failed to replace image:', err);
+      }
+    },
+    [editor]
+  );
 
   /**
    * Read a colour attribute off the current selection, so each picker's hex
@@ -351,34 +388,35 @@ export function DocumentEditorToolbar() {
 
   return (
     <div className="document-editor-toolbar">
-      {/* Ribbon tab bar */}
-      <div className="ribbon-tab-bar">
-        <button
-          className={`ribbon-tab ${activeTab === 'home' ? 'active' : ''}`}
-          onClick={() => setActiveTab('home')}
-        >
-          Home
-        </button>
-        <button
-          className={`ribbon-tab ${activeTab === 'insert' ? 'active' : ''}`}
-          onClick={() => setActiveTab('insert')}
-        >
-          Insert
-        </button>
-        <button
-          className={`ribbon-tab ${activeTab === 'table' ? 'active' : ''}`}
-          onClick={() => setActiveTab('table')}
-        >
-          Table
-        </button>
-      </div>
+      <div className="ribbon-row">
+        {/* Undo and redo first, where the canvas toolbar keeps them (DSK-200). */}
+        <div className="document-editor-toolbar-group ribbon-history">
+          <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.undo(editor)} disabled={!editor || !cmd.canUndo(editor)} title={`Undo (${formatCombo('Mod+Z')})`} aria-label="Undo">
+            <Undo2 {...ICON} />
+          </button>
+          <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.redo(editor)} disabled={!editor || !cmd.canRedo(editor)} title={`Redo (${formatCombo('Mod+Shift+Z')})`} aria-label="Redo">
+            <Redo2 {...ICON} />
+          </button>
+        </div>
 
-      {/* Ribbon panel */}
-      <div className="ribbon-panel">
+        <div className="ribbon-tabs" role="tablist" aria-label="Ribbon">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab}
+              className={`ribbon-tab${activeTab === tab ? ' active' : ''}${tab === 'table' || tab === 'image' ? ' ribbon-tab--contextual' : ''}`}
+              onClick={() => chooseTab(tab)}
+            >
+              {TAB_LABELS[tab]}
+            </button>
+          ))}
+        </div>
 
         {/* === HOME TAB === */}
         {activeTab === 'home' && (
-          <div className="ribbon-panel-content">
+          <div className="ribbon-panel-content" role="tabpanel">
             {/* Heading dropdown — rich select, each entry styled as its level */}
             <div className="document-editor-toolbar-group">
               <RichSelect<HeadingValue>
@@ -517,9 +555,10 @@ export function DocumentEditorToolbar() {
           </div>
         )}
 
-        {/* === INSERT TAB === */}
-        {activeTab === 'insert' && (
-          <div className="ribbon-panel-content">
+        {/* === INSERT TAB === — kept mounted, and hidden while another tab
+            shows: its upload buttons register the /image, /file and /gallery
+            commands, which did nothing whenever Insert wasn't open. */}
+        <div className="ribbon-panel-content" role="tabpanel" hidden={activeTab !== 'insert'}>
             {/* Table insert */}
             <div className="document-editor-toolbar-group">
               <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table" aria-label="Insert table">
@@ -593,73 +632,60 @@ export function DocumentEditorToolbar() {
             </div>
 
 
-            {/* Search */}
-            <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title={`Search & Replace (${formatCombo('Mod+F')})`} aria-label="Search and replace">
-                <Search {...ICON} />
-              </button>
-            </div>
-          </div>
-        )}
+        </div>
 
-        {/* === TABLE TAB === */}
+        {/* === TABLE TAB (contextual) === */}
         {activeTab === 'table' && (
-          <div className="ribbon-panel-content">
-            {/* Insert table - always active */}
-            <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.insertTable(editor)} title="Insert Table" aria-label="Insert table">
-                <Table {...ICON} />
-              </button>
-            </div>
+          <div className="ribbon-panel-content" role="tabpanel">
 
 
             {/* Columns - disabled when not in table */}
-            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addColumnBefore(editor)} title="Insert column left" aria-label="Insert column left" disabled={!isInTable}>
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addColumnBefore(editor)} title="Insert column left" aria-label="Insert column left">
                 <BetweenVerticalStart {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addColumnAfter(editor)} title="Insert column right" aria-label="Insert column right" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addColumnAfter(editor)} title="Insert column right" aria-label="Insert column right">
                 <BetweenVerticalEnd {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveColumnLeft(editor)} title="Move column left" aria-label="Move column left" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveColumnLeft(editor)} title="Move column left" aria-label="Move column left">
                 <ArrowLeft {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveColumnRight(editor)} title="Move column right" aria-label="Move column right" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveColumnRight(editor)} title="Move column right" aria-label="Move column right">
                 <ArrowRight {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteColumn(editor)} title="Delete column" aria-label="Delete column" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.deleteColumn(editor)} title="Delete column" aria-label="Delete column">
                 <span className="toolbar-icon">-⇥</span>
               </button>
             </div>
 
             {/* Rows - disabled when not in table */}
-            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addRowBefore(editor)} title="Insert row above" aria-label="Insert row above" disabled={!isInTable}>
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addRowBefore(editor)} title="Insert row above" aria-label="Insert row above">
                 <BetweenHorizontalStart {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.addRowAfter(editor)} title="Insert row below" aria-label="Insert row below" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addRowAfter(editor)} title="Insert row below" aria-label="Insert row below">
                 <BetweenHorizontalEnd {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveRowUp(editor)} title="Move row up" aria-label="Move row up" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveRowUp(editor)} title="Move row up" aria-label="Move row up">
                 <ArrowUp {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.moveRowDown(editor)} title="Move row down" aria-label="Move row down" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveRowDown(editor)} title="Move row down" aria-label="Move row down">
                 <ArrowDown {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.deleteRow(editor)} title="Delete row" aria-label="Delete row" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.deleteRow(editor)} title="Delete row" aria-label="Delete row">
                 <span className="toolbar-icon">-↓</span>
               </button>
             </div>
 
 
             {/* Options - disabled when not in table */}
-            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
+            <div className="document-editor-toolbar-group">
               <ToolbarDropdown
                 trigger={<Settings2 {...ICON} />}
                 isOpen={showTableStyles}
-                onToggle={() => isInTable && setShowTableStyles(!showTableStyles)}
+                onToggle={() => setShowTableStyles(!showTableStyles)}
                 onClose={() => setShowTableStyles(false)}
-                triggerClassName={`document-editor-toolbar-btn ${!isInTable ? 'disabled' : ''}`}
+                triggerClassName="document-editor-toolbar-btn"
                 title="Table Options"
               >
                 <div className="table-styles-menu">
@@ -676,9 +702,9 @@ export function DocumentEditorToolbar() {
               <ToolbarDropdown
                 trigger={<PaintBucket {...ICON} />}
                 isOpen={showCellBgColor}
-                onToggle={() => isInTable && setShowCellBgColor(!showCellBgColor)}
+                onToggle={() => setShowCellBgColor(!showCellBgColor)}
                 onClose={() => setShowCellBgColor(false)}
-                triggerClassName={`document-editor-toolbar-btn ${!isInTable ? 'disabled' : ''}`}
+                triggerClassName="document-editor-toolbar-btn"
                 title="Cell Background"
               >
                 {/* Neutrals lead here: table styling is overwhelmingly header
@@ -697,27 +723,61 @@ export function DocumentEditorToolbar() {
 
 
             {/* Cell alignment - disabled when not in table */}
-            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'left')} title="Align left" aria-label="Align cell left" disabled={!isInTable}>
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'left')} title="Align left" aria-label="Align cell left">
                 <AlignLeft {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'center')} title="Align center" aria-label="Align cell center" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'center')} title="Align center" aria-label="Align cell center">
                 <AlignCenter {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && isInTable && cmd.setCellAlign(editor, 'right')} title="Align right" aria-label="Align cell right" disabled={!isInTable}>
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'right')} title="Align right" aria-label="Align cell right">
                 <AlignRight {...ICON} />
               </button>
             </div>
 
 
             {/* Delete table */}
-            <div className={`document-editor-toolbar-group ${!isInTable ? 'disabled-group' : ''}`}>
-              <button className="document-editor-toolbar-btn danger" onClick={() => editor && isInTable && cmd.deleteTable(editor)} title="Delete Table" disabled={!isInTable} aria-label="Delete table">
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn danger" onClick={() => editor && cmd.deleteTable(editor)} title="Delete Table" aria-label="Delete table">
                 <Trash2 {...ICON} />
               </button>
             </div>
           </div>
         )}
+
+        {/* === IMAGE TAB (contextual) === — the context menu's image actions. */}
+        {activeTab === 'image' && image && (
+          <div className="ribbon-panel-content" role="tabpanel">
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn" onClick={() => replaceInputRef.current?.click()} title="Replace image" aria-label="Replace image">
+                <ImageUp {...ICON} />
+              </button>
+              <input ref={replaceInputRef} type="file" accept={IMAGE_FILE_ACCEPT} onChange={handleReplaceImage} hidden aria-hidden="true" tabIndex={-1} />
+            </div>
+            {image.inGallery && (
+              <div className="document-editor-toolbar-group">
+                <button className="document-editor-toolbar-btn" onClick={() => editor?.commands.moveGalleryImage(-1)} disabled={!image.canLeft} title="Move image left" aria-label="Move image left">
+                  <ArrowLeft {...ICON} />
+                </button>
+                <button className="document-editor-toolbar-btn" onClick={() => editor?.commands.moveGalleryImage(1)} disabled={!image.canRight} title="Move image right" aria-label="Move image right">
+                  <ArrowRight {...ICON} />
+                </button>
+              </div>
+            )}
+            <div className="document-editor-toolbar-group">
+              <button className="document-editor-toolbar-btn danger" onClick={() => editor?.commands.removeSelectedImage()} title="Remove image" aria-label="Remove image">
+                <Trash2 {...ICON} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Find, at the end of the row. */}
+        <div className="document-editor-toolbar-group ribbon-end">
+          <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title={`Find & Replace (${formatCombo('Mod+F')})`} aria-label="Find and replace">
+            <Search {...ICON} />
+          </button>
+        </div>
       </div>
 
       {/* Math input modal (portal) */}
