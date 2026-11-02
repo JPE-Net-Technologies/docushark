@@ -1,10 +1,12 @@
 /* The canvas's own zoom controls (DSK-211): bottom-right of the canvas, with the
-   minimap stacked above them. */
+   minimap stacked above them. Both sit under the Properties fly-out
+   (FlyoutPanel.css, z-index 5): an open panel covers this corner of the canvas,
+   these controls included, rather than having them float over its contents. */
 .canvas-zoom-pill {
   position: absolute;
   right: 16px;
   bottom: 16px;
-  z-index: 100;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: 2px;

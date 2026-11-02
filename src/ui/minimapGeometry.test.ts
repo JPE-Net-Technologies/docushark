@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  contains,
   fitFrame,
   mapToWorld,
   mapWorld,
@@ -11,6 +12,7 @@ import {
   worldToMap,
   zoomAround,
   type Rect,
+  union,
 } from './minimapGeometry';
 
 describe('minimap geometry (DSK-212)', () => {
@@ -39,6 +41,24 @@ describe('minimap geometry (DSK-212)', () => {
     expect(panned.maxX).toBeGreaterThan(550);
     const grown = nextMapWorld(first, { ...content, maxX: 900 }, { minX: 10, minY: 10, maxX: 60, maxY: 60 });
     expect(grown.maxX).toBeGreaterThan(900);
+  });
+
+  it('tells whether one area lies inside another, on every side', () => {
+    const outer: Rect = { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+    expect(contains(outer, { minX: 0, minY: 0, maxX: 100, maxY: 100 })).toBe(true);
+    expect(contains(outer, { minX: -1, minY: 0, maxX: 50, maxY: 50 })).toBe(false);
+    expect(contains(outer, { minX: 0, minY: -1, maxX: 50, maxY: 50 })).toBe(false);
+    expect(contains(outer, { minX: 50, minY: 50, maxX: 101, maxY: 100 })).toBe(false);
+    expect(contains(outer, { minX: 50, minY: 50, maxX: 100, maxY: 101 })).toBe(false);
+  });
+
+  it('joins two areas, taking each side from whichever reaches further', () => {
+    expect(union({ minX: -5, minY: 0, maxX: 10, maxY: 20 }, { minX: 0, minY: -3, maxX: 12, maxY: 8 })).toEqual({
+      minX: -5,
+      minY: -3,
+      maxX: 12,
+      maxY: 20,
+    });
   });
 
   it('frames the viewport alone, with a margin, on an empty canvas', () => {

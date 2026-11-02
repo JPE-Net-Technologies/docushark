@@ -1047,9 +1047,10 @@ const pointsCache = new Map<string, Vec2[]>();
  * same transforms the renderer uses: endpoint clipping to bound shapes (when a
  * render context is active), self-message loop routing, and curved-mode
  * smoothing. Shared by `render` (to draw the line), `renderOverlay` (to place
- * the label), and gap-box collection so they all stay in lock-step.
+ * the label), gap-box collection and the minimap, so they all stay in
+ * lock-step.
  */
-function resolveConnectorPoints(shape: ConnectorShape): Vec2[] {
+export function resolveConnectorPoints(shape: ConnectorShape): Vec2[] {
   const renderCtx = getRenderContext();
   if (renderCtx) {
     if (renderCtx !== pointsCacheToken) {

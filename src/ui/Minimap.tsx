@@ -1,17 +1,39 @@
 /**
- * Minimap component for navigating large canvases.
+ * Minimap (DSK-212): an overview of the canvas page with the visible area
+ * marked, for getting around a large diagram.
  *
- * Displays a scaled-down overview of all shapes with a viewport indicator.
- * Clicking/dragging on the minimap pans the main canvas.
+ * Drag the viewport box to pan, or press elsewhere to glide there (and keep
+ * dragging from there). The wheel over the map zooms the canvas around that
+ * point, and the arrow keys pan while the map has focus.
+ *
+ * The map keeps a steady frame (`nextMapWorld`): it changes only when the view
+ * or the content leaves it, never while you drag, so nothing moves under the
+ * pointer. The camera's x and y are the screen's centre (`minimapGeometry`).
+ * Shown from the zoom pill's map button, or Settings → Canvas.
  */
 
-import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
-import { Box } from '../math/Box';
-import { Shape, isGroup } from '../shapes/Shape';
+import { resolveConnectorPoints } from '../shapes/Connector';
+import type { ConnectorShape, LineShape, Shape } from '../shapes/Shape';
+import { Vec2 } from '../math/Vec2';
+import { MAX_ZOOM, MIN_ZOOM } from '../engine/Camera';
+import { glideCamera } from '../engine/canvasZoom';
+import {
+  contains,
+  fitFrame,
+  mapToWorld,
+  nextMapWorld,
+  viewportRect,
+  worldToMap,
+  zoomAround,
+  type MapFrame,
+  type Point,
+  type Rect,
+} from './minimapGeometry';
 import './Minimap.css';
 
 interface MinimapProps {
@@ -21,268 +43,317 @@ interface MinimapProps {
   canvasHeight: number;
 }
 
-/** Minimap dimensions */
-const MINIMAP_WIDTH = 180;
-const MINIMAP_HEIGHT = 120;
-const MINIMAP_PADDING = 10;
+export const MAP_WIDTH = 180;
+export const MAP_HEIGHT = 120;
+/** Arrow keys pan this share of the visible area. */
+const KEY_PAN_RATIO = 0.1;
+const WHEEL_ZOOM_STEP = 1.15;
 
-/**
- * Calculate the bounding box of all shapes.
- */
-function getAllShapesBounds(
-  shapes: Record<string, Shape>,
-  shapeOrder: string[]
-): Box | null {
-  let bounds: Box | null = null;
-
-  for (const id of shapeOrder) {
-    const shape = shapes[id];
-    if (!shape || shape.visible === false) continue;
-
-    // Skip children of groups (they're rendered within their group)
-    const parentGroup = Object.values(shapes).find(
-      (s) => isGroup(s) && s.childIds.includes(id)
-    );
-    if (parentGroup) continue;
-
-    try {
-      const handler = shapeRegistry.getHandler(shape.type);
-      const shapeBounds = handler.getBounds(shape);
-
-      if (!bounds) {
-        bounds = shapeBounds;
-      } else {
-        bounds = bounds.union(shapeBounds);
-      }
-    } catch {
-      // Skip unregistered shape types
-    }
+function boundsOf(shape: Shape): Rect | null {
+  try {
+    const box = shapeRegistry.getHandler(shape.type).getBounds(shape);
+    return { minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY };
+  } catch {
+    return null; // an unregistered shape type
   }
-
-  return bounds;
 }
 
-export function Minimap({ canvasWidth, canvasHeight }: MinimapProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
+/** The visible shapes' world bounds, in one pass. */
+function contentBounds(shapes: Record<string, Shape>, order: readonly string[]): Rect | null {
+  let area: Rect | null = null;
+  for (const id of order) {
+    const shape = shapes[id];
+    if (!shape || shape.visible === false) continue;
+    const box = boundsOf(shape);
+    if (!box) continue;
+    area = area
+      ? {
+          minX: Math.min(area.minX, box.minX),
+          minY: Math.min(area.minY, box.minY),
+          maxX: Math.max(area.maxX, box.maxX),
+          maxY: Math.max(area.maxY, box.maxY),
+        }
+      : box;
+  }
+  return area;
+}
 
+interface Palette {
+  shape: string;
+  faint: string;
+  accent: string;
+}
+
+/** Theme colours, read from the tokens: CSS variables don't resolve inside a canvas. */
+function readPalette(): Palette {
+  const style = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  return {
+    shape: token('--text-muted', '#6a7a93'),
+    faint: token('--text-faint', '#8d9bb1'),
+    accent: token('--color-primary', '#3b82f6'),
+  };
+}
+
+/** A visible fill colour, or null for none. */
+function fillOf(shape: Shape): string | null {
+  const fill = 'fill' in shape ? (shape as { fill?: string }).fill : undefined;
+  return fill && fill !== 'transparent' && fill !== 'none' ? fill : null;
+}
+
+/** A line's ends, turned about its midpoint as the canvas draws it. */
+function lineEnds(line: LineShape): Point[] {
+  const centre = new Vec2((line.x + line.x2) / 2, (line.y + line.y2) / 2);
+  return [new Vec2(line.x, line.y), new Vec2(line.x2, line.y2)].map((end) => end.rotateAround(centre, line.rotation));
+}
+
+/**
+ * Draw one shape as a silhouette of its kind, at least a pixel across so
+ * nothing vanishes from the map. Lines and connectors follow the paths the
+ * canvas draws; groups are outlines, and their members draw themselves.
+ */
+function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, frame: MapFrame, palette: Palette, selected: boolean) {
+  const box = boundsOf(shape);
+  if (!box) return;
+  const topLeft = worldToMap(frame, { x: box.minX, y: box.minY });
+  const width = (box.maxX - box.minX) * frame.scale;
+  const height = (box.maxY - box.minY) * frame.scale;
+
+  if (shape.type === 'line' || shape.type === 'connector') {
+    const points =
+      shape.type === 'connector' ? resolveConnectorPoints(shape as ConnectorShape) : lineEnds(shape as LineShape);
+    ctx.strokeStyle = selected ? palette.accent : palette.shape;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    points.forEach((point, i) => {
+      const p = worldToMap(frame, point);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+    return;
+  }
+  if (shape.type === 'group') {
+    ctx.strokeStyle = selected ? palette.accent : palette.faint;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+    ctx.setLineDash([]);
+    return;
+  }
+  if (shape.type === 'text') {
+    ctx.fillStyle = selected ? palette.accent : palette.faint;
+    ctx.fillRect(topLeft.x, topLeft.y + height * 0.35, Math.max(width, 1), Math.max(height * 0.3, 1));
+    return;
+  }
+
+  ctx.fillStyle = fillOf(shape) ?? palette.shape;
+  ctx.beginPath();
+  if (shape.type === 'ellipse') {
+    ctx.ellipse(topLeft.x + width / 2, topLeft.y + height / 2, Math.max(width / 2, 0.5), Math.max(height / 2, 0.5), 0, 0, Math.PI * 2);
+  } else {
+    ctx.rect(topLeft.x, topLeft.y, Math.max(width, 1), Math.max(height, 1));
+  }
+  ctx.fill();
+  if (selected) {
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+const pointRect = (point: Point): Rect => ({ minX: point.x, minY: point.y, maxX: point.x, maxY: point.y });
+
+/** The shapes, drawn once and reused while nothing they're drawn from changes. */
+interface ShapeLayer {
+  canvas: HTMLCanvasElement;
+  key: readonly unknown[];
+}
+
+const sameKey = (a: readonly unknown[], b: readonly unknown[]) =>
+  a.length === b.length && a.every((part, i) => part === b[i]);
+
+/** Off by default; while off, nothing here follows the camera or the shapes. */
+export function Minimap(props: MinimapProps) {
+  const showMinimap = useSettingsStore((state) => state.showMinimap);
+  return showMinimap ? <MinimapView {...props} /> : null;
+}
+
+function MinimapView({ canvasWidth, canvasHeight }: MinimapProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const shapes = useDocumentStore((state) => state.shapes);
   const shapeOrder = useDocumentStore((state) => state.shapeOrder);
+  const selectedIds = useSessionStore((state) => state.selectedIds);
   const camera = useSessionStore((state) => state.camera);
-  const setCamera = useSessionStore((state) => state.setCamera);
-  const showMinimap = useSettingsStore((state) => state.showMinimap);
+  const content = useMemo(() => contentBounds(shapes, shapeOrder), [shapes, shapeOrder]);
 
-  // Calculate world bounds of all shapes
-  const worldBounds = useMemo(() => {
-    return getAllShapesBounds(shapes, shapeOrder);
-  }, [shapes, shapeOrder]);
+  // The world area the map shows. Held in a ref so a drag can freeze it; bumped
+  // into state only to redraw.
+  const worldRef = useRef<Rect | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number; frame: MapFrame; end: () => void } | null>(null);
+  const layerRef = useRef<ShapeLayer | null>(null);
+  const [, setRedraws] = useState(0);
 
-  // Calculate the visible area in world coordinates
-  const viewportBounds = useMemo(() => {
-    const worldWidth = canvasWidth / camera.zoom;
-    const worldHeight = canvasHeight / camera.zoom;
-    return new Box(camera.x, camera.y, camera.x + worldWidth, camera.y + worldHeight);
-  }, [camera, canvasWidth, canvasHeight]);
+  const viewport = viewportRect(camera, canvasWidth, canvasHeight);
+  // Held while the box is dragged, so nothing moves under the pointer.
+  const world = dragRef.current && worldRef.current ? worldRef.current : nextMapWorld(worldRef.current, content, viewport);
+  worldRef.current = world;
+  const frame = fitFrame(world, MAP_WIDTH, MAP_HEIGHT);
 
-  // Calculate minimap scale and offsets
-  const minimapTransform = useMemo(() => {
-    if (!worldBounds) {
-      // No shapes - center on viewport
-      return {
-        scale: 0.1,
-        offsetX: MINIMAP_WIDTH / 2,
-        offsetY: MINIMAP_HEIGHT / 2,
-        worldBounds: viewportBounds,
-      };
-    }
-
-    // Expand world bounds to include viewport
-    const totalBounds = worldBounds.union(viewportBounds);
-
-    // Add padding to the bounds
-    const paddedBounds = totalBounds.expand(Math.max(totalBounds.width, totalBounds.height) * 0.1);
-
-    // Calculate scale to fit in minimap
-    const scaleX = (MINIMAP_WIDTH - MINIMAP_PADDING * 2) / paddedBounds.width;
-    const scaleY = (MINIMAP_HEIGHT - MINIMAP_PADDING * 2) / paddedBounds.height;
-    const scale = Math.min(scaleX, scaleY);
-
-    // Calculate offsets to center the content
-    const contentWidth = paddedBounds.width * scale;
-    const contentHeight = paddedBounds.height * scale;
-    const offsetX = (MINIMAP_WIDTH - contentWidth) / 2 - paddedBounds.minX * scale;
-    const offsetY = (MINIMAP_HEIGHT - contentHeight) / 2 - paddedBounds.minY * scale;
-
-    return {
-      scale,
-      offsetX,
-      offsetY,
-      worldBounds: paddedBounds,
-    };
-  }, [worldBounds, viewportBounds]);
-
-  // Convert minimap coordinates to world coordinates
-  const minimapToWorld = useCallback(
-    (minimapX: number, minimapY: number) => {
-      const { scale, offsetX, offsetY } = minimapTransform;
-      const worldX = (minimapX - offsetX) / scale;
-      const worldY = (minimapY - offsetY) / scale;
-      return { x: worldX, y: worldY };
-    },
-    [minimapTransform]
-  );
-
-  // Handle click/drag on minimap to pan camera
-  const handlePan = useCallback(
-    (e: React.MouseEvent | MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const minimapX = e.clientX - rect.left;
-      const minimapY = e.clientY - rect.top;
-
-      const worldPos = minimapToWorld(minimapX, minimapY);
-
-      // Center the viewport on the clicked position
-      const worldWidth = canvasWidth / camera.zoom;
-      const worldHeight = canvasHeight / camera.zoom;
-
-      setCamera({
-        x: worldPos.x - worldWidth / 2,
-        y: worldPos.y - worldHeight / 2,
-      });
-    },
-    [minimapToWorld, camera.zoom, canvasWidth, canvasHeight, setCamera]
-  );
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      setIsDragging(true);
-      handlePan(e);
-    },
-    [handlePan]
-  );
-
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (isDragging) {
-        handlePan(e);
-      }
-    },
-    [isDragging, handlePan]
-  );
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  // Add global mouse event listeners for dragging
-  useEffect(() => {
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
-    }
-    return undefined;
-  }, [isDragging, handleMouseMove, handleMouseUp]);
-
-  // Render minimap
+  // Draw at most once per animation frame. The shapes come from a layer that's
+  // redrawn only when they, the selection, the frame or the theme change, so a
+  // pan redraws just the viewport box.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = MINIMAP_WIDTH * dpr;
-    canvas.height = MINIMAP_HEIGHT * dpr;
-    ctx.scale(dpr, dpr);
-
-    // Clear canvas. CSS variables don't resolve in a canvas context, so read
-    // the brand surface token off the document element (fall back to the brand
-    // light surface literal).
-    ctx.fillStyle =
-      getComputedStyle(document.documentElement)
-        .getPropertyValue('--bg-primary')
-        .trim() || '#f9f6ee';
-    ctx.fillRect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
-
-    const { scale, offsetX, offsetY } = minimapTransform;
-
-    // Draw shapes as simple colored rectangles
-    ctx.save();
-
-    for (const id of shapeOrder) {
-      const shape = shapes[id];
-      if (!shape || shape.visible === false) continue;
-
-      // Skip children of groups
-      const parentGroup = Object.values(shapes).find(
-        (s) => isGroup(s) && s.childIds.includes(id)
-      );
-      if (parentGroup) continue;
-
-      try {
-        const handler = shapeRegistry.getHandler(shape.type);
-        const bounds = handler.getBounds(shape);
-
-        // Transform to minimap coordinates
-        const x = bounds.minX * scale + offsetX;
-        const y = bounds.minY * scale + offsetY;
-        const w = bounds.width * scale;
-        const h = bounds.height * scale;
-
-        // Skip shapes smaller than 1 pixel
-        if (w < 1 && h < 1) continue;
-
-        // Draw shape as a simple rectangle
-        const fill = 'fill' in shape ? (shape as { fill: string }).fill : '#94a3b8';
-        ctx.fillStyle = fill || '#94a3b8';
-        ctx.fillRect(x, y, Math.max(w, 1), Math.max(h, 1));
-
-        const stroke = 'stroke' in shape ? (shape as { stroke: string }).stroke : null;
-        if (stroke && w > 2 && h > 2) {
-          ctx.strokeStyle = stroke;
-          ctx.lineWidth = 0.5;
-          ctx.strokeRect(x, y, w, h);
-        }
-      } catch {
-        // Skip unregistered shape types
+    if (!canvas) return undefined;
+    const request = requestAnimationFrame(() => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const width = MAP_WIDTH * dpr;
+      const height = MAP_HEIGHT * dpr;
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
       }
-    }
+      const palette = readPalette();
+      const key = [shapes, shapeOrder, selectedIds, frame.scale, frame.offsetX, frame.offsetY, dpr, palette.shape, palette.faint, palette.accent];
+      let layer = layerRef.current;
+      if (!layer || !sameKey(layer.key, key)) {
+        const layerCanvas = layer?.canvas ?? document.createElement('canvas');
+        layerCanvas.width = width; // (setting the size clears it)
+        layerCanvas.height = height;
+        const layerCtx = layerCanvas.getContext('2d');
+        if (!layerCtx) return;
+        layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        for (const id of shapeOrder) {
+          const shape = shapes[id];
+          if (shape && shape.visible !== false) drawShape(layerCtx, shape, frame, palette, selectedIds.has(id));
+        }
+        layer = { canvas: layerCanvas, key };
+        layerRef.current = layer;
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(layer.canvas, 0, 0);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const corner = worldToMap(frame, { x: viewport.minX, y: viewport.minY });
+      const boxWidth = (viewport.maxX - viewport.minX) * frame.scale;
+      const boxHeight = (viewport.maxY - viewport.minY) * frame.scale;
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = palette.accent;
+      ctx.fillRect(corner.x, corner.y, boxWidth, boxHeight);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = palette.accent;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(corner.x, corner.y, boxWidth, boxHeight);
+    });
+    return () => cancelAnimationFrame(request);
+  });
 
-    ctx.restore();
+  const toMap = useCallback((clientX: number, clientY: number): Point => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    return { x: clientX - (rect?.left ?? 0), y: clientY - (rect?.top ?? 0) };
+  }, []);
 
-    // Draw viewport indicator
-    const vpX = viewportBounds.minX * scale + offsetX;
-    const vpY = viewportBounds.minY * scale + offsetY;
-    const vpW = viewportBounds.width * scale;
-    const vpH = viewportBounds.height * scale;
+  const endDrag = useCallback(() => {
+    dragRef.current?.end();
+    dragRef.current = null;
+    // The box followed the pointer, so it's under the pointer still.
+    if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
+    setRedraws((n) => n + 1); // let the frame settle again
+  }, []);
 
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(vpX, vpY, vpW, vpH);
+  // Pressing inside the box grabs it. Pressing elsewhere glides the view there,
+  // and a drag carries on from there (the glide gives way to it). A drag ends
+  // wherever the pointer is released, or if the window loses focus.
+  const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const world = mapToWorld(frame, toMap(e.clientX, e.clientY));
+    const inside = contains(viewport, pointRect(world));
+    if (!inside) glideCamera({ x: world.x, y: world.y });
+    const { camera: start } = useSessionStore.getState();
+    e.currentTarget.style.cursor = 'grabbing';
+    const onMove = (move: globalThis.PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const at = mapToWorld(drag.frame, toMap(move.clientX, move.clientY));
+      useSessionStore.getState().setCamera({ x: at.x + drag.dx, y: at.y + drag.dy });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('blur', endDrag);
+    dragRef.current = {
+      dx: inside ? start.x - world.x : 0,
+      dy: inside ? start.y - world.y : 0,
+      frame,
+      end: () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', endDrag);
+        window.removeEventListener('pointercancel', endDrag);
+        window.removeEventListener('blur', endDrag);
+      },
+    };
+  };
 
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
-    ctx.fillRect(vpX, vpY, vpW, vpH);
-  }, [shapes, shapeOrder, minimapTransform, viewportBounds]);
+  // The box looks grabbable under the pointer.
+  const onPointerMove = (e: PointerEvent<HTMLCanvasElement>) => {
+    if (dragRef.current) return;
+    const world = mapToWorld(frame, toMap(e.clientX, e.clientY));
+    e.currentTarget.style.cursor = contains(viewport, pointRect(world)) ? 'grab' : '';
+  };
 
-  if (!showMinimap) return null;
+  // A drag in progress when the map goes away still lets go of the window.
+  useEffect(() => () => dragRef.current?.end(), []);
+
+  // The wheel zooms the canvas around the point under the pointer. A native,
+  // non-passive listener so the page doesn't scroll too.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const shown = worldRef.current;
+      if (!shown) return;
+      const { camera: current, setCamera } = useSessionStore.getState();
+      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.zoom * (e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP)));
+      const rect = canvas.getBoundingClientRect();
+      const fitted = fitFrame(shown, MAP_WIDTH, MAP_HEIGHT);
+      setCamera(zoomAround(current, mapToWorld(fitted, { x: e.clientX - rect.left, y: e.clientY - rect.top }), zoom));
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const onKeyDown = (e: KeyboardEvent<HTMLCanvasElement>) => {
+    const stepX = (viewport.maxX - viewport.minX) * KEY_PAN_RATIO;
+    const stepY = (viewport.maxY - viewport.minY) * KEY_PAN_RATIO;
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-stepX, 0],
+      ArrowRight: [stepX, 0],
+      ArrowUp: [0, -stepY],
+      ArrowDown: [0, stepY],
+    };
+    const delta = moves[e.key];
+    if (!delta) return;
+    e.preventDefault();
+    useSessionStore.getState().setCamera({ x: camera.x + delta[0], y: camera.y + delta[1] });
+  };
 
   return (
-    <div ref={containerRef} className="minimap-container">
+    <div className="minimap-container">
       <canvas
         ref={canvasRef}
         className="minimap-canvas"
-        style={{ width: MINIMAP_WIDTH, height: MINIMAP_HEIGHT }}
-        onMouseDown={handleMouseDown}
+        style={{ width: MAP_WIDTH, height: MAP_HEIGHT }}
+        tabIndex={0}
+        role="application"
+        aria-label="Minimap. Drag the box to pan, click to go there, arrow keys pan."
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onKeyDown={onKeyDown}
       />
     </div>
   );
