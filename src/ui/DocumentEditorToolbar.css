@@ -65,16 +65,47 @@
   background: var(--bg-secondary);
 }
 
-/* The tab's controls fill the room between the switch and Find. */
-.ribbon-panel-content {
-  display: flex;
+/* The tab's controls fill the room between the switch and Find, in one row:
+ * a narrow panel scrolls them sideways (useSideScroll) instead of wrapping,
+ * fading whichever end is out of view. */
+.ribbon-scroll {
   flex: 1;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ribbon-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.ribbon-scroll[data-overflow~="start"] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+
+.ribbon-scroll[data-overflow~="end"] {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+
+.ribbon-scroll[data-overflow="start end"] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+/* Room above and below for the buttons' focus rings, which the strip would clip. */
+.ribbon-scroll-content {
+  display: flex;
+  width: max-content;
+  padding: 2px 0;
+}
+
+/* The larger gap separates the clusters now that the vertical dividers are gone. */
+.ribbon-panel-content {
+  display: flex;
   align-items: center;
-  /* row-gap (wrapped rows) < column-gap (between groups) — the larger column-gap
-   * separates the clusters now that the vertical dividers are gone. */
-  gap: var(--space-2) var(--space-3);
-  flex-wrap: wrap;
+  gap: var(--space-3);
 }
 
 /* Insert stays mounted while hidden; `display: flex` above would show it. */

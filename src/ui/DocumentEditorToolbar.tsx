@@ -47,6 +47,7 @@ import * as cmd from './editorCommands';
 import { registerSlashUiHandler, SLASH_COMMANDS, type SlashCommand } from '../tiptap/slashCommands';
 import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
 import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
+import { useSideScroll } from './useSideScroll';
 import { ImageUploadButton } from './ImageUploadButton';
 import { FileUploadButton } from './FileUploadButton';
 import { GalleryUploadButton } from './GalleryUploadButton';
@@ -133,6 +134,10 @@ export function DocumentEditorToolbar() {
   // context ends.
   const [chosenTab, setChosenTab] = useState<RibbonTab>('home');
   const [lastPlainTab, setLastPlainTab] = useState<PlainTab>('home');
+
+  // In a narrow panel the tab's controls scroll sideways rather than wrap.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useSideScroll(scrollRef, !docReadOnly && !(activeMirror && activePageId));
 
   // Modal states
   const [showMathInput, setShowMathInput] = useState(false);
@@ -457,6 +462,8 @@ export function DocumentEditorToolbar() {
           ))}
         </div>
 
+        <div className="ribbon-scroll" ref={scrollRef}>
+        <div className="ribbon-scroll-content">
         {/* === HOME TAB === */}
         {activeTab === 'home' && (
           <div className="ribbon-panel-content" role="tabpanel">
@@ -761,6 +768,9 @@ export function DocumentEditorToolbar() {
             </div>
           </div>
         )}
+
+        </div>
+        </div>
 
         {/* Find, at the end of the row. */}
         <div className="document-editor-toolbar-group ribbon-end">
