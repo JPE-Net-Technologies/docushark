@@ -7,11 +7,11 @@
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
+import { getAdaptiveBudget } from '../platform/adaptiveBudget';
+import { MAX_ZOOM, MIN_ZOOM } from './Camera';
 
 /** The levels − and + step through. */
 export const ZOOM_PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 10;
 
 export function zoomIn(): void {
   const { camera, setCamera } = useSessionStore.getState();
@@ -69,4 +69,44 @@ export function peekOverview(): () => void {
   const saved = { x: camera.x, y: camera.y, zoom: camera.zoom };
   setCamera(fitCamera());
   return () => useSessionStore.getState().setCamera(saved);
+}
+
+/** How long the minimap's glide takes. */
+export const GLIDE_MS = 220;
+let glideFrame: number | null = null;
+
+/**
+ * Ease the view's centre to a point over a moment (DSK-212): the minimap's
+ * click-to-go. The engine follows the store's camera, so a short tween of it is
+ * all a glide needs. A new glide replaces one in progress, and anything else
+ * that moves the view's centre mid-glide (a pan, a drag on the map) wins: the
+ * glide stops once the centre isn't where it left it. Reduced motion goes
+ * straight there.
+ */
+export function glideCamera(target: { x: number; y: number }): void {
+  if (glideFrame !== null) cancelAnimationFrame(glideFrame);
+  glideFrame = null;
+  const { camera, setCamera } = useSessionStore.getState();
+  if (getAdaptiveBudget().reduceMotion) {
+    setCamera({ x: target.x, y: target.y });
+    return;
+  }
+  const from = { x: camera.x, y: camera.y };
+  let left = from;
+  // Timed by the frames' own clock, from the first frame.
+  let start: number | null = null;
+  const step = (now: number) => {
+    const current = useSessionStore.getState().camera;
+    if (current.x !== left.x || current.y !== left.y) {
+      glideFrame = null;
+      return;
+    }
+    start ??= now;
+    const t = Math.min(1, (now - start) / GLIDE_MS);
+    const eased = 1 - Math.pow(1 - t, 3); // ease out
+    left = { x: from.x + (target.x - from.x) * eased, y: from.y + (target.y - from.y) * eased };
+    useSessionStore.getState().setCamera(left);
+    glideFrame = t < 1 ? requestAnimationFrame(step) : null;
+  };
+  glideFrame = requestAnimationFrame(step);
 }

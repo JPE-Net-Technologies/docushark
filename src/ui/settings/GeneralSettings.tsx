@@ -101,7 +101,7 @@ export function GeneralSettings() {
           label="Minimap"
           checked={showMinimap}
           onCheckedChange={setShowMinimap}
-          hint="Experimental. Helps navigate large canvases."
+          hint="An overview for getting around large canvases. Also the map button in the zoom controls."
         />
 
         <ToggleTile
