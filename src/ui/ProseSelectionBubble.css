@@ -1,0 +1,24 @@
+/* The selection bubble (DSK-200): a compact bar above selected prose. Its
+   buttons are the ribbon's (DocumentEditorToolbar.css). */
+.prose-bubble {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-color-input);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.prose-bubble__divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 6px 2px;
+  background: var(--border-color);
+}
+
+/* Holds the BubbleMenu's place in the panel without a box of its own. */
+.prose-bubble-host {
+  display: contents;
+}

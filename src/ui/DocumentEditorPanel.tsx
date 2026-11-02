@@ -17,6 +17,7 @@ import { useDocumentNaming } from './useDocumentNaming';
 import { useProseStats } from './useProseStats';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { MobileProseToolbar } from './mobile/MobileProseToolbar';
+import { ProseSelectionBubble } from './ProseSelectionBubble';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useKeyboardInset } from './mobile/useKeyboardInset';
@@ -615,6 +616,7 @@ export function DocumentEditorPanel({
         {/* Desktop ribbon sits at the top; on mobile it's replaced by the
             bottom MobileProseToolbar rendered after the content (JP-332). */}
         {!mobileActive && <DocumentEditorToolbar />}
+        {!mobileActive && <ProseSelectionBubble />}
         <div className="document-editor-panel-content">
           {/* Never blank (JP-328): a prose render crash degrades to the page's
               read-only HTML projection, not an empty panel; auto-resets on

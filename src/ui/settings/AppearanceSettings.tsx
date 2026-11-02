@@ -32,6 +32,7 @@ import {
   Sun,
   SwatchBook,
   Table,
+  TextSelect,
   TextCursorInput,
   Type,
   Wand2,
@@ -139,6 +140,8 @@ export function AppearanceSettings() {
   const setSpellcheckMode = useUIPreferencesStore((s) => s.setSpellcheckMode);
   const roundedTables = useUIPreferencesStore((s) => s.appearancePrefs.roundedTables);
   const setRoundedTables = useUIPreferencesStore((s) => s.setRoundedTables);
+  const selectionBubble = useUIPreferencesStore((s) => s.appearancePrefs.selectionBubble);
+  const setSelectionBubble = useUIPreferencesStore((s) => s.setSelectionBubble);
   const glass = useUIPreferencesStore((s) => s.appearancePrefs.glass);
   const setGlass = useUIPreferencesStore((s) => s.setGlass);
   const gridOpacity = useSettingsStore((s) => s.gridOpacity);
@@ -294,6 +297,14 @@ export function AppearanceSettings() {
           checked={roundedTables}
           onCheckedChange={setRoundedTables}
           hint="Off gives square, grid-style tables."
+        />
+
+        <ToggleTile
+          icon={TextSelect}
+          label="Formatting on selection"
+          checked={selectionBubble}
+          onCheckedChange={setSelectionBubble}
+          hint="Selecting text shows bold, italic, highlight, link and more beside it."
         />
 
         <CustomTile wide className="tile--field">
