@@ -1,7 +1,7 @@
 /**
  * The minimap's interactions (DSK-212). jsdom has no 2D canvas context, so a
- * fake one records the drawing, and frames run as soon as they're requested.
- * The geometry it draws with is tested in minimapGeometry.
+ * fake one records the drawing. The geometry it draws with is tested in
+ * minimapGeometry.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
@@ -80,11 +80,6 @@ beforeEach(() => {
   vi.mocked(glideCamera).mockClear();
   ctx = fakeContext();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as RenderingContext);
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-    callback(0);
-    return 0;
-  });
-  vi.stubGlobal('cancelAnimationFrame', () => undefined);
 });
 
 afterEach(() => {
@@ -186,6 +181,41 @@ describe('Minimap (DSK-212)', () => {
       useDocumentStore.setState({ shapes: { r1: rect, r2: { ...rect, id: 'r2', x: 6000 } }, shapeOrder: ['r1', 'r2'] })
     );
     expect(boxWidth()).toBeLessThan(before / 2);
+  });
+
+  it('keeps the box moving while the view moves every frame, as in a glide', () => {
+    // Frames run their callbacks in order, skipping any cancelled before its turn,
+    // and React settles after each callback, as it does after a real one.
+    const queue = new Map<number, FrameRequestCallback>();
+    let nextId = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      queue.set(nextId, callback);
+      return nextId++;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => queue.delete(id));
+    const runFrame = (time: number) => {
+      for (const id of [...queue.keys()]) {
+        const callback = queue.get(id);
+        if (!callback) continue;
+        queue.delete(id);
+        act(() => callback(time));
+      }
+    };
+
+    renderMap();
+    // Like glideCamera: each step moves the view, then asks for the next frame.
+    let steps = 0;
+    const step = () => {
+      useSessionStore.getState().setCamera({ x: camera().x + 20 });
+      if (++steps < 8) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    const boxLefts: number[] = [];
+    for (let frame = 1; frame <= 8; frame++) {
+      runFrame(frame * 16);
+      boxLefts.push((ctx.strokeRect.mock.lastCall as number[])[0]!);
+    }
+    expect(new Set(boxLefts).size).toBe(8);
   });
 
   it('redraws the shapes when they, the selection or the frame change, but not on a pan', () => {

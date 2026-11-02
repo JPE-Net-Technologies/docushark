@@ -142,7 +142,7 @@ Zustand stores are split by responsibility:
 
 **Core stores** (`/src/store/`):
 - **DocumentStore**: Shape data, connections, groups — the single source of truth for document content
-- **SessionStore**: Selection, camera state, active tool, cursor — ephemeral UI state
+- **SessionStore**: Selection, camera state, active tool, cursor — ephemeral UI state. The engine moves its own camera (wheel, Pan tool, keys) and tells the store once per drawn frame (`Engine.syncCameraToStore` via the Renderer's frame-start hook), so UI that reads the camera keeps up; don't sync it anywhere else
 - **HistoryStore**: Undo/redo with complete document snapshots
 - **PageStore**: Multi-page document structure and ordering
 - **PersistenceStore**: Document save/load, auto-save, localStorage management

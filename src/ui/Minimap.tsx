@@ -12,7 +12,7 @@
  * Shown from the zoom pill's map button, or Settings → Canvas.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -200,55 +200,54 @@ function MinimapView({ canvasWidth, canvasHeight }: MinimapProps) {
   worldRef.current = world;
   const frame = fitFrame(world, MAP_WIDTH, MAP_HEIGHT);
 
-  // Draw at most once per animation frame. The shapes come from a layer that's
+  // Draw on every change, as it's committed. The shapes come from a layer that's
   // redrawn only when they, the selection, the frame or the theme change, so a
-  // pan redraws just the viewport box.
-  useEffect(() => {
+  // pan costs one copy and the viewport box. (Deferring the draw to an animation
+  // frame starved it: each change in a glide or a drag cancelled the frame
+  // before it ran, freezing the map until the view stopped moving.)
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return undefined;
-    const request = requestAnimationFrame(() => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const dpr = window.devicePixelRatio || 1;
-      const width = MAP_WIDTH * dpr;
-      const height = MAP_HEIGHT * dpr;
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const width = MAP_WIDTH * dpr;
+    const height = MAP_HEIGHT * dpr;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const palette = readPalette();
+    const key = [shapes, shapeOrder, selectedIds, frame.scale, frame.offsetX, frame.offsetY, dpr, palette.shape, palette.faint, palette.accent];
+    let layer = layerRef.current;
+    if (!layer || !sameKey(layer.key, key)) {
+      const layerCanvas = layer?.canvas ?? document.createElement('canvas');
+      layerCanvas.width = width; // (setting the size clears it)
+      layerCanvas.height = height;
+      const layerCtx = layerCanvas.getContext('2d');
+      if (!layerCtx) return;
+      layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const id of shapeOrder) {
+        const shape = shapes[id];
+        if (shape && shape.visible !== false) drawShape(layerCtx, shape, frame, palette, selectedIds.has(id));
       }
-      const palette = readPalette();
-      const key = [shapes, shapeOrder, selectedIds, frame.scale, frame.offsetX, frame.offsetY, dpr, palette.shape, palette.faint, palette.accent];
-      let layer = layerRef.current;
-      if (!layer || !sameKey(layer.key, key)) {
-        const layerCanvas = layer?.canvas ?? document.createElement('canvas');
-        layerCanvas.width = width; // (setting the size clears it)
-        layerCanvas.height = height;
-        const layerCtx = layerCanvas.getContext('2d');
-        if (!layerCtx) return;
-        layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        for (const id of shapeOrder) {
-          const shape = shapes[id];
-          if (shape && shape.visible !== false) drawShape(layerCtx, shape, frame, palette, selectedIds.has(id));
-        }
-        layer = { canvas: layerCanvas, key };
-        layerRef.current = layer;
-      }
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(layer.canvas, 0, 0);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const corner = worldToMap(frame, { x: viewport.minX, y: viewport.minY });
-      const boxWidth = (viewport.maxX - viewport.minX) * frame.scale;
-      const boxHeight = (viewport.maxY - viewport.minY) * frame.scale;
-      ctx.globalAlpha = 0.12;
-      ctx.fillStyle = palette.accent;
-      ctx.fillRect(corner.x, corner.y, boxWidth, boxHeight);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = palette.accent;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(corner.x, corner.y, boxWidth, boxHeight);
-    });
-    return () => cancelAnimationFrame(request);
+      layer = { canvas: layerCanvas, key };
+      layerRef.current = layer;
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(layer.canvas, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const corner = worldToMap(frame, { x: viewport.minX, y: viewport.minY });
+    const boxWidth = (viewport.maxX - viewport.minX) * frame.scale;
+    const boxHeight = (viewport.maxY - viewport.minY) * frame.scale;
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = palette.accent;
+    ctx.fillRect(corner.x, corner.y, boxWidth, boxHeight);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = palette.accent;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(corner.x, corner.y, boxWidth, boxHeight);
   });
 
   const toMap = useCallback((clientX: number, clientY: number): Point => {

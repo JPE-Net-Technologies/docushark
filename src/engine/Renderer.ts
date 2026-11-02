@@ -143,6 +143,9 @@ export class Renderer {
   // Tool overlay callback
   private toolOverlayCallback: ToolOverlayCallback | null = null;
 
+  // Runs at the start of every drawn frame
+  private frameStartCallback: (() => void) | null = null;
+
   // Cleanup callback for icon load subscription
   private unsubscribeIconLoad: (() => void) | null = null;
   private unsubscribeThumbnailLoad: (() => void) | null = null;
@@ -259,6 +262,16 @@ export class Renderer {
   }
 
   /**
+   * Set a callback to run at the start of every drawn frame, before drawing.
+   * The engine uses it to tell the session store where the camera is: a camera
+   * move only shows once a frame draws it, so this catches every path that
+   * moves it.
+   */
+  setFrameStartCallback(callback: (() => void) | null): void {
+    this.frameStartCallback = callback;
+  }
+
+  /**
    * Update renderer options.
    */
   setOptions(options: Partial<RendererOptions>): void {
@@ -371,6 +384,7 @@ export class Renderer {
     }
     this.needsRender = false;
     this.toolOverlayCallback = null;
+    this.frameStartCallback = null;
     this.unsubscribeIconLoad?.();
     this.unsubscribeIconLoad = null;
     this.unsubscribeThumbnailLoad?.();
@@ -385,6 +399,8 @@ export class Renderer {
     this.frameId = null;
 
     if (this.destroyed) return;
+
+    this.frameStartCallback?.();
 
     // Update performance metrics
     this.updateMetrics(timestamp);

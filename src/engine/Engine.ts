@@ -220,6 +220,8 @@ export class Engine {
 
     // Subscribe to stores
     this.subscribeToStores();
+    // Every drawn frame tells the session store where the camera is.
+    this.renderer.setFrameStartCallback(() => this.syncCameraToStore());
 
     // Set initial tool
     this.toolManager.setActiveTool(this.options.initialTool);
@@ -341,17 +343,19 @@ export class Engine {
   }
 
   /**
-   * Force a render on the next animation frame.
-   * Also syncs engine camera position back to sessionStore.
+   * Force a render on the next animation frame. (The frame tells the session
+   * store where the camera is; see `syncCameraToStore`.)
    */
   requestRender(): void {
-    this.syncCameraToStore();
     this.renderer.requestRender();
   }
 
   /**
-   * Sync the engine camera position back to the session store
-   * so that UI code can read the current viewport center.
+   * Tell the session store where the engine's camera is, at the start of every
+   * drawn frame (DSK-212). The wheel, the Pan tool, the keys and an import's
+   * zoom to fit all move the engine's camera directly; syncing per frame keeps
+   * the store (and the zoom pill, the minimap and collaborators' cursors, which
+   * read it) in step with what's on screen, however the camera moved.
    */
   private syncCameraToStore(): void {
     const store = useSessionStore.getState();
@@ -531,18 +535,25 @@ export class Engine {
         }
       }
 
-      // Sync camera changes from sessionStore to Engine camera
+      // Sync camera changes from sessionStore to Engine camera. Only a change
+      // to the store's camera counts: an unrelated change mustn't push a camera
+      // the store hasn't caught up with yet. And the store echoing the engine
+      // (syncCameraToStore) needs nothing here; setting the camera would also
+      // reset an eased zoom's target mid-ease.
+      const storeCamera = state.camera;
       if (
-        state.camera.x !== previousCamera.x ||
-        state.camera.y !== previousCamera.y ||
-        state.camera.zoom !== previousCamera.zoom
+        storeCamera.x !== previousCamera.x ||
+        storeCamera.y !== previousCamera.y ||
+        storeCamera.zoom !== previousCamera.zoom
       ) {
-        previousCamera = state.camera;
-        this.camera.setState({
-          x: state.camera.x,
-          y: state.camera.y,
-          zoom: state.camera.zoom,
-        });
+        previousCamera = storeCamera;
+        if (
+          storeCamera.x !== this.camera.x ||
+          storeCamera.y !== this.camera.y ||
+          storeCamera.zoom !== this.camera.zoom
+        ) {
+          this.camera.setState({ x: storeCamera.x, y: storeCamera.y, zoom: storeCamera.zoom });
+        }
       }
 
       // Update renderer with selection
