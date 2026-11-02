@@ -59,6 +59,12 @@
   outline-offset: 1px;
 }
 
+/* --bg-tertiary is a raised surface in dark, so the track sinks to
+   --bg-secondary there and the chosen tab still rises from it. */
+[data-theme="dark"] .ribbon-tabs {
+  background: var(--bg-secondary);
+}
+
 /* The tab's controls fill the room between the switch and Find. */
 .ribbon-panel-content {
   display: flex;
