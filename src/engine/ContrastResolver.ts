@@ -2,6 +2,7 @@ import { Shape, isGroup } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { getContrastColor } from '../utils/color';
 import { Vec2 } from '../math/Vec2';
+import { segmentBoxOverlap } from '../math/geometry';
 
 /**
  * Sentinel value used in shape `fill` / `stroke` / group `backgroundColor`
@@ -99,6 +100,173 @@ export function resolveAutoColor(
   }
 
   return getContrastColor(pageBackground);
+}
+
+/** A stretch of a segment, from `t0` to `t1` along it (0 at its start, 1 at its end), in one colour. */
+export interface ColorRun {
+  t0: number;
+  t1: number;
+  color: string;
+}
+
+/** Longest gap between hit-test samples along a shape's stretch, in world units. */
+const RUN_SAMPLE_STEP = 8;
+/** Most hit-test samples per stretch: a long crossing is sampled more coarsely. */
+const RUN_MAX_SAMPLES = 32;
+/** How closely bisection places a run's edge, in world units. */
+const RUN_EDGE_PRECISION = 0.25;
+
+/**
+ * Resolve the AUTO sentinel along a segment, as runs of one colour each
+ * (DSK-215): a run takes the contrast colour of the topmost opaque shape
+ * beneath it, or of the page. One point can't speak for a whole segment: a
+ * long line whose midpoint fell on a light shape went dark across the dark
+ * canvas too.
+ *
+ * Each shape's stretch starts where the segment crosses its bounding box and
+ * is refined to its outline by bisection on the shape's own hit test, so an
+ * ellipse's empty corners don't count. Runs shorter than `minRun` world units
+ * fold into a neighbour, so a line that only touches a shape's edge (like a
+ * connector clipped to the outline of the shape it is hitched to) keeps one
+ * colour there (JP-137).
+ *
+ * @param minRun - The shortest run worth a colour of its own, in world units.
+ */
+export function resolveAutoColorRuns(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  shapes: Record<string, Shape> | Map<string, Shape>,
+  shapeOrder: string[],
+  pageBackground: string,
+  excludeId?: string,
+  minRun = 0
+): ColorRun[] {
+  const get = (id: string): Shape | undefined =>
+    shapes instanceof Map ? shapes.get(id) : shapes[id];
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  if (length === 0) {
+    return [{ t0: 0, t1: 1, color: resolveAutoColor(a, shapes, shapeOrder, pageBackground, excludeId) }];
+  }
+  const from = new Vec2(a.x, a.y);
+  const to = new Vec2(b.x, b.y);
+  const at = (t: number) => new Vec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+
+  // The opaque shapes the segment crosses, topmost first, with the stretches
+  // of it that lie over each.
+  const covers: Array<{ color: string; spans: Array<[number, number]> }> = [];
+  for (let i = shapeOrder.length - 1; i >= 0; i--) {
+    const id = shapeOrder[i];
+    if (!id || id === excludeId) continue;
+
+    const shape = get(id);
+    if (!shape || !shape.visible) continue;
+    if ((shape.opacity ?? 1) < OPAQUE_THRESHOLD) continue;
+
+    const bg = effectiveBackground(shape);
+    if (!bg) continue;
+
+    try {
+      const handler = shapeRegistry.getHandler(shape.type);
+      const overlap = segmentBoxOverlap(from, to, handler.getBounds(shape));
+      if (!overlap) continue;
+      const spans = insideSpans(overlap, length, (t) => handler.hitTest(shape, at(t)));
+      if (spans.length > 0) covers.push({ color: getContrastColor(bg), spans });
+    } catch {
+      continue;
+    }
+  }
+
+  // Cut the segment wherever a stretch starts or ends; each piece takes the
+  // colour of the topmost shape over its middle, or the page's.
+  const page = getContrastColor(pageBackground);
+  const cuts = [0, 1];
+  for (const cover of covers) for (const [s0, s1] of cover.spans) cuts.push(s0, s1);
+  cuts.sort((p, q) => p - q);
+  const runs: ColorRun[] = [];
+  for (let i = 1; i < cuts.length; i++) {
+    const t0 = cuts[i - 1]!;
+    const t1 = cuts[i]!;
+    if (t1 <= t0) continue;
+    const mid = (t0 + t1) / 2;
+    const over = covers.find((cover) => cover.spans.some(([s0, s1]) => mid >= s0 && mid <= s1));
+    joinRun(runs, { t0, t1, color: over ? over.color : page });
+  }
+  return foldShortRuns(runs, minRun / length);
+}
+
+/**
+ * The stretches of `[t0, t1]` where `inside` holds: sampled at most every
+ * RUN_SAMPLE_STEP world units (up to RUN_MAX_SAMPLES), each change bisected
+ * to RUN_EDGE_PRECISION. `length` is the whole segment's, in world units.
+ */
+function insideSpans(
+  [t0, t1]: [number, number],
+  length: number,
+  inside: (t: number) => boolean
+): Array<[number, number]> {
+  const steps = Math.min(RUN_MAX_SAMPLES, Math.max(2, Math.ceil(((t1 - t0) * length) / RUN_SAMPLE_STEP)));
+  const precision = RUN_EDGE_PRECISION / length;
+  // Where `inside` changes between lo (where it is `was`) and hi (where it isn't).
+  const edge = (lo: number, hi: number, was: boolean): number => {
+    while (hi - lo > precision) {
+      const mid = (lo + hi) / 2;
+      if (inside(mid) === was) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+
+  const spans: Array<[number, number]> = [];
+  let previous = t0;
+  let wasInside = inside(t0);
+  let start: number | null = wasInside ? t0 : null;
+  for (let k = 1; k <= steps; k++) {
+    const t = t0 + ((t1 - t0) * k) / steps;
+    const isInside = inside(t);
+    if (isInside !== wasInside) {
+      const changeAt = edge(previous, t, wasInside);
+      if (isInside) start = changeAt;
+      else if (start !== null) {
+        spans.push([start, changeAt]);
+        start = null;
+      }
+    }
+    previous = t;
+    wasInside = isInside;
+  }
+  if (start !== null) spans.push([start, t1]);
+  return spans;
+}
+
+/** Append a run, extending the last one instead when the colours match. */
+function joinRun(runs: ColorRun[], run: ColorRun): void {
+  const last = runs[runs.length - 1];
+  if (last && last.color === run.color) last.t1 = run.t1;
+  else runs.push(run);
+}
+
+/**
+ * Fold runs shorter than `minT` (a fraction of the segment) into a neighbour,
+ * shortest first, until every run is long enough or one is left. There are
+ * only two inks and equal neighbours already join, so both neighbours of a run
+ * carry the other ink: either will do.
+ */
+function foldShortRuns(runs: ColorRun[], minT: number): ColorRun[] {
+  let result = runs;
+  while (result.length > 1) {
+    let shortest = -1;
+    result.forEach((run, i) => {
+      const size = run.t1 - run.t0;
+      if (size < minT && (shortest < 0 || size < result[shortest]!.t1 - result[shortest]!.t0)) shortest = i;
+    });
+    if (shortest < 0) break;
+
+    const into = (result[shortest - 1] ?? result[shortest + 1])!;
+    const folded: ColorRun[] = [];
+    result.forEach((run, i) => joinRun(folded, { ...run, color: i === shortest ? into.color : run.color }));
+    result = folded;
+  }
+  return result;
 }
 
 /**
@@ -223,6 +391,7 @@ export function preResolveAutoColors(
  */
 export class ContrastCache {
   private cache = new Map<string, string>();
+  private runs = new Map<string, ColorRun[]>();
 
   resolve(
     point: { x: number; y: number },
@@ -243,7 +412,30 @@ export class ContrastCache {
     return resolved;
   }
 
+  /**
+   * Memoised `resolveAutoColorRuns`, keyed like the points (integer world
+   * coordinates) by both ends of the segment.
+   */
+  resolveRuns(
+    a: { x: number; y: number },
+    b: { x: number; y: number },
+    shapes: Record<string, Shape>,
+    shapeOrder: string[],
+    pageBackground: string,
+    excludeId?: string,
+    minRun = 0
+  ): ColorRun[] {
+    const key = `${Math.round(a.x)},${Math.round(a.y)}>${Math.round(b.x)},${Math.round(b.y)}|${excludeId ?? ''}|${minRun}`;
+    const hit = this.runs.get(key);
+    if (hit !== undefined) return hit;
+
+    const resolved = resolveAutoColorRuns(a, b, shapes, shapeOrder, pageBackground, excludeId, minRun);
+    this.runs.set(key, resolved);
+    return resolved;
+  }
+
   clear(): void {
     this.cache.clear();
+    this.runs.clear();
   }
 }
