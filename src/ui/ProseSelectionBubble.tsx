@@ -12,6 +12,7 @@
  * the bubble hides when the editor loses focus to it.
  */
 import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { BubbleMenu } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
 import { TextSelection, type EditorState } from '@tiptap/pm/state';
@@ -79,11 +80,16 @@ export function ProseSelectionBubble() {
 
   return (
     <>
-      {/* The menu's plugin moves its element into tippy's popper, so React must
-          never be the one to remove it: on unmount (the setting turned off, the
-          panel going away) React removes only this wrapper, still where React
-          put it, and the plugin's cleanup disposes of the moved element.
-          Without it, unmounting threw "removeChild: not a child of this node". */}
+      {/* The menu's plugin moves its element into tippy's popper on <body>, and
+          React only hears events inside the containers it renders into: drawn
+          in place, every press on the bubble was dropped. So it renders through
+          a portal to <body>.
+          React must never be the one to remove the moved element either: on
+          unmount (the setting turned off, the panel going away) React removes
+          only this wrapper, still where React put it, and the plugin's cleanup
+          disposes of the moved element. Without the wrapper, unmounting threw
+          "removeChild: not a child of this node". */}
+      {createPortal(
       <div className="prose-bubble-host">
       <BubbleMenu
         editor={editor}
@@ -133,7 +139,9 @@ export function ProseSelectionBubble() {
           </BubbleButton>
         </div>
       </BubbleMenu>
-      </div>
+      </div>,
+      document.body,
+      )}
       {showLinkDialog && <InsertLinkDialog editor={editor} onClose={() => setShowLinkDialog(false)} />}
     </>
   );

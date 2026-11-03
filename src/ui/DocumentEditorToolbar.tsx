@@ -27,7 +27,7 @@
  * it last synced, and carries Refresh, Open and Detach.
  */
 
-import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent } from 'react';
+import { Fragment, useState, useEffect, useCallback, useId, useMemo, useRef, type ChangeEvent } from 'react';
 import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import {
@@ -36,7 +36,7 @@ import {
   Link, AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Sigma, SquareSigma, Search, Settings2, PaintBucket, Trash2, Library, Info,
   BetweenVerticalStart, BetweenVerticalEnd, BetweenHorizontalStart, BetweenHorizontalEnd,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X, Undo2, Redo2, ImageUp,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Eye, X, Undo2, Redo2, ImageUp, Ellipsis,
 } from 'lucide-react';
 import type { CalloutVariant } from '../tiptap/CalloutExtension';
 import { useTiptapEditor } from './TiptapEditorContext';
@@ -47,7 +47,7 @@ import * as cmd from './editorCommands';
 import { registerSlashUiHandler, SLASH_COMMANDS, type SlashCommand } from '../tiptap/slashCommands';
 import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
 import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
-import { useSideScroll } from './useSideScroll';
+import { useRibbonOverflow } from './useRibbonOverflow';
 import { ImageUploadButton } from './ImageUploadButton';
 import { FileUploadButton } from './FileUploadButton';
 import { GalleryUploadButton } from './GalleryUploadButton';
@@ -112,10 +112,6 @@ export function DocumentEditorToolbar() {
   const [chosenTab, setChosenTab] = useState<RibbonTab>('home');
   const [lastPlainTab, setLastPlainTab] = useState<PlainTab>('home');
 
-  // In a narrow panel the tab's controls scroll sideways rather than wrap.
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useSideScroll(scrollRef, !docReadOnly && !(activeMirror && activePageId));
-
   // Modal states
   const [showMathInput, setShowMathInput] = useState(false);
   const [mathInput, setMathInput] = useState('');
@@ -168,6 +164,13 @@ export function DocumentEditorToolbar() {
   if (image) tabs.push('image');
   if (!tabs.includes(chosenTab)) setChosenTab(lastPlainTab);
   const activeTab = tabs.includes(chosenTab) ? chosenTab : lastPlainTab;
+
+  // The tab's controls keep one row: groups that don't fit wrap onto rows
+  // under it, which "…" drops down over the page (useRibbonOverflow).
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const stripId = useId();
+  const overflow = useRibbonOverflow(stripRef, toolbarRef, activeTab);
   const chooseTab = (tab: RibbonTab) => {
     setChosenTab(tab);
     if (tab === 'home' || tab === 'insert') setLastPlainTab(tab);
@@ -404,7 +407,7 @@ export function DocumentEditorToolbar() {
   }
 
   return (
-    <div className="document-editor-toolbar">
+    <div className="document-editor-toolbar" ref={toolbarRef}>
       <div className="ribbon-row">
         {/* Undo and redo first, where the canvas toolbar keeps them (DSK-200). */}
         <div className="document-editor-toolbar-group ribbon-history">
@@ -431,8 +434,8 @@ export function DocumentEditorToolbar() {
           ))}
         </div>
 
-        <div className="ribbon-scroll" ref={scrollRef}>
-        <div className="ribbon-scroll-content">
+        <div className="ribbon-strip" data-open={overflow.open || undefined}>
+        <div className="ribbon-strip__content" id={stripId} ref={stripRef} {...overflow.stripProps}>
         {/* === HOME TAB === */}
         {activeTab === 'home' && (
           <div className="ribbon-panel-content" role="tabpanel">
@@ -736,6 +739,21 @@ export function DocumentEditorToolbar() {
 
         </div>
         </div>
+
+        {/* Shown only while some of the tab's controls wrapped out of sight;
+            otherwise it keeps its place, unseen, so showing it never re-wraps
+            the row. */}
+        <button
+          type="button"
+          className={`document-editor-toolbar-btn ribbon-more${overflow.open ? ' active' : ''}`}
+          data-shown={overflow.overflowing || undefined}
+          aria-controls={stripId}
+          aria-label="More tools"
+          title="More tools"
+          {...overflow.moreProps}
+        >
+          <Ellipsis {...ICON} />
+        </button>
 
         {/* Find, at the end of the row. */}
         <div className="document-editor-toolbar-group ribbon-end">
