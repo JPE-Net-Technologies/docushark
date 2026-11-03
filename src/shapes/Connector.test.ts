@@ -17,9 +17,9 @@ import {
   updateConnectorEndpoints,
   clipPointToShapeBoundary,
   clipConnectorEndpoints,
-  segmentBoxOverlap,
 } from './Connector';
 import { Box } from '../math/Box';
+import { segmentBoxOverlap } from '../math/geometry';
 import { ConnectorShape, RectangleShape, Shape, resolveArrowStyle } from './Shape';
 import { setRenderContext } from '../engine/RenderContext';
 import { ContrastCache } from '../engine/ContrastResolver';
@@ -871,6 +871,89 @@ describe('arrowhead contrast colour (JP-137)', () => {
 
       expect(colors).toContain('#ffffff'); // body + heads resolve to the dark-bg contrast
       expect(colors).not.toContain('#000000'); // no black tip from the light hitched shape
+    } finally {
+      setRenderContext(null);
+    }
+  });
+
+  it('stays light over a dark canvas when its midpoint lies on a light shape (DSK-215)', () => {
+    // The founder's dark-theme line: one point used to colour the whole leg.
+    const blue: RectangleShape = {
+      id: 'blue',
+      type: 'rectangle',
+      x: 750,
+      y: 400,
+      width: 220,
+      height: 120,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#4a90d9',
+      stroke: '#2c5282',
+      strokeWidth: 2,
+      cornerRadius: 0,
+    };
+    setRenderContext({
+      shapes: { blue },
+      shapeOrder: ['blue'],
+      pageBackground: '#1e1e1e',
+      contrastCache: new ContrastCache(),
+    });
+    try {
+      const connector = createTestConnector({ stroke: 'auto', x: -1500, y: -800, x2: 3000, y2: 1600, endArrowStyle: 'triangle' });
+      const { ctx, colors } = recordingContext();
+      connectorHandler.render(ctx, connector);
+
+      // Light over the canvas, dark only across the blue, and a light head.
+      expect(colors.filter((c) => c === '#ffffff').length).toBeGreaterThanOrEqual(3);
+      expect(colors).toContain('#000000');
+      expect(colors[colors.length - 1]).toBe('#ffffff');
+    } finally {
+      setRenderContext(null);
+    }
+  });
+
+  it('colours each head like the run it attaches to (DSK-215)', () => {
+    const pale: RectangleShape = {
+      id: 'pale',
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 200,
+      rotation: 0,
+      opacity: 1,
+      locked: false,
+      visible: true,
+      fill: '#ffffff',
+      stroke: null,
+      strokeWidth: 0,
+      cornerRadius: 0,
+    };
+    setRenderContext({
+      shapes: { pale },
+      shapeOrder: ['pale'],
+      pageBackground: '#1e1e1e',
+      contrastCache: new ContrastCache(),
+    });
+    try {
+      // From inside the pale square (not hitched to it) out over the dark canvas.
+      const connector = createTestConnector({
+        stroke: 'auto',
+        x: 0,
+        y: 0,
+        x2: 600,
+        y2: 0,
+        startArrowStyle: 'triangle',
+        endArrowStyle: 'triangle',
+      });
+      const { ctx, colors } = recordingContext();
+      connectorHandler.render(ctx, connector);
+
+      // The start head (fill, stroke) is dark like the run over the square;
+      // the end head is light like the run over the canvas.
+      expect(colors.slice(-4)).toEqual(['#000000', '#000000', '#ffffff', '#ffffff']);
     } finally {
       setRenderContext(null);
     }

@@ -1,5 +1,6 @@
 import { Vec2 } from '../math/Vec2';
 import { Box } from '../math/Box';
+import { segmentBoxOverlap } from '../math/geometry';
 import { ShapeHandler, shapeRegistry } from './ShapeRegistry';
 import {
   ConnectorShape,
@@ -14,33 +15,36 @@ import {
   ArrowStyle,
   resolveArrowStyle,
 } from './Shape';
-import { isAutoColor } from '../engine/ContrastResolver';
+import { isAutoColor, type ColorRun } from '../engine/ContrastResolver';
 import { getRenderContext, type RenderContext } from '../engine/RenderContext';
 import { renderLabel } from './label/renderLabel';
 import { CONNECTOR_LABEL_SPEC, CONNECTOR_LABEL_MAX_WIDTH } from './label/specs';
 import type { LabelOverflow } from './label/LabelSpec';
 
 /**
- * Resolve a stroke colour at the midpoint of a single line segment, sampling
- * the topmost shape underneath. Returns the input unchanged if it is not the
- * AUTO sentinel, or if no render context is active.
+ * The colour runs along one leg of a connector: the whole leg in the stroke's
+ * own colour, or, for the AUTO sentinel, runs that each contrast with what lies
+ * beneath them (DSK-215), so a line crossing the canvas and a light shape reads
+ * over both. Runs shorter than an arrowhead (or 12 units) fold into a neighbour.
  */
-function resolveSegmentStroke(
+function resolveLegRuns(
   rawStroke: string,
   from: Vec2,
   to: Vec2,
-  connectorId: string
-): string {
-  if (!isAutoColor(rawStroke)) return rawStroke;
+  connectorId: string,
+  strokeWidth: number
+): ColorRun[] {
+  if (!isAutoColor(rawStroke)) return [{ t0: 0, t1: 1, color: rawStroke }];
   const rc = getRenderContext();
-  if (!rc) return '#000000'; // safe fallback when AUTO leaks outside a frame
-  const mid = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
-  return rc.contrastCache.resolve(
-    mid,
+  if (!rc) return [{ t0: 0, t1: 1, color: '#000000' }]; // safe fallback when AUTO leaks outside a frame
+  return rc.contrastCache.resolveRuns(
+    from,
+    to,
     rc.shapes,
     rc.shapeOrder,
     rc.pageBackground,
-    connectorId
+    connectorId,
+    Math.max(12, strokeWidth * 4)
   );
 }
 
@@ -823,40 +827,6 @@ function sampleSmoothCurve(points: Vec2[]): Vec2[] {
 }
 
 /**
- * Clip a segment a→b against an axis-aligned box (Liang–Barsky). Returns the
- * parameter range `[tEnter, tExit]` (within [0,1]) over which the segment lies
- * inside the box, or null if it never enters. Used to break a connector line
- * behind its label.
- */
-export function segmentBoxOverlap(a: Vec2, b: Vec2, box: Box): [number, number] | null {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  let t0 = 0;
-  let t1 = 1;
-  const edges: Array<[number, number]> = [
-    [-dx, a.x - box.minX],
-    [dx, box.maxX - a.x],
-    [-dy, a.y - box.minY],
-    [dy, box.maxY - a.y],
-  ];
-  for (const [p, q] of edges) {
-    if (p === 0) {
-      if (q < 0) return null; // parallel to this edge and fully outside it
-    } else {
-      const r = q / p;
-      if (p < 0) {
-        if (r > t1) return null;
-        if (r > t0) t0 = r;
-      } else {
-        if (r < t0) return null;
-        if (r < t1) t1 = r;
-      }
-    }
-  }
-  return t0 <= t1 ? [t0, t1] : null;
-}
-
-/**
  * Stroke a→b but skip every portion that falls inside one of `boxes` (the gaps
  * behind labels). A connector breaks at ALL label boxes in the frame — its own
  * and every other connector's — so no line is ever drawn through a label's text
@@ -1203,13 +1173,15 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       }
 
       if (isAutoColor(stroke)) {
-        // Per-segment colour resolution so a connector crossing dark→light
-        // backgrounds gets the right contrast on each leg.
+        // Each leg in runs that contrast with what lies beneath them, so a
+        // connector crossing dark and light backgrounds reads over both.
         for (let i = 1; i < points.length; i++) {
           const a = points[i - 1]!;
           const b = points[i]!;
-          ctx.strokeStyle = resolveSegmentStroke(stroke, a, b, shape.id);
-          strokeSegmentWithGaps(ctx, a, b, gapBoxes);
+          for (const run of resolveLegRuns(stroke, a, b, shape.id, strokeWidth)) {
+            ctx.strokeStyle = run.color;
+            strokeSegmentWithGaps(ctx, a.lerp(b, run.t0), a.lerp(b, run.t1), gapBoxes);
+          }
         }
       } else {
         ctx.strokeStyle = stroke;
@@ -1240,12 +1212,13 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         const p0 = points[0]!;
         const p1 = points[1]!;
         const startAngle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
-        // Colour the arrowhead/marker to match its adjacent body segment rather
-        // than resolving AUTO contrast at the endpoint itself: the endpoint sits
-        // on the hitched shape, so a light shape would force a dark tip that
-        // disjoints from the (background-resolved) line. Using the segment's
-        // colour keeps the head uniform with the leg it attaches to (JP-137).
-        const startStroke = resolveSegmentStroke(stroke, p0, p1, shape.id);
+        // Colour the arrowhead/marker like the run of the line it attaches to,
+        // rather than resolving AUTO contrast at the endpoint itself: the
+        // endpoint sits on the hitched shape, so a light shape would force a
+        // dark tip that disjoints from the (background-resolved) line. A run
+        // that only touches the shape's edge folds into the next, so the head
+        // stays uniform with the line (JP-137, DSK-215).
+        const startStroke = resolveLegRuns(stroke, p0, p1, shape.id, strokeWidth)[0]!.color;
 
         if (connectorType === 'uml-sequence' && shape.startSequenceMarker && shape.startSequenceMarker !== 'none') {
           // Draw UML sequence marker
@@ -1272,10 +1245,11 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
         const lastPt = points[lastIdx]!;
         const secondLastPt = points[lastIdx - 1]!;
         const endAngle = Math.atan2(lastPt.y - secondLastPt.y, lastPt.x - secondLastPt.x);
-        // Match the adjacent body segment (see start endpoint note above) so the
-        // arrowhead stays uniform with the line instead of resolving contrast on
-        // the hitched shape under the endpoint (JP-137).
-        const endStroke = resolveSegmentStroke(stroke, secondLastPt, lastPt, shape.id);
+        // Match the run the head attaches to (see start endpoint note above) so
+        // the arrowhead stays uniform with the line instead of resolving
+        // contrast on the hitched shape under the endpoint (JP-137).
+        const endRuns = resolveLegRuns(stroke, secondLastPt, lastPt, shape.id, strokeWidth);
+        const endStroke = endRuns[endRuns.length - 1]!.color;
 
         if (connectorType === 'uml-sequence' && shape.endSequenceMarker && shape.endSequenceMarker !== 'none') {
           // Draw UML sequence marker

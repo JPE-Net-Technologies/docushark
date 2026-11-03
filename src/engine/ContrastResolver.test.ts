@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   resolveAutoColor,
+  resolveAutoColorRuns,
   ContrastCache,
   AUTO_COLOR,
   isAutoColor,
@@ -282,5 +283,110 @@ describe('ContrastCache', () => {
     cache.clear();
     // Empty shapes — no cached fill, falls back to page.
     expect(cache.resolve({ x: 0, y: 0 }, {}, [], '#ffffff')).toBe('#000000');
+  });
+});
+
+describe('resolveAutoColorRuns (DSK-215)', () => {
+  const DARK = '#1e1e1e';
+  const LIGHT_INK = '#ffffff';
+  const DARK_INK = '#000000';
+  const light = (overrides: Partial<RectangleShape> = {}) => baseRect({ fill: '#4a90d9', ...overrides });
+  const circle = (overrides: Partial<EllipseShape> = {}): EllipseShape => ({
+    id: 'e',
+    type: 'ellipse',
+    x: 0,
+    y: 0,
+    radiusX: 100,
+    radiusY: 50,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    fill: '#ffffff',
+    stroke: null,
+    strokeWidth: 0,
+    ...overrides,
+  });
+  /** A run's extent in world x along a horizontal segment from x = -500 to 500. */
+  const xs = (t0: number, t1: number) => [Math.round(-500 + 1000 * t0), Math.round(-500 + 1000 * t1)];
+
+  it('is one page run when nothing lies beneath', () => {
+    expect(resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, {}, [], DARK)).toEqual([
+      { t0: 0, t1: 1, color: LIGHT_INK },
+    ]);
+  });
+
+  it('stays light over the canvas when the midpoint falls on a light shape', () => {
+    // The founder's line: its midpoint was the centre of a blue rectangle, so
+    // the whole line was judged against the blue and drawn black.
+    const runs = resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, { r: light() }, ['r'], DARK);
+    expect(runs.map((run) => run.color)).toEqual([LIGHT_INK, DARK_INK, LIGHT_INK]);
+    expect(xs(runs[1]!.t0, runs[1]!.t1)).toEqual([-50, 50]);
+  });
+
+  it('follows an ellipse\'s outline, not its bounding box', () => {
+    // At y = 35 the ellipse (100 by 50) spans x = ±71.4, off the 8-unit samples
+    // and off the midpoints between them.
+    const runs = resolveAutoColorRuns({ x: -500, y: 35 }, { x: 500, y: 35 }, { e: circle() }, ['e'], DARK);
+    expect(runs.map((run) => run.color)).toEqual([LIGHT_INK, DARK_INK, LIGHT_INK]);
+    expect(xs(runs[1]!.t0, runs[1]!.t1)).toEqual([-71, 71]);
+
+    // Across the box's empty corner, missing the ellipse: the page throughout.
+    const corner = resolveAutoColorRuns({ x: 70, y: -60 }, { x: 110, y: -40 }, { e: circle() }, ['e'], DARK);
+    expect(corner).toEqual([{ t0: 0, t1: 1, color: LIGHT_INK }]);
+  });
+
+  it('finds a crossing that misses the box\'s entry, exit and middle', () => {
+    // The line clips a circle's side off-centre within its bounding box: the
+    // only stretch over the circle lies between those three points.
+    const shapes = { e: circle({ radiusX: 100, radiusY: 100 }) };
+    const runs = resolveAutoColorRuns({ x: 84, y: -111 }, { x: 109, y: 80 }, shapes, ['e'], DARK);
+    expect(runs.map((run) => run.color)).toEqual([LIGHT_INK, DARK_INK, LIGHT_INK]);
+    expect((runs[1]!.t1 - runs[1]!.t0) * Math.hypot(25, 191)).toBeCloseTo(42.6, 0);
+  });
+
+  it('takes the topmost shape where shapes overlap', () => {
+    const shapes = {
+      under: light({ id: 'under', x: 0, width: 400, fill: '#ffffff' }),
+      over: light({ id: 'over', x: 0, width: 100, fill: '#000000' }),
+    };
+    const runs = resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['under', 'over'], DARK);
+    expect(runs.map((run) => run.color)).toEqual([LIGHT_INK, DARK_INK, LIGHT_INK, DARK_INK, LIGHT_INK]);
+    expect(xs(runs[2]!.t0, runs[2]!.t1)).toEqual([-50, 50]);
+  });
+
+  it('ignores translucent shapes and the shape being resolved', () => {
+    const faint = { r: light({ opacity: 0.3 }) };
+    expect(resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, faint, ['r'], DARK)).toHaveLength(1);
+    const self = { r: light() };
+    expect(resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, self, ['r'], DARK, 'r')).toHaveLength(1);
+  });
+
+  it('folds runs shorter than minRun into their neighbour', () => {
+    // The line starts 3 units inside a light shape's edge, as a connector
+    // clipped to the shape it is hitched to can (JP-137).
+    const shapes = { r: light({ x: -547 }) }; // spans x = -597 to -497
+    const runs = resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['r'], DARK, undefined, 12);
+    expect(runs).toEqual([{ t0: 0, t1: 1, color: LIGHT_INK }]);
+    // Without the fold, the sliver keeps its own colour.
+    expect(resolveAutoColorRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['r'], DARK)).toHaveLength(2);
+  });
+
+  it('is memoised per segment until the cache clears', () => {
+    const cache = new ContrastCache();
+    const shapes = { r: light() };
+    const first = cache.resolveRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['r'], DARK, 'c', 12);
+    expect(cache.resolveRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['r'], DARK, 'c', 12)).toBe(first);
+    cache.clear();
+    expect(cache.resolveRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, {}, [], DARK, 'c', 12)).toEqual([
+      { t0: 0, t1: 1, color: LIGHT_INK },
+    ]);
+  });
+
+  it('keeps separate entries for different minimum runs', () => {
+    const cache = new ContrastCache();
+    const shapes = { r: light({ x: -547 }) }; // a 3-unit sliver at the start
+    expect(cache.resolveRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['r'], DARK, 'c', 12)).toHaveLength(1);
+    expect(cache.resolveRuns({ x: -500, y: 0 }, { x: 500, y: 0 }, shapes, ['r'], DARK, 'c', 0)).toHaveLength(2);
   });
 });
