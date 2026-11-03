@@ -1,4 +1,8 @@
+/* Its own layer above the page's (table handles and marquee reach z-index 11),
+ * so the overflow's dropped-down rows cover the text beneath. */
 .document-editor-toolbar {
+  position: relative;
+  z-index: 12;
   display: flex;
   flex-direction: column;
   border-bottom: 1px solid var(--border-color);
@@ -65,47 +69,62 @@
   background: var(--bg-secondary);
 }
 
-/* The tab's controls fill the room between the switch and Find, in one row:
- * a narrow panel scrolls them sideways (useSideScroll) instead of wrapping,
- * fading whichever end is out of view. */
-.ribbon-scroll {
+/* The tab's controls fill the room between the switch and Find, in one row
+ * (DSK-200). In a narrow panel the groups wrap onto rows clipped under the
+ * first, and "…" drops those rows down over the page (useRibbonOverflow): the
+ * first row never moves, and every control stays mounted. The row is 32px of
+ * controls plus room for their focus rings, which the clip would cut. */
+.ribbon-strip {
+  --ribbon-row-height: 36px;
+  position: relative;
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  height: var(--ribbon-row-height);
 }
 
-.ribbon-scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.ribbon-scroll[data-overflow~="start"] {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
-  mask-image: linear-gradient(to right, transparent, #000 24px);
-}
-
-.ribbon-scroll[data-overflow~="end"] {
-  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
-  mask-image: linear-gradient(to left, transparent, #000 24px);
-}
-
-.ribbon-scroll[data-overflow="start end"] {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
-}
-
-/* Room above and below for the buttons' focus rings, which the strip would clip. */
-.ribbon-scroll-content {
-  display: flex;
-  width: max-content;
+.ribbon-strip__content {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+  max-height: var(--ribbon-row-height);
   padding: 2px 0;
+  overflow: clip;
 }
 
-/* The larger gap separates the clusters now that the vertical dividers are gone. */
+.ribbon-strip[data-open] .ribbon-strip__content {
+  max-height: none;
+  padding-bottom: var(--space-2);
+  overflow: visible;
+}
+
+/* The dropped-down rows' panel: it starts under the first row, so the first
+ * row stays part of the ribbon, and its shadow falls only downward. */
+.ribbon-strip[data-open] .ribbon-strip__content::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: var(--ribbon-row-height) calc(-1 * var(--space-2)) 0;
+  border: 1px solid var(--border-color);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  clip-path: inset(0 -24px -24px -24px);
+}
+
+/* Keeps its place while there is nothing to show, so showing it never
+ * re-wraps the row; hidden, it can't be focused either. */
+.ribbon-more:not([data-shown]) {
+  visibility: hidden;
+}
+
+/* The larger gap separates the clusters now that the vertical dividers are
+ * gone; whole clusters wrap onto the hidden rows. */
 .ribbon-panel-content {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2) var(--space-3);
 }
 
 /* Insert stays mounted while hidden; `display: flex` above would show it. */

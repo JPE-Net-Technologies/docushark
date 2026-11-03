@@ -33,8 +33,10 @@ The ribbon above the text keeps everything in one row:
   themselves; you choose them.
 - **Find** sits at the end (`Ctrl+F`).
 
-In a narrow panel, such as Split, the controls scroll sideways instead of
-wrapping onto a second row: scroll over them with the mouse wheel.
+In a narrow panel, such as Split, the controls that don't fit move under a
+**More tools** (…) button at the end of the row. Rest the pointer on it, or
+click it to keep them open, and they drop down beneath the row; tabbing onto
+one of them opens them too. Escape or a click back in your page puts them away.
 
 ### Formatting on Selection
 
