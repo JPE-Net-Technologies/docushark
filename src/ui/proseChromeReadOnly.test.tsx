@@ -1,19 +1,19 @@
 /**
- * Read-only prose chrome (JP-470 S4): the right-click surfaces and the
- * spellcheck popover must be inert when the editor isn't editable.
+ * Read-only prose chrome (JP-470 S4): the right-click menu and its spelling
+ * fixes must be inert when the editor isn't editable.
  *
- * `editable: false` blocks typing, NOT programmatic commands — the popover's
+ * `editable: false` blocks typing, NOT programmatic commands — a suggestion's
  * `insertContent` and every formatting-menu action are exactly such commands,
  * and were live for view-only collab members. Each gate is asserted with an
  * editable control so removing it fails a test.
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, fireEvent, cleanup, screen } from '@testing-library/react';
+import { render, fireEvent, cleanup, screen, waitFor } from '@testing-library/react';
 import { Editor } from '@tiptap/core';
 import { extensions } from './TiptapEditor';
 import { useProseEditorChrome } from './useProseEditorChrome';
-import { SpellcheckPopover } from './SpellcheckPopover';
+import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
 import { useRichTextStore } from '../store/richTextStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 
@@ -87,76 +87,69 @@ describe('formatting context menu', () => {
   });
 });
 
-describe('SpellcheckPopover writes', () => {
-  it('suggestion click writes nothing into a read-only editor', () => {
-    const ed = make(false);
-    const before = ed.getHTML();
+describe('spelling fixes in the context menu (DSK-213)', () => {
+  // The menu can be open when a permission flip makes the page read-only.
+  function renderMenu(ed: Editor) {
     render(
-      <SpellcheckPopover
-        editor={ed}
-        word="mispeled"
-        range={{ from: 5, to: 13 }}
+      <DocumentEditorContextMenu
         x={0}
         y={0}
         onClose={vi.fn()}
+        editor={ed}
+        misspelling={{ word: 'mispeled', range: { from: 5, to: 13 } }}
       />,
     );
+  }
+
+  it('right-clicking a misspelled word opens the menu with its fixes first', async () => {
+    const ed = make(true);
+    render(<ChromeHarness ed={ed} />);
+    // In the app the editor sits inside the element carrying onContextMenu.
+    screen.getByTestId('prose-host').appendChild(host!);
+    const word = await waitFor(() => {
+      const underline = ed.view.dom.querySelector('.spellcheck-error');
+      if (!underline) throw new Error('no spellcheck underline yet');
+      return underline;
+    });
+    fireEvent.contextMenu(word);
+    const first = document.querySelector('.doc-editor-context-menu .doc-editor-context-menu-item');
+    expect(first?.textContent).toBe('misspelled');
+    expect(screen.getByText('Add to dictionary')).not.toBeNull();
+  });
+
+  it('a suggestion writes nothing into a read-only editor', () => {
+    const ed = make(false);
+    const before = ed.getHTML();
+    renderMenu(ed);
     fireEvent.click(screen.getByText('misspelled'));
     expect(ed.getHTML()).toBe(before);
   });
 
-  it('suggestion click replaces the word when editable (control)', () => {
+  it('a suggestion replaces the word when editable (control)', () => {
     const ed = make(true);
-    render(
-      <SpellcheckPopover
-        editor={ed}
-        word="mispeled"
-        range={{ from: 5, to: 13 }}
-        x={0}
-        y={0}
-        onClose={vi.fn()}
-      />,
-    );
+    renderMenu(ed);
     fireEvent.click(screen.getByText('misspelled'));
     expect(ed.getHTML()).toContain('misspelled');
     expect(ed.getHTML()).not.toContain('mispeled');
   });
 
-  it('Add to Dictionary is inert on a read-only editor', () => {
+  it('Add to dictionary is inert on a read-only editor', () => {
     const ed = make(false);
     const addWord = vi.spyOn(useRichTextStore.getState(), 'addDictionaryWord');
-    render(
-      <SpellcheckPopover
-        editor={ed}
-        word="mispeled"
-        range={{ from: 5, to: 13 }}
-        x={0}
-        y={0}
-        onClose={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('Add to Dictionary'));
+    renderMenu(ed);
+    fireEvent.click(screen.getByText('Add to dictionary'));
     expect(SpellcheckService.addToSession).not.toHaveBeenCalled();
     expect(addWord).not.toHaveBeenCalled();
     addWord.mockRestore();
   });
 
-  it('Add to Dictionary works when editable (control)', () => {
+  it('Add to dictionary works when editable (control)', () => {
     const ed = make(true);
     const addWord = vi
       .spyOn(useRichTextStore.getState(), 'addDictionaryWord')
       .mockImplementation(() => {});
-    render(
-      <SpellcheckPopover
-        editor={ed}
-        word="mispeled"
-        range={{ from: 5, to: 13 }}
-        x={0}
-        y={0}
-        onClose={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('Add to Dictionary'));
+    renderMenu(ed);
+    fireEvent.click(screen.getByText('Add to dictionary'));
     expect(SpellcheckService.addToSession).toHaveBeenCalledWith('mispeled');
     expect(addWord).toHaveBeenCalledWith('mispeled');
     addWord.mockRestore();

@@ -1,5 +1,10 @@
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
-import { commandShortcut } from '../engine/CommandRegistry';
+import { Fragment, useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
+import { commandShortcut, getCanvasMenuCommands } from '../engine/CommandRegistry';
+import { hasCanvasClipboard, requestPasteAt } from '../engine/Engine';
+import { Vec2 } from '../math/Vec2';
+import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { applyDefaultStyleProfile } from '../store/defaultStyleProfile';
+import { isActiveDocReadOnly } from '../store/documentRegistry';
 import { clampToViewport, placeFlyout } from './contextMenuUtils';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
@@ -13,6 +18,8 @@ import './ContextMenu.css';
 interface ContextMenuProps {
   x: number;
   y: number;
+  /** The world point under the menu: where "Paste here" and "Add … here" act (DSK-213). */
+  world?: { x: number; y: number };
   onClose: () => void;
   onExport?: () => void;
   onSaveToLibrary?: () => void;
@@ -149,7 +156,14 @@ function Submenu({ label, items, onClose, parentMenuRef, onShiftChange }: Submen
  * Context menu for shape operations.
  * Shows contextual actions based on current selection.
  */
-export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: ContextMenuProps) {
+/** What "Add shape here" offers, by shape type (DSK-213). */
+const ADD_HERE_SHAPES = [
+  { type: 'rectangle', label: 'Rectangle' },
+  { type: 'ellipse', label: 'Ellipse' },
+  { type: 'diamond', label: 'Diamond' },
+] as const;
+
+export function ContextMenu({ x, y, world, onClose, onExport, onSaveToLibrary }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPosition, setAdjustedPosition] = useState({ x, y });
   // How far the menu slides left so the open submenu has room on the right.
@@ -313,6 +327,34 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
     }
     onClose();
   }, [hasSelection, selectedArray, push, deleteShapes, clearSelection, onClose]);
+
+  // Empty canvas (DSK-213): make a shape where the menu opened, as its tool
+  // would (registry defaults and the default style profile), and select it.
+  const addHere = useCallback(
+    (type: string) => {
+      if (!world) return null;
+      push(type === 'text' ? 'Create text' : 'Create shape');
+      const shape = applyDefaultStyleProfile(
+        shapeRegistry.getHandler(type).create(new Vec2(world.x, world.y), nanoid()),
+      );
+      useDocumentStore.getState().addShape(shape);
+      select([shape.id]);
+      onClose();
+      return shape.id;
+    },
+    [world, push, select, onClose],
+  );
+  const addShapeItems: SubmenuItem[] = useMemo(
+    // Library shapes register at runtime: offer only what can be made now.
+    () =>
+      ADD_HERE_SHAPES.filter(({ type }) => shapeRegistry.hasHandler(type)).map(({ type, label }) => ({
+        label,
+        onClick: () => addHere(type),
+      })),
+    [addHere],
+  );
+  const canvasCommands = useMemo(() => getCanvasMenuCommands(), []);
+  const readOnly = isActiveDocReadOnly();
 
   // JP-305 Slice D: expand to the connected chain, and auto-layout the
   // selection. Both delegate to the shared selectionLayout actions so the
@@ -588,10 +630,55 @@ export function ContextMenu({ x, y, onClose, onExport, onSaveToLibrary }: Contex
         </>
       )}
 
+      {/* Empty canvas (DSK-213): what can be done where the menu opened, then
+          the canvas commands the registry offers here, with their shortcuts. */}
       {!hasSelection && (
-        <div className="context-menu-item disabled">
-          <span className="context-menu-label">No selection</span>
-        </div>
+        <>
+          {world && !readOnly && (
+            <>
+              <button
+                className="context-menu-item"
+                disabled={!hasCanvasClipboard()}
+                onClick={() => {
+                  requestPasteAt(world);
+                  onClose();
+                }}
+              >
+                <span className="context-menu-label">Paste here</span>
+                <span className="context-menu-shortcut">{commandShortcut('edit.paste')}</span>
+              </button>
+              <button
+                className="context-menu-item"
+                onClick={() => {
+                  const id = addHere('text');
+                  if (id) useSessionStore.getState().startTextEdit(id);
+                }}
+              >
+                <span className="context-menu-label">Add text here</span>
+              </button>
+              <Submenu label="Add shape here" items={addShapeItems} onClose={onClose} parentMenuRef={menuRef} onShiftChange={handleShiftChange} />
+              <div className="context-menu-separator" />
+            </>
+          )}
+          {canvasCommands.map((command, index) => (
+            <Fragment key={command.id}>
+              {index > 0 && command.category !== canvasCommands[index - 1]!.category && (
+                <div className="context-menu-separator" />
+              )}
+              <button
+                className="context-menu-item"
+                disabled={command.canExecute ? !command.canExecute() : false}
+                onClick={() => {
+                  command.execute();
+                  onClose();
+                }}
+              >
+                <span className="context-menu-label">{command.label}</span>
+                {command.shortcut && <span className="context-menu-shortcut">{command.shortcut}</span>}
+              </button>
+            </Fragment>
+          ))}
+        </>
       )}
     </div>
   );

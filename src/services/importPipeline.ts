@@ -18,7 +18,8 @@ import { useSessionStore } from '../store/sessionStore';
 import { useShapeLibraryStore } from '../store/shapeLibraryStore';
 import { useNotificationStore } from '../store/notificationStore';
 import { pushHistory } from '../store/historyStore';
-import type { Vec2 } from '../math/Vec2';
+import { Vec2 } from '../math/Vec2';
+import { translateShape as translatedShape } from '../shapes/utils/transforms';
 import { importFiles, type ImportContext } from './FileImportService';
 
 /**
@@ -112,18 +113,12 @@ function placeImport(shapes: Shape[], ctx: ImportContext): void {
   for (const shape of shapes) translateShape(shape, dx, dy);
 }
 
-/** Shift a shape and any endpoint/waypoint geometry by (dx, dy), in place. */
+/**
+ * Shift a shape and any endpoint/waypoint geometry by (dx, dy), in place,
+ * through the shared translation so the two can't disagree on what moves.
+ */
 function translateShape(shape: Shape, dx: number, dy: number): void {
-  shape.x += dx;
-  shape.y += dy;
-  const geo = shape as Shape & {
-    x2?: number;
-    y2?: number;
-    waypoints?: Array<{ x: number; y: number }>;
-  };
-  if (typeof geo.x2 === 'number') geo.x2 += dx;
-  if (typeof geo.y2 === 'number') geo.y2 += dy;
-  if (geo.waypoints) geo.waypoints = geo.waypoints.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  Object.assign(shape, translatedShape(shape, new Vec2(dx, dy)));
 }
 
 /** Yield to the browser so it can paint a chunk before the next one lands. */

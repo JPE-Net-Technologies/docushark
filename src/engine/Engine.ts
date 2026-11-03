@@ -17,6 +17,8 @@ import { LibraryShapeTool } from './tools/LibraryShapeTool';
 import { CustomShapeTool } from './tools/CustomShapeTool';
 import { Vec2 } from '../math/Vec2';
 import { Shape, isConnector, ConnectorShape } from '../shapes/Shape';
+import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { translateShape } from '../shapes/utils/transforms';
 import { updateConnectorEndpoints } from '../shapes/Connector';
 import { calculateConnectorWaypoints } from './OrthogonalRouter';
 import { collectChangedShapes, isConnectorAffected } from './connectorReroute';
@@ -39,6 +41,30 @@ import '../shapes/FileShape';
 
 // Clipboard for copy/paste (module-level to persist across operations)
 let clipboard: Shape[] = [];
+
+/** How far a paste lands from the shapes it copies, so it shows as new. */
+const PASTE_OFFSET = 20;
+
+/** Whether the canvas has copied shapes to paste. */
+export function hasCanvasClipboard(): boolean {
+  return clipboard.length > 0;
+}
+
+/**
+ * Paste the canvas clipboard centred on `at`, a world point (the canvas
+ * menu's "Paste here", DSK-213): the `edit.paste` event, with a place to land.
+ */
+export function requestPasteAt(at: { x: number; y: number }): void {
+  window.dispatchEvent(new CustomEvent('docushark:paste-shapes', { detail: { at } }));
+}
+
+/** How far to move `shapes` so the centre of their bounds lands on `at`. */
+function offsetToCentre(shapes: Shape[], at: { x: number; y: number }): Vec2 {
+  const bounds = shapes
+    .map((shape) => shapeRegistry.getHandler(shape.type).getBounds(shape))
+    .reduce((all, box) => all.union(box));
+  return new Vec2(at.x - (bounds.minX + bounds.maxX) / 2, at.y - (bounds.minY + bounds.maxY) / 2);
+}
 
 /**
  * Configuration options for the Engine.
@@ -181,7 +207,7 @@ export class Engine {
   // Clipboard shortcuts are registry commands (canvas scope) that bridge to the
   // engine via these events — they need the engine clipboard + spatial index.
   private boundCopy: () => void;
-  private boundPaste: () => void;
+  private boundPaste: (event: Event) => void;
 
   constructor(canvas: HTMLCanvasElement, options?: EngineOptions) {
     this.canvas = canvas;
@@ -228,7 +254,8 @@ export class Engine {
 
     // Clipboard commands (registry, canvas scope) bridge to the engine here.
     this.boundCopy = () => this.copySelection();
-    this.boundPaste = () => this.pasteClipboard();
+    this.boundPaste = (event) =>
+      this.pasteClipboard((event as CustomEvent<{ at?: { x: number; y: number } } | null>).detail?.at);
     window.addEventListener('docushark:copy-shapes', this.boundCopy);
     window.addEventListener('docushark:paste-shapes', this.boundPaste);
 
@@ -1051,31 +1078,32 @@ export class Engine {
   }
 
   /**
-   * Paste the engine clipboard (offset), select the new shapes, and feed the
-   * spatial index. Invoked by the `edit.paste` registry command via the
-   * `docushark:paste-shapes` event.
+   * Paste the engine clipboard, select the new shapes, and feed the spatial
+   * index. Invoked by the `edit.paste` registry command via the
+   * `docushark:paste-shapes` event: a little offset from the copies, or centred
+   * on the event's point (`requestPasteAt`, the canvas menu's "Paste here").
+   * Lines and connectors move whole: their second endpoint and waypoints too.
    */
-  private pasteClipboard(): void {
+  private pasteClipboard(at?: { x: number; y: number }): void {
     // JP-370: paste needs no selection, so the clear-selection read-only trick
     // doesn't cover it — guard explicitly (the registry command is also gated).
     if (this.isReadOnly) return;
     if (clipboard.length === 0) return;
     pushHistory('Paste shapes');
 
+    const delta = at ? offsetToCentre(clipboard, at) : new Vec2(PASTE_OFFSET, PASTE_OFFSET);
     const newIds: string[] = [];
-    const offset = 20; // Offset pasted shapes slightly
 
     for (const shape of clipboard) {
-      const newId = nanoid();
-      const newShape: Shape = { ...shape, id: newId, x: shape.x + offset, y: shape.y + offset };
+      const newShape: Shape = { ...translateShape(shape, delta), id: nanoid() };
       useDocumentStore.getState().addShape(newShape);
       this.spatialIndex.insert(newShape);
-      newIds.push(newId);
+      newIds.push(newShape.id);
     }
 
     useSessionStore.getState().select(newIds);
-    // Update clipboard with new positions for subsequent pastes.
-    clipboard = clipboard.map((s) => ({ ...s, x: s.x + offset, y: s.y + offset }));
+    // The next paste lands a little offset from these.
+    clipboard = clipboard.map((shape) => translateShape(shape, delta));
     this.renderer.requestRender();
   }
 

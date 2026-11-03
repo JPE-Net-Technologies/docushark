@@ -84,6 +84,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', place: 'insert', icon: BookMarked, run: (e) => cmd.insertBibliographyOnce(e) },
 ];
 
+/**
+ * What "/" inserts (as opposed to formats), in the registry's groups and order:
+ * the ribbon's Insert tab and the right-click Insert menu both list these, so
+ * neither can drift from "/" (DSK-200, DSK-213).
+ */
+export const INSERT_COMMANDS = SLASH_COMMANDS.filter((command) => command.place === 'insert');
+export const INSERT_GROUPS = [...new Set(INSERT_COMMANDS.map((command) => command.group))];
+
 // ─── Matcher + filter (pure, unit-tested) ────────────────────────────────────
 
 /**
