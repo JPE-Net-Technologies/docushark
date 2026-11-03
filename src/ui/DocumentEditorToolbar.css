@@ -5,55 +5,121 @@
   background: var(--bg-secondary);
 }
 
-/* Ribbon tab bar */
-.ribbon-tab-bar {
+/* One row (DSK-200): undo and redo, the tab switch, the tab's controls, and
+ * Find at the end. */
+.ribbon-row {
   display: flex;
-  align-items: flex-end;
-  gap: 0;
-  padding: 0 var(--space-2);
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: 42px;
+  padding: var(--space-1-5) var(--space-2);
+}
+
+/* The tab switch: a compact segmented control inside the row. */
+.ribbon-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
   background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
 }
 
 .ribbon-tab {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 0.15s ease;
-  margin-bottom: -1px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .ribbon-tab:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
 }
 
 .ribbon-tab.active {
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-primary);
-  border-color: var(--border-color);
-  border-bottom-color: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Ribbon panel */
-.ribbon-panel {
-  min-height: 42px;
+/* Contextual tabs (Table, Image) take the accent: they belong to the selection. */
+.ribbon-tab--contextual,
+.ribbon-tab--contextual:hover {
+  color: var(--color-primary);
 }
 
+.ribbon-tab:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* --bg-tertiary is a raised surface in dark, so the track sinks to
+   --bg-secondary there and the chosen tab still rises from it. */
+[data-theme="dark"] .ribbon-tabs {
+  background: var(--bg-secondary);
+}
+
+/* The tab's controls fill the room between the switch and Find, in one row:
+ * a narrow panel scrolls them sideways (useSideScroll) instead of wrapping,
+ * fading whichever end is out of view. */
+.ribbon-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ribbon-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.ribbon-scroll[data-overflow~="start"] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px);
+  mask-image: linear-gradient(to right, transparent, #000 24px);
+}
+
+.ribbon-scroll[data-overflow~="end"] {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 24px);
+  mask-image: linear-gradient(to left, transparent, #000 24px);
+}
+
+.ribbon-scroll[data-overflow="start end"] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+/* Room above and below for the buttons' focus rings, which the strip would clip. */
+.ribbon-scroll-content {
+  display: flex;
+  width: max-content;
+  padding: 2px 0;
+}
+
+/* The larger gap separates the clusters now that the vertical dividers are gone. */
 .ribbon-panel-content {
   display: flex;
   align-items: center;
-  /* row-gap (wrapped rows) < column-gap (between groups) — the larger column-gap
-   * separates the clusters now that the vertical dividers are gone. */
-  gap: var(--space-2) var(--space-3);
-  padding: var(--space-1-5) var(--space-2);
-  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* Insert stays mounted while hidden; `display: flex` above would show it. */
+.ribbon-panel-content[hidden] {
+  display: none;
+}
+
+.ribbon-end {
+  margin-left: auto;
+}
+
+/* Marks which slash command an Insert control stands for, without a box of its own. */
+.ribbon-insert-item {
+  display: contents;
 }
 
 /* Each cluster stays atomic — it never splits across rows when the ribbon wraps;
@@ -162,14 +228,7 @@
   background: var(--bg-tertiary);
 }
 
-/* Disabled group (e.g., table tools when not in table) */
-.disabled-group {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-.document-editor-toolbar-btn:disabled,
-.document-editor-toolbar-btn.disabled {
+.document-editor-toolbar-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
   pointer-events: none;
@@ -377,15 +436,6 @@
 .align-right span:nth-child(3) { width: 85%; margin-left: auto; }
 
 .align-justify span { width: 100%; }
-
-/* Dark mode adjustments */
-[data-theme="dark"] .ribbon-tab-bar {
-  background: var(--bg-tertiary);
-}
-
-[data-theme="dark"] .ribbon-tab.active {
-  background: var(--bg-secondary);
-}
 
 /* Read-only strip (JP-462) — replaces the ribbon on a document the caller
    cannot edit. Deliberately occupies the ribbon's slot rather than collapsing

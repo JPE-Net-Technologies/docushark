@@ -21,7 +21,8 @@ vi.mock('./TiptapEditorContext', () => ({
     isActive: () => false,
     on: vi.fn(),
     off: vi.fn(),
-    can: () => ({ chain: () => ({ focus: () => ({ run: () => true }) }) }),
+    // Both prose editors register undo and redo; the ribbon asks whether they can run.
+    can: () => ({ chain: () => ({ focus: () => ({ run: () => true }) }), undo: () => false, redo: () => false }),
     getAttributes: () => ({}),
     state: { selection: {} },
     isDestroyed: false,

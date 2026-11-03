@@ -361,7 +361,7 @@
 .tiptap-editor .ProseMirror table {
   border-collapse: separate;
   border-spacing: 0;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--table-border);
   border-radius: 8px;
   width: 100%;
   table-layout: fixed;
@@ -407,8 +407,8 @@
 
 .tiptap-editor .ProseMirror table th,
 .tiptap-editor .ProseMirror table td {
-  border-right: 1px solid var(--border-color);
-  border-bottom: 1px solid var(--border-color);
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
   padding: 0.5rem 0.75rem;
   vertical-align: top;
   min-width: 50px;
@@ -433,11 +433,12 @@
 }
 :root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table th,
 :root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table td {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--table-border);
 }
 
+/* The header row takes the sunken tint (raised, in dark), so it reads as one. */
 .tiptap-editor .ProseMirror table th {
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-tertiary);
   font-weight: 600;
   text-align: left;
 }

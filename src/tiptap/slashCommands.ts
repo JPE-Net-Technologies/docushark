@@ -14,6 +14,10 @@
  */
 
 import type { Editor } from '@tiptap/core';
+import {
+  BookMarked, Braces, Heading1, Heading2, Heading3, Image, Images, Info, List, ListOrdered, ListTodo,
+  Minus, Paperclip, Pilcrow, Quote, SquareCode, SquareSigma, Table, TextQuote, type LucideIcon,
+} from 'lucide-react';
 import * as cmd from '../ui/editorCommands';
 
 /** A single `/` command. `group` buckets related commands in the menu. */
@@ -23,6 +27,13 @@ export interface SlashCommand {
   /** Extra search terms (matched case-insensitively alongside the title/id). */
   keywords: string[];
   group: string;
+  /**
+   * `format` reshapes the current block (the ribbon's Home tab has these as
+   * toggles); `insert` adds something, and the ribbon's Insert tab offers every
+   * one of them, so Insert and "/" can't drift apart.
+   */
+  place: 'format' | 'insert';
+  icon: LucideIcon;
   run: (editor: Editor) => void;
 }
 
@@ -52,25 +63,25 @@ function runUi(action: SlashUiAction): void {
 // ─── The registry ────────────────────────────────────────────────────────────
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { id: 'h1', title: 'Heading 1', keywords: ['h1', 'title', 'heading'], group: 'Headings', run: (e) => cmd.setHeading(e, 1) },
-  { id: 'h2', title: 'Heading 2', keywords: ['h2', 'subtitle', 'heading'], group: 'Headings', run: (e) => cmd.setHeading(e, 2) },
-  { id: 'h3', title: 'Heading 3', keywords: ['h3', 'heading'], group: 'Headings', run: (e) => cmd.setHeading(e, 3) },
-  { id: 'paragraph', title: 'Text', keywords: ['paragraph', 'body', 'plain'], group: 'Basic', run: (e) => cmd.setParagraph(e) },
-  { id: 'bullet', title: 'Bulleted list', keywords: ['ul', 'bullet', 'list', 'unordered'], group: 'Lists', run: (e) => cmd.toggleBulletList(e) },
-  { id: 'ordered', title: 'Numbered list', keywords: ['ol', 'ordered', 'list', 'number'], group: 'Lists', run: (e) => cmd.toggleOrderedList(e) },
-  { id: 'task', title: 'Task list', keywords: ['todo', 'task', 'checklist', 'checkbox'], group: 'Lists', run: (e) => cmd.toggleTaskList(e) },
-  { id: 'quote', title: 'Quote', keywords: ['blockquote', 'quote'], group: 'Basic', run: (e) => cmd.toggleBlockquote(e) },
-  { id: 'code', title: 'Code block', keywords: ['code', 'pre', 'snippet'], group: 'Basic', run: (e) => cmd.toggleCodeBlock(e) },
-  { id: 'divider', title: 'Divider', keywords: ['hr', 'divider', 'rule', 'separator'], group: 'Basic', run: (e) => cmd.insertHorizontalRule(e) },
-  { id: 'callout', title: 'Callout', keywords: ['callout', 'note', 'admonition', 'aside', 'info', 'warning'], group: 'Basic', run: (e) => cmd.setCallout(e, 'note') },
-  { id: 'table', title: 'Table', keywords: ['table', 'grid'], group: 'Insert', run: (e) => cmd.insertTable(e) },
-  { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', run: (e) => cmd.setMathBlock(e, '') },
-  { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', run: () => runUi('image') },
-  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', run: () => runUi('file') },
-  { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', run: () => runUi('gallery') },
-  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', run: () => runUi('field') },
-  { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', run: () => runUi('citation') },
-  { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', run: (e) => cmd.insertBibliography(e) },
+  { id: 'h1', title: 'Heading 1', keywords: ['h1', 'title', 'heading'], group: 'Headings', place: 'format', icon: Heading1, run: (e) => cmd.setHeading(e, 1) },
+  { id: 'h2', title: 'Heading 2', keywords: ['h2', 'subtitle', 'heading'], group: 'Headings', place: 'format', icon: Heading2, run: (e) => cmd.setHeading(e, 2) },
+  { id: 'h3', title: 'Heading 3', keywords: ['h3', 'heading'], group: 'Headings', place: 'format', icon: Heading3, run: (e) => cmd.setHeading(e, 3) },
+  { id: 'paragraph', title: 'Text', keywords: ['paragraph', 'body', 'plain'], group: 'Basic', place: 'format', icon: Pilcrow, run: (e) => cmd.setParagraph(e) },
+  { id: 'bullet', title: 'Bulleted list', keywords: ['ul', 'bullet', 'list', 'unordered'], group: 'Lists', place: 'format', icon: List, run: (e) => cmd.toggleBulletList(e) },
+  { id: 'ordered', title: 'Numbered list', keywords: ['ol', 'ordered', 'list', 'number'], group: 'Lists', place: 'format', icon: ListOrdered, run: (e) => cmd.toggleOrderedList(e) },
+  { id: 'task', title: 'Task list', keywords: ['todo', 'task', 'checklist', 'checkbox'], group: 'Lists', place: 'format', icon: ListTodo, run: (e) => cmd.toggleTaskList(e) },
+  { id: 'quote', title: 'Quote', keywords: ['blockquote', 'quote'], group: 'Basic', place: 'format', icon: TextQuote, run: (e) => cmd.toggleBlockquote(e) },
+  { id: 'code', title: 'Code block', keywords: ['code', 'pre', 'snippet'], group: 'Basic', place: 'insert', icon: SquareCode, run: (e) => cmd.toggleCodeBlock(e) },
+  { id: 'divider', title: 'Divider', keywords: ['hr', 'divider', 'rule', 'separator'], group: 'Basic', place: 'insert', icon: Minus, run: (e) => cmd.insertHorizontalRule(e) },
+  { id: 'callout', title: 'Callout', keywords: ['callout', 'note', 'admonition', 'aside', 'info', 'warning'], group: 'Basic', place: 'insert', icon: Info, run: (e) => cmd.setCallout(e, 'note') },
+  { id: 'table', title: 'Table', keywords: ['table', 'grid'], group: 'Insert', place: 'insert', icon: Table, run: (e) => cmd.insertTable(e) },
+  { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', place: 'insert', icon: SquareSigma, run: (e) => cmd.setMathBlock(e, '') },
+  { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', place: 'insert', icon: Image, run: () => runUi('image') },
+  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', place: 'insert', icon: Paperclip, run: () => runUi('file') },
+  { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', place: 'insert', icon: Images, run: () => runUi('gallery') },
+  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', place: 'insert', icon: Braces, run: () => runUi('field') },
+  { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', place: 'insert', icon: Quote, run: () => runUi('citation') },
+  { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', place: 'insert', icon: BookMarked, run: (e) => cmd.insertBibliographyOnce(e) },
 ];
 
 // ─── Matcher + filter (pure, unit-tested) ────────────────────────────────────

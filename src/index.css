@@ -57,6 +57,8 @@
   --border-color: rgba(14, 28, 48, 0.10);
   --border-color-light: rgba(14, 28, 48, 0.06);
   --border-color-input: rgba(14, 28, 48, 0.18);
+  /* Table gridlines are the content's structure, not chrome: stronger than --border-color. */
+  --table-border: rgba(14, 28, 48, 0.28);
 
   /* Primary/Accent (navy-based) */
   --color-primary: #1f3354;       /* navy-700 — active borders, links */
@@ -231,6 +233,7 @@
   --border-color: rgba(214, 224, 240, 0.10);
   --border-color-light: rgba(214, 224, 240, 0.06);
   --border-color-input: rgba(214, 224, 240, 0.20);
+  --table-border: rgba(214, 224, 240, 0.24);
 
   /* Primary/Accent — gold-soft for text/icons/borders on navy */
   --color-primary: #e0c690;       /* gold-soft */

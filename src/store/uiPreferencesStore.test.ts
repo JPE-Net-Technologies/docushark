@@ -328,6 +328,7 @@ describe('uiPreferencesStore — migration', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      selectionBubble: true,
       glass: true,
     });
     // Layout from the older payload is untouched.
@@ -360,6 +361,7 @@ describe('uiPreferencesStore — migration', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      selectionBubble: true,
       glass: true,
     });
   });
@@ -389,6 +391,7 @@ describe('uiPreferencesStore — migration', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      selectionBubble: true,
       glass: true,
     });
   });
@@ -502,6 +505,7 @@ describe('uiPreferencesStore — appearance slice', () => {
       caretColor: null,
       spellcheck: 'custom',
       roundedTables: true,
+      selectionBubble: true,
       glass: true,
     });
   });
