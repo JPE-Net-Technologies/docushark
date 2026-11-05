@@ -5,10 +5,10 @@
  * Most commands delegate to the shared `editorCommands` helpers (the same ones the
  * toolbar + context menu use) so a slash insert and a toolbar insert are identical.
  *
- * A couple of inserts (image upload, citation picker) are driven by React UI that
- * lives outside the editor, so they go through a tiny handler seam
- * (`registerSlashUiHandler`) — the React component registers the handler on mount,
- * and the slash command invokes it. When no handler is registered (e.g. a headless
+ * A few inserts (image upload, citation picker) are driven by React UI that lives
+ * outside the editor, so they go through a tiny handler seam
+ * (`registerSlashUiHandler`) — `SlashUiHost` registers the handlers on mount, and
+ * the slash command invokes them. When no handler is registered (e.g. a headless
  * editor), those commands are harmless no-ops. Later slices (Fields, file embed,
  * callouts, …) append to `SLASH_COMMANDS`.
  */
@@ -42,7 +42,7 @@ export interface SlashCommand {
 // ─── UI-flow seam (inserts whose UI lives in React) ──────────────────────────
 
 /** Inserts that open React UI rather than running a pure editor command. */
-export type SlashUiAction = 'image' | 'citation' | 'gallery' | 'field' | 'file';
+export type SlashUiAction = 'image' | 'citation' | 'gallery' | 'field' | 'file' | 'references';
 
 const uiHandlers = new Map<SlashUiAction, () => void>();
 
@@ -58,7 +58,7 @@ export function registerSlashUiHandler(action: SlashUiAction, fn: () => void): (
   };
 }
 
-function runUi(action: SlashUiAction): void {
+export function runSlashUi(action: SlashUiAction): void {
   uiHandlers.get(action)?.();
 }
 
@@ -78,11 +78,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'callout', title: 'Callout', keywords: ['callout', 'note', 'admonition', 'aside', 'info', 'warning'], group: 'Basic', place: 'insert', icon: Info, description: 'A highlighted box for a note, a tip or a warning.', run: (e) => cmd.setCallout(e, 'note') },
   { id: 'table', title: 'Table', keywords: ['table', 'grid'], group: 'Insert', place: 'insert', icon: Table, run: (e) => cmd.insertTable(e) },
   { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', place: 'insert', icon: SquareSigma, description: 'A formula on its own line, written in LaTeX.', run: (e) => cmd.setMathBlock(e, '') },
-  { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', place: 'insert', icon: Image, run: () => runUi('image') },
-  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', place: 'insert', icon: Paperclip, description: 'Attach a file to the document, shown as a chip you can open.', run: () => runUi('file') },
-  { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', place: 'insert', icon: Images, description: 'Several images side by side, in one block.', run: () => runUi('gallery') },
-  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', place: 'insert', icon: Braces, description: 'A value defined once and shown wherever you insert it.', run: () => runUi('field') },
-  { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', place: 'insert', icon: Quote, description: 'A reference to a source, in the document’s citation style.', run: () => runUi('citation') },
+  { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', place: 'insert', icon: Image, run: () => runSlashUi('image') },
+  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', place: 'insert', icon: Paperclip, description: 'Attach a file to the document, shown as a chip you can open.', run: () => runSlashUi('file') },
+  { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', place: 'insert', icon: Images, description: 'Several images side by side, in one block.', run: () => runSlashUi('gallery') },
+  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', place: 'insert', icon: Braces, description: 'A value defined once and shown wherever you insert it.', run: () => runSlashUi('field') },
+  { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', place: 'insert', icon: Quote, description: 'A reference to a source, in the document’s citation style.', run: () => runSlashUi('citation') },
   { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', place: 'insert', icon: BookMarked, description: 'The list of every source the document cites.', run: (e) => cmd.insertBibliographyOnce(e) },
 ];
 

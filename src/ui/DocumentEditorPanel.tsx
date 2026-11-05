@@ -18,6 +18,7 @@ import { useProseStats } from './useProseStats';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { MobileProseToolbar } from './mobile/MobileProseToolbar';
 import { ProseSelectionBubble } from './ProseSelectionBubble';
+import { SlashUiHost } from './SlashUiHost';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useKeyboardInset } from './mobile/useKeyboardInset';
@@ -594,6 +595,8 @@ export function DocumentEditorPanel({
             bottom MobileProseToolbar rendered after the content (JP-332). */}
         {!mobileActive && <DocumentEditorToolbar />}
         {!mobileActive && <ProseSelectionBubble />}
+        {/* In every layout: a phone has no ribbon, and "/" still needs its pickers. */}
+        <SlashUiHost />
         <div className="document-editor-panel-content">
           {/* Never blank (JP-328): a prose render crash degrades to the page's
               read-only HTML projection, not an empty panel; auto-resets on

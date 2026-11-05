@@ -41,6 +41,8 @@ With mobile preview on, a writing bar sits at the bottom of a prose page, above 
 
 **Format**, at the end of the bar, opens every other formatting control, including the table tools while you're in a table. The document's name is at the top of the screen: tap it to rename the document or see whether it's saved. Tap anywhere on the page below your text to carry on writing at the end.
 
+Type `/` for the same insert menu as on a computer. Tables, code and equations go straight in, and images, files, galleries, citations and fields open their pickers.
+
 Pressing and holding text selects it as it does in any other app, with your phone's own handles and copy-and-paste bar; DocuShark opens no menu over it. Instead, the bar changes with what you're on:
 
 - **A word underlined as misspelled:** put the cursor in it and the bar offers corrections and **Add to dictionary**. Tap **×** to get the formatting controls back.

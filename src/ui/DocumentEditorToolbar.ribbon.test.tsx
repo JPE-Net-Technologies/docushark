@@ -1,7 +1,7 @@
 /**
  * The ribbon's row (DSK-200) and its contextual tabs (DSK-27): undo and redo
  * first; Table and Image only while the selection is in their context, never
- * chosen for you; and the upload commands working whichever tab shows.
+ * chosen for you.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react';
@@ -118,18 +118,6 @@ describe('the ribbon (DSK-200, DSK-27)', () => {
     expect(h.moveGalleryImage).toHaveBeenCalledWith(1);
     fireEvent.click(screen.getByRole('button', { name: 'Remove image' }));
     expect(h.removeSelectedImage).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps /image, /file and /gallery working while another tab shows', () => {
-    const opened: string[] = [];
-    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) {
-      if (this.type === 'file') opened.push(this.accept || 'any');
-    });
-    render(<DocumentEditorToolbar />);
-    expect(selected()).toBe('Home');
-    for (const id of ['image', 'file', 'gallery']) SLASH_COMMANDS.find((command) => command.id === id)!.run(undefined as never);
-    expect(opened).toHaveLength(3);
-    click.mockRestore();
   });
 
   it('offers on Insert everything "/" inserts, code included', () => {

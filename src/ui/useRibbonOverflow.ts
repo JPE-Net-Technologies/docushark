@@ -2,9 +2,7 @@
  * The ribbon's overflow (DSK-200). In a narrow panel, such as Split, the tab's
  * groups wrap onto rows hidden under the first, and a "…" button drops those
  * rows down over the page. The first row never moves, and nothing remounts:
- * the hidden rows are the same controls, clipped. (The Insert tab's upload
- * buttons register the /image, /file and /gallery commands; moving them into a
- * menu would remount them and drop those commands whenever it closed.)
+ * the hidden rows are the same controls, clipped.
  *
  * Resting the pointer on "…" opens the rows, and leaving them closes them
  * after a grace period. A click pins them open until a second click, Escape,
