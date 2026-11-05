@@ -2,9 +2,10 @@
  * The editor's right-click menus on a phone (DSK-202).
  *
  * On Android a long-press fires `contextmenu`, and a long-press is the system's
- * selection gesture: the formatting menu and the spelling popover opened at the
- * finger, over the selection handles, and ran under the bar with the keyboard
- * up. The phone layout opens neither, and a long-press on an image selects it
+ * selection gesture: the formatting menu and the spelling popover (one menu
+ * since DSK-213) opened at the finger, over the selection handles, and ran
+ * under the bar with the keyboard up. The phone layout opens no menu, and a
+ * long-press on an image selects it
  * in place of the browser's image menu. Each phone case has a desktop control,
  * so removing the gate fails a test.
  */
@@ -80,7 +81,9 @@ function inEditor(ed: Editor, selector: string): Element {
 }
 
 const formattingMenu = () => document.querySelector('.doc-editor-context-menu');
-const spellingPopover = () => document.querySelector('.spellcheck-popover');
+/** A misspelled word's fixes, which head the menu on a desktop (DSK-213). */
+const spellingFixes = () =>
+  [...document.querySelectorAll('.doc-editor-context-menu-label')].find((label) => label.textContent === 'Add to dictionary') ?? null;
 
 describe('long-press menus on a phone (DSK-202)', () => {
   it('opens no formatting menu over text, and leaves the system its own', async () => {
@@ -98,18 +101,18 @@ describe('long-press menus on a phone (DSK-202)', () => {
     expect(formattingMenu()).not.toBeNull();
   });
 
-  it('opens no spelling popover over an underlined word', async () => {
+  it('opens no menu, and no spelling fixes, over an underlined word', async () => {
     const ed = await mount('<p>one mispeled word</p>');
     phone.active = true;
     fireEvent.contextMenu(inEditor(ed, '.spellcheck-error'));
-    expect(spellingPopover()).toBeNull();
+    expect(spellingFixes()).toBeNull();
     expect(formattingMenu()).toBeNull();
   });
 
-  it('opens the spelling popover on a desktop (control)', async () => {
+  it("opens the menu with the word's fixes on a desktop (control)", async () => {
     const ed = await mount('<p>one mispeled word</p>');
     fireEvent.contextMenu(inEditor(ed, '.spellcheck-error'));
-    expect(spellingPopover()).not.toBeNull();
+    expect(spellingFixes()).not.toBeNull();
   });
 
   it("selects a long-pressed image in place of the browser's image menu", async () => {

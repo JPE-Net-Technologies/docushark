@@ -1,9 +1,10 @@
 /**
- * Spelling fixes, shared by the right-click popover and the phone bar (DSK-202).
+ * Spelling fixes, shared by the right-click menu and the phone bar (DSK-202).
  *
  * The built-in checker marks each misspelled word with an inline decoration
- * (SpellcheckExtension). On a desktop a right-click on one opens
- * SpellcheckPopover. On a phone a long-press is the system's selection gesture,
+ * (SpellcheckExtension). On a desktop a right-click on one opens the context
+ * menu with the word's fixes at its head (DSK-213; it used to open a separate
+ * popover). On a phone a long-press is the system's selection gesture,
  * so the bar offers the same fixes while the caret is in the word. Both read the
  * word from the checker's own decorations and fix it through the functions here,
  * so the two surfaces cannot drift apart.
