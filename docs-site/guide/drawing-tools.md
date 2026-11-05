@@ -5,7 +5,7 @@ description: DocuShark's drawing tools — select, rectangle, ellipse, line, tex
 
 # Drawing Tools
 
-DocuShark gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts.
+DocuShark gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts. Rest the pointer on a toolbar button for its name and shortcut.
 
 ## Select Tool (`V`)
 

@@ -147,6 +147,18 @@ describe('the ribbon (DSK-200, DSK-27)', () => {
     within(panel).getByRole('button', { name: 'Insert code block' });
   });
 
+  it("explains each less familiar insert in its tooltip, from the registry's description (DSK-217)", () => {
+    render(<DocumentEditorToolbar />);
+    fireEvent.click(tab('Insert')!);
+    const panel = screen.getByRole('tabpanel');
+    const described = SLASH_COMMANDS.filter((command) => command.place === 'insert' && command.description);
+    expect(described.length).toBeGreaterThan(0);
+    for (const command of described) {
+      const control = panel.querySelector(`[data-slash-id="${command.id}"] [data-tip]`);
+      expect(control?.getAttribute('data-tip-description')).toBe(command.description);
+    }
+  });
+
   it('ends the row with Find', () => {
     render(<DocumentEditorToolbar />);
     const buttons = within(screen.getByRole('tablist').parentElement!).getAllByRole('button');

@@ -94,14 +94,14 @@ export function TooltipLayer() {
     };
     const hide = () => {
       cancel();
-      if (current) lastHidden = performance.now();
+      if (current) lastHidden = Date.now();
       current = null;
       setShown(null);
     };
     // Shows after a rest, or at once while warm.
     const request = (target: HTMLElement) => {
       if (target === current) return;
-      if (current || performance.now() - lastHidden < WARM_MS) {
+      if (current || Date.now() - lastHidden < WARM_MS) {
         show(target);
         return;
       }

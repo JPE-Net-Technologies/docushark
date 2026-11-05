@@ -21,7 +21,9 @@ The editor is built on [Tiptap](https://tiptap.dev/) (ProseMirror) and supports 
 
 ### The Ribbon
 
-The ribbon above the text keeps everything in one row:
+The ribbon above the text keeps everything in one row. Rest the pointer on a
+button, or tab to it, for its name and shortcut; the less familiar ones, such as
+fields, callouts and citations, also say what they do.
 
 - **Undo** and **Redo** come first, as they do on the canvas toolbar.
 - **Home** holds text styles, formatting, colours, lists and alignment.
