@@ -33,6 +33,12 @@ export interface DocumentActions {
 
   // Batch operations
   addShapes: (shapes: Shape[]) => void;
+  /**
+   * Add pasted shapes (DSK-218): every one goes into `shapes`, but only
+   * `topLevelIds` into `shapeOrder`; the rest are children of pasted groups and
+   * render through them, as grouped shapes do.
+   */
+  addPastedShapes: (shapes: Shape[], topLevelIds: string[]) => void;
   updateShapes: (updates: Array<{ id: string; updates: Partial<Shape> }>) => void;
   deleteShapes: (ids: string[]) => void;
 
@@ -254,6 +260,17 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
             state.shapes[shape.id] = shape;
             state.shapeOrder.push(shape.id);
           }
+        }
+      });
+    },
+
+    addPastedShapes: (shapes: Shape[], topLevelIds: string[]) => {
+      set((state) => {
+        for (const shape of shapes) {
+          if (!state.shapes[shape.id]) state.shapes[shape.id] = shape;
+        }
+        for (const id of topLevelIds) {
+          if (state.shapes[id] && !state.shapeOrder.includes(id)) state.shapeOrder.push(id);
         }
       });
     },

@@ -16,7 +16,7 @@ import { ConnectorTool } from './tools/ConnectorTool';
 import { LibraryShapeTool } from './tools/LibraryShapeTool';
 import { CustomShapeTool } from './tools/CustomShapeTool';
 import { Vec2 } from '../math/Vec2';
-import { Shape, isConnector, ConnectorShape } from '../shapes/Shape';
+import { Shape, isConnector, isGroup, ConnectorShape } from '../shapes/Shape';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { translateShape } from '../shapes/utils/transforms';
 import { updateConnectorEndpoints } from '../shapes/Connector';
@@ -56,6 +56,24 @@ export function hasCanvasClipboard(): boolean {
  */
 export function requestPasteAt(at: { x: number; y: number }): void {
   window.dispatchEvent(new CustomEvent('docushark:paste-shapes', { detail: { at } }));
+}
+
+/**
+ * A pasted copy, with its references pointed at the other copies (DSK-218): a
+ * group's children are their copies, and a connector stays attached only to
+ * shapes that were copied with it; an end attached to anything else comes
+ * loose where it was, rather than stretch back to the original.
+ */
+function retargetCopy(shape: Shape, newIds: Map<string, string>): Shape {
+  const copy = { ...shape, id: newIds.get(shape.id)! } as Shape;
+  if (isGroup(copy)) {
+    copy.childIds = copy.childIds.map((id) => newIds.get(id)).filter((id): id is string => id !== undefined);
+  }
+  if (isConnector(copy)) {
+    copy.startShapeId = copy.startShapeId ? newIds.get(copy.startShapeId) ?? null : null;
+    copy.endShapeId = copy.endShapeId ? newIds.get(copy.endShapeId) ?? null : null;
+  }
+  return copy;
 }
 
 /** How far to move `shapes` so the centre of their bounds lands on `at`. */
@@ -1074,7 +1092,17 @@ export class Engine {
     const selectedIds = useSessionStore.getState().getSelectedIds();
     if (selectedIds.length === 0) return;
     const shapes = useDocumentStore.getState().shapes;
-    clipboard = selectedIds.map((id) => ({ ...shapes[id]! }));
+    // A group comes with everything in it (DSK-218): copied alone, its paste
+    // pointed at the original children, which then drew twice.
+    const ids: string[] = [];
+    const take = (id: string) => {
+      const shape = shapes[id];
+      if (!shape || ids.includes(id)) return;
+      ids.push(id);
+      if (isGroup(shape)) shape.childIds.forEach(take);
+    };
+    selectedIds.forEach(take);
+    clipboard = ids.map((id) => ({ ...shapes[id]! }));
   }
 
   /**
@@ -1092,16 +1120,16 @@ export class Engine {
     pushHistory('Paste shapes');
 
     const delta = at ? offsetToCentre(clipboard, at) : new Vec2(PASTE_OFFSET, PASTE_OFFSET);
-    const newIds: string[] = [];
+    const newIds = new Map(clipboard.map((shape) => [shape.id, nanoid()]));
+    const copies = clipboard.map((shape) => retargetCopy(translateShape(shape, delta), newIds));
+    // Children of copied groups render through their group, as grouped shapes do.
+    const nested = new Set(clipboard.flatMap((shape) => (isGroup(shape) ? shape.childIds : [])));
+    const topLevel = clipboard.filter((shape) => !nested.has(shape.id)).map((shape) => newIds.get(shape.id)!);
 
-    for (const shape of clipboard) {
-      const newShape: Shape = { ...translateShape(shape, delta), id: nanoid() };
-      useDocumentStore.getState().addShape(newShape);
-      this.spatialIndex.insert(newShape);
-      newIds.push(newShape.id);
-    }
+    useDocumentStore.getState().addPastedShapes(copies, topLevel);
+    for (const copy of copies) this.spatialIndex.insert(copy);
 
-    useSessionStore.getState().select(newIds);
+    useSessionStore.getState().select(topLevel);
     // The next paste lands a little offset from these.
     clipboard = clipboard.map((shape) => translateShape(shape, delta));
     this.renderer.requestRender();
