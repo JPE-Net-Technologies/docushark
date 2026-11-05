@@ -585,6 +585,8 @@ export function DocumentEditorPanel({
         // affects the reading column, so it needs no global side effect and stays
         // trivially testable.
         data-reading-width={readingWidth}
+        // F6 moves focus between the top bar, the text and the canvas (DSK-214).
+        data-focus-region="prose"
         style={mobileActive && keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
       >
         <RichTextTabBar trailing={trailing} />

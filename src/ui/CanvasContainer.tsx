@@ -18,6 +18,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
+import { registerCanvasFocus } from './layout/focusRegions';
 import { nanoid } from 'nanoid';
 import type { ImportContext } from '../services/FileImportService';
 import { importFiles } from '../services/FileImportService';
@@ -69,6 +70,8 @@ export function CanvasContainer({
   // Refs for DOM elements and engine
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // How the canvas takes keyboard focus, for the toolbar and F6 (DSK-214).
+  useEffect(() => registerCanvasFocus(() => canvasRef.current?.focus({ preventScroll: true })), []);
   const engineRef = useRef<Engine | null>(null);
   // JP-370: the active doc is view-only for this user → canvas read-only.
   const isReadOnly = useActiveDocReadOnly();
