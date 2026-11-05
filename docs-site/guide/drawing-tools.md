@@ -109,6 +109,17 @@ Control which shapes appear in front of others:
 
 Pasted shapes are offset by 20px from the original to avoid stacking directly on top.
 
+## Right-Click on the Canvas
+
+Right-click a shape for what you can do with it (group, arrange, export and
+more). Right-click empty canvas for what you can do there:
+
+- **Paste here** puts what you copied where you clicked.
+- **Add text here** and **Add shape here** (rectangle, ellipse or diamond)
+  create it at that spot, styled as the tool would.
+- **Undo**, **Redo**, **Select all**, **Zoom to fit** and **Zoom to 100%**, with
+  their shortcuts.
+
 ## Shape Text
 
 Most shapes support inline text. **Double-click** any shape to start typing. The text respects the shape's text properties (font, size, alignment) which you can configure in the Property Panel.

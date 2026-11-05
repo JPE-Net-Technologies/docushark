@@ -58,7 +58,8 @@ Tune the text cursor in the writing editor:
 
 Pick how spellcheck works while you write:
 
-- **Custom** — DocuShark's own dictionary, with **Add to dictionary**.
+- **Custom** — DocuShark's own dictionary. Right-click a misspelled word for
+  suggestions and **Add to dictionary**.
 - **System** — your browser or OS spellchecker.
 - **Off** — no spellchecking.
 

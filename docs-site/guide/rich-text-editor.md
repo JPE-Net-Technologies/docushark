@@ -50,6 +50,20 @@ Type `/` at the start of a line to open a quick menu of blocks and actions —
 headings, lists, tables, code, math, and more — so you can insert content without
 reaching for the toolbar.
 
+### Right-Click Menu
+
+Right-click in your text for the actions that fit where you clicked:
+
+- **On a misspelled word**, its suggested spellings come first, then **Add to
+  dictionary**.
+- **On a link**, **Open link**, **Edit link…** and **Remove link** act on that
+  link.
+- **Insert** offers everything the `/` menu inserts, from code blocks and tables
+  to images, citations and fields.
+
+The menu also holds the clipboard actions (see [Copy and Paste](#copy-and-paste))
+and the formatting, heading and list choices.
+
 ## Text Formatting
 
 ### Basic Formatting
@@ -183,7 +197,7 @@ appears with its row, column and cell tools.
 Embed snapshots of diagram groups directly in your rich text document:
 
 1. Right-click in the document editor
-2. Select **Insert Embedded Group**
+2. Select **Insert Group**
 3. Choose a group from your diagram
 4. The group renders as an image preview in the document
 

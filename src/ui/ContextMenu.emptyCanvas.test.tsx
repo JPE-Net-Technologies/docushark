@@ -20,6 +20,8 @@ import { useDocumentStore } from '../store/documentStore';
 import { useSessionStore } from '../store/sessionStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { applyDefaultStyleProfile } from '../store/defaultStyleProfile';
+import { useSettingsStore } from '../store/settingsStore';
+import { useStyleProfileStore } from '../store/styleProfileStore';
 import { Vec2 } from '../math/Vec2';
 import type { RectangleShape } from '../shapes/Shape';
 import '../shapes/Rectangle';
@@ -38,9 +40,21 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   doc.readOnly = false;
+  useSettingsStore.setState({ defaultStyleProfileId: null });
   engine.hasCanvasClipboard.mockReturnValue(false);
   vi.clearAllMocks();
 });
+
+/** The shape as the default profile `id` would style it. */
+function applyDefaultStyleProfileWith<T extends Parameters<typeof applyDefaultStyleProfile>[0]>(id: string, shape: T): T {
+  const previous = useSettingsStore.getState().defaultStyleProfileId;
+  useSettingsStore.setState({ defaultStyleProfileId: id });
+  try {
+    return applyDefaultStyleProfile(shape);
+  } finally {
+    useSettingsStore.setState({ defaultStyleProfileId: previous });
+  }
+}
 
 /** The one shape the menu added. */
 function added() {
@@ -79,6 +93,14 @@ describe('the empty-canvas menu (DSK-213)', () => {
   });
 
   it('Add shape here makes the shape at the point, styled as its tool would, and selects it', () => {
+    // A default style profile whose fill differs from the plain rectangle's, so
+    // leaving the profile out would show.
+    const plain = shapeRegistry.getHandler('rectangle').create(new Vec2(0, 0), 'plain');
+    const profile = useStyleProfileStore
+      .getState()
+      .profiles.find((candidate) => applyDefaultStyleProfileWith(candidate.id, plain).fill !== plain.fill);
+    expect(profile).toBeDefined();
+    useSettingsStore.setState({ defaultStyleProfileId: profile!.id });
     render(<ContextMenu x={10} y={10} world={WORLD} onClose={vi.fn()} />);
     fireEvent.mouseEnter(item('Add shape here').parentElement!);
     fireEvent.click(item('Rectangle'));
