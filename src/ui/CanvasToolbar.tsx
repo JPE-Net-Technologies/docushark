@@ -8,7 +8,6 @@
  * Relaxed `split` pane instead of overflowing horizontally.
  */
 
-import { useState } from 'react';
 import { commandShortcut } from '../engine/CommandRegistry';
 import {
   MousePointer2,
@@ -39,6 +38,7 @@ import { ICON } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
 import './CanvasToolbar.css';
 import { focusCanvas } from './layout/focusRegions';
+import { tip } from './TooltipLayer';
 
 /**
  * After a pointer click on one of the toolbar's buttons, give keyboard focus
@@ -73,7 +73,7 @@ const TOOLS: ToolDef[] = [
   { type: 'text', name: 'Text', Icon: Type, shortcut: 'T' },
 ];
 
-/** Compact tool button with hover tooltip. */
+/** Compact tool button; its name and shortcut show in the toolbar tooltip (DSK-217). */
 function ToolButton({
   tool,
   isActive,
@@ -83,25 +83,16 @@ function ToolButton({
   isActive: boolean;
   onClick: () => void;
 }) {
-  const [showTooltip, setShowTooltip] = useState(false);
-
   return (
     <div className="tool-button-wrapper">
       <button
         className={`tool-button ${isActive ? 'active' : ''}`}
         onClick={onClick}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
+        {...tip(tool.name, tool.shortcut)}
         aria-label={`${tool.name} (${tool.shortcut})`}
       >
         <tool.Icon size={ICON.size} strokeWidth={ICON.strokeWidth} />
       </button>
-      {showTooltip && (
-        <div className="tool-button-tooltip">
-          {tool.name}
-          <span className="tool-button-tooltip-shortcut">{tool.shortcut}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -146,22 +137,14 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
   // snapshot history, which is inactive there, so use a plain label.
   const undoEnabled = collabActive ? canUndoCanvas : canUndo();
   const redoEnabled = collabActive ? canRedoCanvas : canRedo();
-  const undoTitle = collabActive
-    ? `Undo your last change (${commandShortcut('edit.undo') ?? ''})`
-    : undoDesc
-      ? `Undo: ${undoDesc} (${commandShortcut('edit.undo') ?? ''})`
-      : `Undo (${commandShortcut('edit.undo') ?? ''})`;
-  const redoTitle = collabActive
-    ? `Redo your last change (${commandShortcut('edit.redo') ?? ''})`
-    : redoDesc
-      ? `Redo: ${redoDesc} (${commandShortcut('edit.redo') ?? ''})`
-      : `Redo (${commandShortcut('edit.redo') ?? ''})`;
+  const undoTitle = collabActive ? 'Undo your last change' : undoDesc ? `Undo: ${undoDesc}` : 'Undo';
+  const redoTitle = collabActive ? 'Redo your last change' : redoDesc ? `Redo: ${redoDesc}` : 'Redo';
 
   if (isReadOnly) {
     return (
       <div className="canvas-toolbar" onClick={returnFocusToCanvas}>
         <ToolbarGroup label="Access">
-          <span className="canvas-toolbar-viewonly" title="You have view-only access to this document">
+          <span className="canvas-toolbar-viewonly" {...tip('View only', undefined, 'You have view-only access to this document.')}>
             View only
           </span>
         </ToolbarGroup>
@@ -218,7 +201,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
             <button
               className="toolbar-rebuild-btn"
               onClick={onRebuildConnectors}
-              title="Rebuild all connector routes"
+              {...tip('Rebuild all connector routes')}
               aria-label="Rebuild all connector routes"
             >
               <RefreshCw size={ICON.size} strokeWidth={ICON.strokeWidth} />
@@ -232,7 +215,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
           className="toolbar-action-btn"
           onClick={undo}
           disabled={!undoEnabled}
-          title={undoTitle}
+          {...tip(undoTitle, commandShortcut('edit.undo'))}
           aria-label={undoTitle}
         >
           <Undo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />
@@ -241,7 +224,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
           className="toolbar-action-btn"
           onClick={redo}
           disabled={!redoEnabled}
-          title={redoTitle}
+          {...tip(redoTitle, commandShortcut('edit.redo'))}
           aria-label={redoTitle}
         >
           <Redo2 size={ICON.size} strokeWidth={ICON.strokeWidth} />

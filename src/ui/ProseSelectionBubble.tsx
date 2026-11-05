@@ -28,6 +28,7 @@ import { HIGHLIGHT_GROUP } from './color/presets';
 import { applyTextStyle, textStyleOf } from './proseTextStyle';
 import * as cmd from './editorCommands';
 import { ICON } from './icons';
+import { tip } from './TooltipLayer';
 import './DocumentEditorToolbar.css';
 import './ProseSelectionBubble.css';
 
@@ -50,9 +51,9 @@ export function shouldShowBubble({ editor, view, state, from, to }: BubbleContex
   return view.hasFocus();
 }
 
-function BubbleButton({ label, active, onPress, children }: { label: string; active?: boolean; onPress: () => void; children: ReactNode }) {
+function BubbleButton({ label, keys, active, onPress, children }: { label: string; keys?: string; active?: boolean; onPress: () => void; children: ReactNode }) {
   return (
-    <button type="button" className={`document-editor-toolbar-btn${active ? ' active' : ''}`} onClick={onPress} title={label} aria-label={label} aria-pressed={active}>
+    <button type="button" className={`document-editor-toolbar-btn${active ? ' active' : ''}`} onClick={onPress} {...tip(label, keys)} aria-label={label} aria-pressed={active}>
       {children}
     </button>
   );
@@ -107,13 +108,13 @@ export function ProseSelectionBubble() {
       >
         {/* Pressing a button mustn't take focus from the text: the selection would go. */}
         <div className="prose-bubble" role="toolbar" aria-label="Format selection" onMouseDown={(e) => e.preventDefault()}>
-          <BubbleButton label={`Bold (${formatCombo('Mod+B')})`} active={editor.isActive('bold')} onPress={() => cmd.toggleBold(editor)}>
+          <BubbleButton label="Bold" keys={formatCombo('Mod+B')} active={editor.isActive('bold')} onPress={() => cmd.toggleBold(editor)}>
             <Bold {...ICON} />
           </BubbleButton>
-          <BubbleButton label={`Italic (${formatCombo('Mod+I')})`} active={editor.isActive('italic')} onPress={() => cmd.toggleItalic(editor)}>
+          <BubbleButton label="Italic" keys={formatCombo('Mod+I')} active={editor.isActive('italic')} onPress={() => cmd.toggleItalic(editor)}>
             <Italic {...ICON} />
           </BubbleButton>
-          <BubbleButton label={`Underline (${formatCombo('Mod+U')})`} active={editor.isActive('underline')} onPress={() => cmd.toggleUnderline(editor)}>
+          <BubbleButton label="Underline" keys={formatCombo('Mod+U')} active={editor.isActive('underline')} onPress={() => cmd.toggleUnderline(editor)}>
             <Underline {...ICON} />
           </BubbleButton>
           <BubbleButton label="Strikethrough" active={editor.isActive('strike')} onPress={() => cmd.toggleStrike(editor)}>

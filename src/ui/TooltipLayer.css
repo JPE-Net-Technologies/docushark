@@ -1,0 +1,32 @@
+/* Toolbar tooltips (DSK-217, TooltipLayer.tsx): the app tooltip's surface, with
+   the name and shortcut on one line and an optional sentence under them. */
+.ds-tooltip--rich {
+  z-index: 10001;
+}
+
+.ds-tooltip__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2, 8px);
+}
+
+.ds-tooltip__name {
+  font-weight: 500;
+}
+
+.ds-tooltip__keys {
+  font-family: inherit;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+}
+
+/* A described control wraps its sentence instead of running off the window. */
+.ds-tooltip--described {
+  max-width: 260px;
+  white-space: normal;
+}
+
+.ds-tooltip__description {
+  margin-top: 2px;
+  color: var(--text-secondary);
+}

@@ -64,6 +64,7 @@ import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
+import { tip } from './TooltipLayer';
 
 /** Home and Insert are always there; Table and Image only in their context. */
 type PlainTab = 'home' | 'insert';
@@ -319,11 +320,11 @@ export function DocumentEditorToolbar() {
   const renderInsert = (command: SlashCommand) => {
     switch (command.id) {
       case 'image':
-        return <ImageUploadButton className="document-editor-toolbar-btn" />;
+        return <ImageUploadButton className="document-editor-toolbar-btn" description={command.description} />;
       case 'file':
-        return <FileUploadButton className="document-editor-toolbar-btn" />;
+        return <FileUploadButton className="document-editor-toolbar-btn" description={command.description} />;
       case 'gallery':
-        return <GalleryUploadButton className="document-editor-toolbar-btn" />;
+        return <GalleryUploadButton className="document-editor-toolbar-btn" description={command.description} />;
       case 'callout':
         return (
           <ToolbarDropdown
@@ -332,7 +333,8 @@ export function DocumentEditorToolbar() {
             onToggle={() => setShowCalloutMenu(!showCalloutMenu)}
             onClose={() => setShowCalloutMenu(false)}
             triggerClassName="document-editor-toolbar-btn"
-            title="Insert Callout"
+            title="Insert callout"
+            description={command.description}
             isActive={isActive('callout')}
           >
             <div className="callout-variant-menu">
@@ -346,7 +348,7 @@ export function DocumentEditorToolbar() {
         );
       case 'math':
         return (
-          <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} title="Insert Block Equation ($$...$$)" aria-label="Insert block equation">
+          <button className="document-editor-toolbar-btn" onClick={() => openMathInput(true)} {...tip('Insert block equation', undefined, command.description)} aria-label="Insert block equation">
             <SquareSigma {...ICON} />
           </button>
         );
@@ -355,7 +357,7 @@ export function DocumentEditorToolbar() {
         const activeNode = INSERT_ACTIVE_NODE[command.id];
         const label = `Insert ${command.title.toLowerCase()}`;
         return (
-          <button className={`document-editor-toolbar-btn ${activeNode && isActive(activeNode) ? 'active' : ''}`} onClick={() => editor && command.run(editor)} title={label} aria-label={label}>
+          <button className={`document-editor-toolbar-btn ${activeNode && isActive(activeNode) ? 'active' : ''}`} onClick={() => editor && command.run(editor)} {...tip(label, undefined, command.description)} aria-label={label}>
             <CommandIcon {...ICON} />
           </button>
         );
@@ -387,7 +389,7 @@ export function DocumentEditorToolbar() {
             type="button"
             className="ribbon-readonly__dismiss"
             onClick={dismissViewOnlyNotice}
-            title="Don’t show this again"
+            {...tip('Don’t show this again')}
             aria-label="Dismiss view-only notice"
           >
             <X size={13} aria-hidden="true" />
@@ -408,10 +410,10 @@ export function DocumentEditorToolbar() {
       <div className="ribbon-row">
         {/* Undo and redo first, where the canvas toolbar keeps them (DSK-200). */}
         <div className="document-editor-toolbar-group ribbon-history">
-          <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.undo(editor)} disabled={!editor || !cmd.canUndo(editor)} title={`Undo (${formatCombo('Mod+Z')})`} aria-label="Undo">
+          <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.undo(editor)} disabled={!editor || !cmd.canUndo(editor)} {...tip('Undo', formatCombo('Mod+Z'))} aria-label="Undo">
             <Undo2 {...ICON} />
           </button>
-          <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.redo(editor)} disabled={!editor || !cmd.canRedo(editor)} title={`Redo (${formatCombo('Mod+Shift+Z')})`} aria-label="Redo">
+          <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.redo(editor)} disabled={!editor || !cmd.canRedo(editor)} {...tip('Redo', formatCombo('Mod+Shift+Z'))} aria-label="Redo">
             <Redo2 {...ICON} />
           </button>
         </div>
@@ -451,16 +453,16 @@ export function DocumentEditorToolbar() {
 
             {/* Text formatting */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} title={`Bold (${formatCombo('Mod+B')})`} aria-label="Bold">
+              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} {...tip('Bold', formatCombo('Mod+B'))} aria-label="Bold">
                 <Bold {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} title={`Italic (${formatCombo('Mod+I')})`} aria-label="Italic">
+              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} {...tip('Italic', formatCombo('Mod+I'))} aria-label="Italic">
                 <Italic {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} title={`Underline (${formatCombo('Mod+U')})`} aria-label="Underline">
+              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} {...tip('Underline', formatCombo('Mod+U'))} aria-label="Underline">
                 <Underline {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} title="Strikethrough" aria-label="Strikethrough">
+              <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} {...tip('Strikethrough')} aria-label="Strikethrough">
                 <Strikethrough {...ICON} />
               </button>
             </div>
@@ -468,10 +470,10 @@ export function DocumentEditorToolbar() {
 
             {/* Subscript/Superscript */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} title="Subscript" aria-label="Subscript">
+              <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} {...tip('Subscript')} aria-label="Subscript">
                 <Subscript {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} title="Superscript" aria-label="Superscript">
+              <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} {...tip('Superscript')} aria-label="Superscript">
                 <Superscript {...ICON} />
               </button>
             </div>
@@ -520,7 +522,7 @@ export function DocumentEditorToolbar() {
                 />
               </ToolbarDropdown>
 
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} title="Clear Formatting" aria-label="Clear formatting">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} {...tip('Clear Formatting')} aria-label="Clear formatting">
                 <RemoveFormatting {...ICON} />
               </button>
             </div>
@@ -528,19 +530,19 @@ export function DocumentEditorToolbar() {
 
             {/* Lists & Blockquote */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} title="Bullet List" aria-label="Bullet list">
+              <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} {...tip('Bullet List')} aria-label="Bullet list">
                 <List {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} title="Numbered List" aria-label="Numbered list">
+              <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} {...tip('Numbered List')} aria-label="Numbered list">
                 <ListOrdered {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} title="Task List" aria-label="Task list">
+              <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} {...tip('Task List')} aria-label="Task list">
                 <ListTodo {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} title="Block Quote" aria-label="Block quote">
+              <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} {...tip('Block Quote')} aria-label="Block quote">
                 <TextQuote {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} title="Insert / Edit Link" aria-label="Insert or edit link">
+              <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} {...tip('Insert / Edit Link')} aria-label="Insert or edit link">
                 <Link {...ICON} />
               </button>
             </div>
@@ -548,16 +550,16 @@ export function DocumentEditorToolbar() {
 
             {/* Text Alignment */}
             <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} title="Align Left" aria-label="Align left">
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} {...tip('Align Left')} aria-label="Align left">
                 <AlignLeft {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} title="Align Center" aria-label="Align center">
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} {...tip('Align Center')} aria-label="Align center">
                 <AlignCenter {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} title="Align Right" aria-label="Align right">
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} {...tip('Align Right')} aria-label="Align right">
                 <AlignRight {...ICON} />
               </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} title="Justify" aria-label="Justify">
+              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} {...tip('Justify')} aria-label="Justify">
                 <AlignJustify {...ICON} />
               </button>
             </div>
@@ -573,12 +575,12 @@ export function DocumentEditorToolbar() {
               {INSERT_COMMANDS.filter((command) => command.group === group).map((command) => (
                 <Fragment key={command.id}>
                   {command.id === 'code' && (
-                    <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} title={`Inline code (${formatCombo('Mod+E')})`} aria-label="Inline code">
+                    <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} {...tip('Inline code', formatCombo('Mod+E'))} aria-label="Inline code">
                       <Code {...ICON} />
                     </button>
                   )}
                   {command.id === 'math' && (
-                    <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} title="Insert Inline Equation ($...$)" aria-label="Insert inline equation">
+                    <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} {...tip('Insert inline equation', undefined, 'A formula within the line of text, written in LaTeX.')} aria-label="Insert inline equation">
                       <Sigma {...ICON} />
                     </button>
                   )}
@@ -586,7 +588,7 @@ export function DocumentEditorToolbar() {
                     {renderInsert(command)}
                   </span>
                   {command.id === 'bibliography' && (
-                    <button className="document-editor-toolbar-btn" onClick={() => setShowRefManager(true)} title="Manage References" aria-label="Manage references">
+                    <button className="document-editor-toolbar-btn" onClick={() => setShowRefManager(true)} {...tip('Manage references', undefined, 'Add and edit the sources your citations point to.')} aria-label="Manage references">
                       <Library {...ICON} />
                     </button>
                   )}
@@ -603,38 +605,38 @@ export function DocumentEditorToolbar() {
 
             {/* Columns - disabled when not in table */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addColumnBefore(editor)} title="Insert column left" aria-label="Insert column left">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addColumnBefore(editor)} {...tip('Insert column left')} aria-label="Insert column left">
                 <BetweenVerticalStart {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addColumnAfter(editor)} title="Insert column right" aria-label="Insert column right">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addColumnAfter(editor)} {...tip('Insert column right')} aria-label="Insert column right">
                 <BetweenVerticalEnd {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveColumnLeft(editor)} title="Move column left" aria-label="Move column left">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveColumnLeft(editor)} {...tip('Move column left')} aria-label="Move column left">
                 <ArrowLeft {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveColumnRight(editor)} title="Move column right" aria-label="Move column right">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveColumnRight(editor)} {...tip('Move column right')} aria-label="Move column right">
                 <ArrowRight {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.deleteColumn(editor)} title="Delete column" aria-label="Delete column">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.deleteColumn(editor)} {...tip('Delete column')} aria-label="Delete column">
                 <span className="toolbar-icon">-⇥</span>
               </button>
             </div>
 
             {/* Rows - disabled when not in table */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addRowBefore(editor)} title="Insert row above" aria-label="Insert row above">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addRowBefore(editor)} {...tip('Insert row above')} aria-label="Insert row above">
                 <BetweenHorizontalStart {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addRowAfter(editor)} title="Insert row below" aria-label="Insert row below">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.addRowAfter(editor)} {...tip('Insert row below')} aria-label="Insert row below">
                 <BetweenHorizontalEnd {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveRowUp(editor)} title="Move row up" aria-label="Move row up">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveRowUp(editor)} {...tip('Move row up')} aria-label="Move row up">
                 <ArrowUp {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveRowDown(editor)} title="Move row down" aria-label="Move row down">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.moveRowDown(editor)} {...tip('Move row down')} aria-label="Move row down">
                 <ArrowDown {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.deleteRow(editor)} title="Delete row" aria-label="Delete row">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.deleteRow(editor)} {...tip('Delete row')} aria-label="Delete row">
                 <span className="toolbar-icon">-↓</span>
               </button>
             </div>
@@ -686,13 +688,13 @@ export function DocumentEditorToolbar() {
 
             {/* Cell alignment - disabled when not in table */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'left')} title="Align left" aria-label="Align cell left">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'left')} {...tip('Align left')} aria-label="Align cell left">
                 <AlignLeft {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'center')} title="Align center" aria-label="Align cell center">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'center')} {...tip('Align center')} aria-label="Align cell center">
                 <AlignCenter {...ICON} />
               </button>
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'right')} title="Align right" aria-label="Align cell right">
+              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.setCellAlign(editor, 'right')} {...tip('Align right')} aria-label="Align cell right">
                 <AlignRight {...ICON} />
               </button>
             </div>
@@ -700,7 +702,7 @@ export function DocumentEditorToolbar() {
 
             {/* Delete table */}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn danger" onClick={() => editor && cmd.deleteTable(editor)} title="Delete Table" aria-label="Delete table">
+              <button className="document-editor-toolbar-btn danger" onClick={() => editor && cmd.deleteTable(editor)} {...tip('Delete Table')} aria-label="Delete table">
                 <Trash2 {...ICON} />
               </button>
             </div>
@@ -711,23 +713,23 @@ export function DocumentEditorToolbar() {
         {activeTab === 'image' && image && (
           <div className="ribbon-panel-content" role="tabpanel">
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn" onClick={() => replaceInputRef.current?.click()} title="Replace image" aria-label="Replace image">
+              <button className="document-editor-toolbar-btn" onClick={() => replaceInputRef.current?.click()} {...tip('Replace image')} aria-label="Replace image">
                 <ImageUp {...ICON} />
               </button>
               <input ref={replaceInputRef} type="file" accept={IMAGE_FILE_ACCEPT} onChange={handleReplaceImage} hidden aria-hidden="true" tabIndex={-1} />
             </div>
             {image.inGallery && (
               <div className="document-editor-toolbar-group">
-                <button className="document-editor-toolbar-btn" onClick={() => editor?.commands.moveGalleryImage(-1)} disabled={!image.canLeft} title="Move image left" aria-label="Move image left">
+                <button className="document-editor-toolbar-btn" onClick={() => editor?.commands.moveGalleryImage(-1)} disabled={!image.canLeft} {...tip('Move image left')} aria-label="Move image left">
                   <ArrowLeft {...ICON} />
                 </button>
-                <button className="document-editor-toolbar-btn" onClick={() => editor?.commands.moveGalleryImage(1)} disabled={!image.canRight} title="Move image right" aria-label="Move image right">
+                <button className="document-editor-toolbar-btn" onClick={() => editor?.commands.moveGalleryImage(1)} disabled={!image.canRight} {...tip('Move image right')} aria-label="Move image right">
                   <ArrowRight {...ICON} />
                 </button>
               </div>
             )}
             <div className="document-editor-toolbar-group">
-              <button className="document-editor-toolbar-btn danger" onClick={() => editor?.commands.removeSelectedImage()} title="Remove image" aria-label="Remove image">
+              <button className="document-editor-toolbar-btn danger" onClick={() => editor?.commands.removeSelectedImage()} {...tip('Remove image')} aria-label="Remove image">
                 <Trash2 {...ICON} />
               </button>
             </div>
@@ -746,7 +748,7 @@ export function DocumentEditorToolbar() {
           data-shown={overflow.overflowing || undefined}
           aria-controls={stripId}
           aria-label="More tools"
-          title="More tools"
+          {...tip('More tools')}
           {...overflow.moreProps}
         >
           <Ellipsis {...ICON} />
@@ -754,7 +756,7 @@ export function DocumentEditorToolbar() {
 
         {/* Find, at the end of the row. */}
         <div className="document-editor-toolbar-group ribbon-end">
-          <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} title={`Find & Replace (${formatCombo('Mod+F')})`} aria-label="Find and replace">
+          <button className={`document-editor-toolbar-btn ${showSearchReplace ? 'active' : ''}`} onClick={() => setShowSearchReplace(!showSearchReplace)} {...tip('Find & Replace', formatCombo('Mod+F'))} aria-label="Find and replace">
             <Search {...ICON} />
           </button>
         </div>

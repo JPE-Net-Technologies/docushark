@@ -12,12 +12,15 @@ import { assertUploadable } from '../storage/uploadLimits';
 import { processImageForUpload } from '../utils/imageUtils';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import type { GalleryImage } from '../tiptap/GalleryExtension';
+import { tip } from './TooltipLayer';
 
 export interface GalleryUploadButtonProps {
   className?: string;
+  /** One sentence under the name in its tooltip (DSK-217). */
+  description?: string | undefined;
 }
 
-export function GalleryUploadButton({ className }: GalleryUploadButtonProps) {
+export function GalleryUploadButton({ className, description }: GalleryUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const editor = useTiptapEditor();
@@ -60,7 +63,7 @@ export function GalleryUploadButton({ className }: GalleryUploadButtonProps) {
         className={`toolbar-button ${className ?? ''}`}
         onClick={() => inputRef.current?.click()}
         disabled={isUploading}
-        title="Insert image gallery"
+        {...tip('Insert image gallery', undefined, description)}
         aria-label="Insert image gallery"
       >
         {isUploading ? (

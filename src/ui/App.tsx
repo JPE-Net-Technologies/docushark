@@ -84,6 +84,7 @@ import { useCollaborationSync } from '../collaboration';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import type { ImportContext } from '../services/FileImportService';
 import { isGuestSession } from '../guest/guestSession';
+import { TooltipLayer } from './TooltipLayer';
 
 // Lazy-load the rich-text editor panel so the tiptap stack (+ katex via
 // LatexExtension, + nspell via SpellcheckService) is split out of the main
@@ -722,6 +723,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
 
         {/* Command Palette (Cmd/Ctrl+K) */}
         <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} />
+        {/* Tooltips for every control that carries tip() (DSK-217). */}
+        <TooltipLayer />
 
         {/* Shape Search (Ctrl+F) */}
         <ShapeSearchPanel isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />

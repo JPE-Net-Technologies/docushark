@@ -14,6 +14,7 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import './ToolbarDropdown.css';
+import { tip } from './TooltipLayer';
 
 interface ToolbarDropdownProps {
   /** Trigger button content */
@@ -30,6 +31,8 @@ interface ToolbarDropdownProps {
   triggerClassName?: string;
   /** Title/tooltip for trigger button */
   title?: string;
+  /** One sentence under the title in the tooltip, for a less familiar control (DSK-217). */
+  description?: string | undefined;
   /** Whether trigger is in active state */
   isActive?: boolean;
   /** Alignment of dropdown relative to trigger */
@@ -49,6 +52,7 @@ export function ToolbarDropdown({
   onClose,
   triggerClassName = '',
   title,
+  description,
   isActive = false,
   align = 'left',
 }: ToolbarDropdownProps) {
@@ -133,7 +137,10 @@ export function ToolbarDropdown({
         ref={triggerRef}
         className={`${triggerClassName} ${isActive ? 'active' : ''}`}
         onClick={onToggle}
-        title={title}
+        {...(title ? tip(title, undefined, description) : {})}
+        aria-label={title}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
         type="button"
       >
         {trigger}

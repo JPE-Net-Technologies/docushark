@@ -33,6 +33,8 @@ export interface SlashCommand {
    * one of them, so Insert and "/" can't drift apart.
    */
   place: 'format' | 'insert';
+  /** One plain sentence on what a less familiar command does (the toolbar tooltips show it, DSK-217). */
+  description?: string;
   icon: LucideIcon;
   run: (editor: Editor) => void;
 }
@@ -71,17 +73,17 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { id: 'ordered', title: 'Numbered list', keywords: ['ol', 'ordered', 'list', 'number'], group: 'Lists', place: 'format', icon: ListOrdered, run: (e) => cmd.toggleOrderedList(e) },
   { id: 'task', title: 'Task list', keywords: ['todo', 'task', 'checklist', 'checkbox'], group: 'Lists', place: 'format', icon: ListTodo, run: (e) => cmd.toggleTaskList(e) },
   { id: 'quote', title: 'Quote', keywords: ['blockquote', 'quote'], group: 'Basic', place: 'format', icon: TextQuote, run: (e) => cmd.toggleBlockquote(e) },
-  { id: 'code', title: 'Code block', keywords: ['code', 'pre', 'snippet'], group: 'Basic', place: 'insert', icon: SquareCode, run: (e) => cmd.toggleCodeBlock(e) },
+  { id: 'code', title: 'Code block', keywords: ['code', 'pre', 'snippet'], group: 'Basic', place: 'insert', icon: SquareCode, description: 'Code shown exactly as written, in a fixed-width block.', run: (e) => cmd.toggleCodeBlock(e) },
   { id: 'divider', title: 'Divider', keywords: ['hr', 'divider', 'rule', 'separator'], group: 'Basic', place: 'insert', icon: Minus, run: (e) => cmd.insertHorizontalRule(e) },
-  { id: 'callout', title: 'Callout', keywords: ['callout', 'note', 'admonition', 'aside', 'info', 'warning'], group: 'Basic', place: 'insert', icon: Info, run: (e) => cmd.setCallout(e, 'note') },
+  { id: 'callout', title: 'Callout', keywords: ['callout', 'note', 'admonition', 'aside', 'info', 'warning'], group: 'Basic', place: 'insert', icon: Info, description: 'A highlighted box for a note, a tip or a warning.', run: (e) => cmd.setCallout(e, 'note') },
   { id: 'table', title: 'Table', keywords: ['table', 'grid'], group: 'Insert', place: 'insert', icon: Table, run: (e) => cmd.insertTable(e) },
-  { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', place: 'insert', icon: SquareSigma, run: (e) => cmd.setMathBlock(e, '') },
+  { id: 'math', title: 'Math block', keywords: ['math', 'latex', 'equation', 'formula'], group: 'Insert', place: 'insert', icon: SquareSigma, description: 'A formula on its own line, written in LaTeX.', run: (e) => cmd.setMathBlock(e, '') },
   { id: 'image', title: 'Image', keywords: ['image', 'picture', 'photo', 'upload'], group: 'Insert', place: 'insert', icon: Image, run: () => runUi('image') },
-  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', place: 'insert', icon: Paperclip, run: () => runUi('file') },
-  { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', place: 'insert', icon: Images, run: () => runUi('gallery') },
-  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', place: 'insert', icon: Braces, run: () => runUi('field') },
-  { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', place: 'insert', icon: Quote, run: () => runUi('citation') },
-  { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', place: 'insert', icon: BookMarked, run: (e) => cmd.insertBibliographyOnce(e) },
+  { id: 'file', title: 'File attachment', keywords: ['file', 'attach', 'attachment', 'document', 'pdf', 'upload'], group: 'Insert', place: 'insert', icon: Paperclip, description: 'Attach a file to the document, shown as a chip you can open.', run: () => runUi('file') },
+  { id: 'gallery', title: 'Image gallery', keywords: ['gallery', 'images', 'grid', 'photos', 'album'], group: 'Insert', place: 'insert', icon: Images, description: 'Several images side by side, in one block.', run: () => runUi('gallery') },
+  { id: 'field', title: 'Field', keywords: ['field', 'variable', 'merge', 'term', 'placeholder', 'value'], group: 'Insert', place: 'insert', icon: Braces, description: 'A value defined once and shown wherever you insert it.', run: () => runUi('field') },
+  { id: 'citation', title: 'Citation', keywords: ['cite', 'citation', 'reference', 'source'], group: 'References', place: 'insert', icon: Quote, description: 'A reference to a source, in the document’s citation style.', run: () => runUi('citation') },
+  { id: 'bibliography', title: 'Bibliography', keywords: ['bibliography', 'references', 'works cited'], group: 'References', place: 'insert', icon: BookMarked, description: 'The list of every source the document cites.', run: (e) => cmd.insertBibliographyOnce(e) },
 ];
 
 /**

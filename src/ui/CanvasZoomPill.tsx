@@ -13,6 +13,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { peekOverview, zoomIn, zoomOut, zoomTo100, zoomToFit } from '../engine/canvasZoom';
 import { Icon } from './icons';
 import './CanvasZoomPill.css';
+import { tip } from './TooltipLayer';
 
 /** How long the percentage is held before it peeks instead of resetting to 100%. */
 export const PEEK_HOLD_MS = 300;
@@ -74,7 +75,7 @@ export function CanvasZoomPill() {
 
   return (
     <div className="canvas-zoom-pill" role="toolbar" aria-label="Zoom">
-      <button type="button" className="canvas-zoom-pill-btn" onClick={zoomOut} title="Zoom out (Q)" aria-label="Zoom out">
+      <button type="button" className="canvas-zoom-pill-btn" onClick={zoomOut} {...tip('Zoom out', 'Q')} aria-label="Zoom out">
         <Icon icon={Minus} size={14} aria-hidden="true" />
       </button>
       <button
@@ -82,23 +83,23 @@ export function CanvasZoomPill() {
         className="canvas-zoom-pill-btn canvas-zoom-pill-percent"
         onPointerDown={startHold}
         onClick={onPercentClick}
-        title="Click for 100%. Hold to see everything."
+        {...tip('Zoom level', undefined, 'Click for 100%. Hold to see everything.')}
         aria-label={`Zoom ${zoomPercent}%. Reset to 100%`}
       >
         {zoomPercent}%
       </button>
-      <button type="button" className="canvas-zoom-pill-btn" onClick={zoomIn} title="Zoom in (E)" aria-label="Zoom in">
+      <button type="button" className="canvas-zoom-pill-btn" onClick={zoomIn} {...tip('Zoom in', 'E')} aria-label="Zoom in">
         <Icon icon={Plus} size={14} aria-hidden="true" />
       </button>
       <span className="canvas-zoom-pill-divider" aria-hidden="true" />
-      <button type="button" className="canvas-zoom-pill-btn" onClick={zoomToFit} title="Zoom to fit" aria-label="Zoom to fit">
+      <button type="button" className="canvas-zoom-pill-btn" onClick={zoomToFit} {...tip('Zoom to fit')} aria-label="Zoom to fit">
         <Icon icon={Scan} size={14} aria-hidden="true" />
       </button>
       <button
         type="button"
         className={`canvas-zoom-pill-btn${showMinimap ? ' is-active' : ''}`}
         onClick={toggleMinimap}
-        title={showMinimap ? 'Hide minimap' : 'Show minimap'}
+        {...tip(showMinimap ? 'Hide minimap' : 'Show minimap')}
         aria-label="Minimap"
         aria-pressed={showMinimap}
       >
