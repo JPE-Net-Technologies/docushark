@@ -127,11 +127,6 @@
   gap: var(--space-2) var(--space-3);
 }
 
-/* Insert stays mounted while hidden; `display: flex` above would show it. */
-.ribbon-panel-content[hidden] {
-  display: none;
-}
-
 .ribbon-end {
   margin-left: auto;
 }

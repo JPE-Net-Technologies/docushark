@@ -44,7 +44,7 @@ import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useActivePageMirror, useRichTextPagesStore } from '../store/richTextPagesStore';
 import { MirrorBanner } from './integrations/MirrorBanner';
 import * as cmd from './editorCommands';
-import { INSERT_COMMANDS, INSERT_GROUPS, registerSlashUiHandler, type SlashCommand } from '../tiptap/slashCommands';
+import { INSERT_COMMANDS, INSERT_GROUPS, runSlashUi, type SlashCommand } from '../tiptap/slashCommands';
 import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
 import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import { useRibbonOverflow } from './useRibbonOverflow';
@@ -57,9 +57,6 @@ import { ColorPicker, type ColorSpecial } from './color/ColorPicker';
 import { RichSelect } from './components/RichSelect';
 import { TEXT_STYLE_ITEMS, applyTextStyle, textStyleOf, type TextStyle } from './proseTextStyle';
 import { InsertLinkDialog } from './InsertLinkDialog';
-import { CitationPickerDialog } from './CitationPickerDialog';
-import { ReferenceManagerDialog } from './ReferenceManagerDialog';
-import { FieldsManagerDialog } from './FieldsManagerDialog';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
@@ -119,9 +116,6 @@ export function DocumentEditorToolbar() {
   const [showCellBgColor, setShowCellBgColor] = useState(false);
   const [showSearchReplace, setShowSearchReplace] = useState(false);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
-  const [showCitationPicker, setShowCitationPicker] = useState(false);
-  const [showRefManager, setShowRefManager] = useState(false);
-  const [showFieldsManager, setShowFieldsManager] = useState(false);
   const [showCalloutMenu, setShowCalloutMenu] = useState(false);
 
   const CALLOUT_VARIANTS: { value: CalloutVariant; label: string }[] = [
@@ -130,11 +124,6 @@ export function DocumentEditorToolbar() {
     { value: 'warning', label: 'Warning' },
     { value: 'danger', label: 'Danger' },
   ];
-
-  // Let the `/citation` slash command open the citation picker (the picker is
-  // React UI outside the editor). No-op headless: nothing registered.
-  useEffect(() => registerSlashUiHandler('citation', () => setShowCitationPicker(true)), []);
-  useEffect(() => registerSlashUiHandler('field', () => setShowFieldsManager(true)), []);
 
   // Subscribe to editor events for toolbar state updates
   useEffect(() => {
@@ -566,37 +555,37 @@ export function DocumentEditorToolbar() {
           </div>
         )}
 
-        {/* === INSERT TAB === — kept mounted, and hidden while another tab
-            shows: its upload buttons register the /image, /file and /gallery
-            commands, which did nothing whenever Insert wasn't open. */}
-        <div className="ribbon-panel-content" role="tabpanel" hidden={activeTab !== 'insert'}>
-          {INSERT_GROUPS.map((group) => (
-            <div key={group} className="document-editor-toolbar-group">
-              {INSERT_COMMANDS.filter((command) => command.group === group).map((command) => (
-                <Fragment key={command.id}>
-                  {command.id === 'code' && (
-                    <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} {...tip('Inline code', formatCombo('Mod+E'))} aria-label="Inline code">
-                      <Code {...ICON} />
-                    </button>
-                  )}
-                  {command.id === 'math' && (
-                    <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} {...tip('Insert inline equation', undefined, 'A formula within the line of text, written in LaTeX.')} aria-label="Insert inline equation">
-                      <Sigma {...ICON} />
-                    </button>
-                  )}
-                  <span className="ribbon-insert-item" data-slash-id={command.id}>
-                    {renderInsert(command)}
-                  </span>
-                  {command.id === 'bibliography' && (
-                    <button className="document-editor-toolbar-btn" onClick={() => setShowRefManager(true)} {...tip('Manage references', undefined, 'Add and edit the sources your citations point to.')} aria-label="Manage references">
-                      <Library {...ICON} />
-                    </button>
-                  )}
-                </Fragment>
-              ))}
-            </div>
-          ))}
-        </div>
+        {/* === INSERT TAB === */}
+        {activeTab === 'insert' && (
+          <div className="ribbon-panel-content" role="tabpanel">
+            {INSERT_GROUPS.map((group) => (
+              <div key={group} className="document-editor-toolbar-group">
+                {INSERT_COMMANDS.filter((command) => command.group === group).map((command) => (
+                  <Fragment key={command.id}>
+                    {command.id === 'code' && (
+                      <button className={`document-editor-toolbar-btn ${isActive('code') ? 'active' : ''}`} onClick={() => editor && cmd.toggleCode(editor)} {...tip('Inline code', formatCombo('Mod+E'))} aria-label="Inline code">
+                        <Code {...ICON} />
+                      </button>
+                    )}
+                    {command.id === 'math' && (
+                      <button className="document-editor-toolbar-btn" onClick={() => openMathInput(false)} {...tip('Insert inline equation', undefined, 'A formula within the line of text, written in LaTeX.')} aria-label="Insert inline equation">
+                        <Sigma {...ICON} />
+                      </button>
+                    )}
+                    <span className="ribbon-insert-item" data-slash-id={command.id}>
+                      {renderInsert(command)}
+                    </span>
+                    {command.id === 'bibliography' && (
+                      <button className="document-editor-toolbar-btn" onClick={() => runSlashUi('references')} {...tip('Manage references', undefined, 'Add and edit the sources your citations point to.')} aria-label="Manage references">
+                        <Library {...ICON} />
+                      </button>
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* === TABLE TAB (contextual) === */}
         {activeTab === 'table' && (
@@ -809,23 +798,6 @@ export function DocumentEditorToolbar() {
       {/* Insert Link Dialog */}
       {showLinkDialog && editor && (
         <InsertLinkDialog editor={editor} onClose={() => setShowLinkDialog(false)} />
-      )}
-
-      {/* Citations (JP-89) */}
-      {showCitationPicker && editor && (
-        <CitationPickerDialog
-          editor={editor}
-          onClose={() => setShowCitationPicker(false)}
-          onManageReferences={() => setShowRefManager(true)}
-        />
-      )}
-      {showRefManager && (
-        <ReferenceManagerDialog onClose={() => setShowRefManager(false)} />
-      )}
-
-      {/* Document Fields (Phase 3) */}
-      {showFieldsManager && editor && (
-        <FieldsManagerDialog editor={editor} onClose={() => setShowFieldsManager(false)} />
       )}
 
       {/* Search & Replace Panel */}

@@ -18,9 +18,11 @@ export interface GalleryUploadButtonProps {
   className?: string;
   /** One sentence under the name in its tooltip (DSK-217). */
   description?: string | undefined;
+  /** This instance opens for the matching "/" command (SlashUiHost's, DSK-219). */
+  slashTarget?: boolean;
 }
 
-export function GalleryUploadButton({ className, description }: GalleryUploadButtonProps) {
+export function GalleryUploadButton({ className, description, slashTarget = false }: GalleryUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const editor = useTiptapEditor();
@@ -54,7 +56,12 @@ export function GalleryUploadButton({ className, description }: GalleryUploadBut
   };
 
   // Let the `/gallery` slash command open the same multi-file picker.
-  useEffect(() => registerSlashUiHandler('gallery', () => inputRef.current?.click()), []);
+  // Only the slash host's instance answers "/" (DSK-219); the ribbon's button
+  // keeps its own input for its own clicks.
+  useEffect(
+    () => (slashTarget ? registerSlashUiHandler('gallery', () => inputRef.current?.click()) : undefined),
+    [slashTarget],
+  );
 
   return (
     <>
