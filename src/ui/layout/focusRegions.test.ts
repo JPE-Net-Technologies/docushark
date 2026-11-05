@@ -95,7 +95,10 @@ describe('moving focus between regions (DSK-214)', () => {
   });
 
   it('F6 and Shift+F6 reach it through the global key commands, even while typing', () => {
-    document.querySelector<HTMLElement>('.ProseMirror')!.focus();
+    // A browser reports the editor as editable; jsdom has no isContentEditable.
+    const editor = document.querySelector<HTMLElement>('.ProseMirror')!;
+    Object.defineProperty(editor, 'isContentEditable', { value: true });
+    editor.focus();
     expect(dispatchKey(new KeyboardEvent('keydown', { key: 'F6' }), 'global')).toBe(true);
     expect(document.activeElement).toBe(canvas);
     expect(dispatchKey(new KeyboardEvent('keydown', { key: 'F6', shiftKey: true }), 'global')).toBe(true);
