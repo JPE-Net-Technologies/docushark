@@ -33,6 +33,57 @@ export interface ProseLinkClickOptions {
   headingAnchors?: boolean;
 }
 
+/**
+ * Follow a prose link the way a click on it does: with `headingAnchors`, a
+ * `docushark://heading/…` anchor switches to its page and scrolls the heading
+ * into view; `http(s)` and `mailto` links open in a new tab. Returns whether it
+ * handled `href`. The click handler below and the context menu's "Open link"
+ * (DSK-213) share it, so the two can't follow links differently.
+ */
+export function followProseLink(href: string, opts: ProseLinkClickOptions = {}): boolean {
+  if (opts.headingAnchors) {
+    const headingLink = parseHeadingHref(href);
+    if (headingLink) {
+      const { pageId, blockId, index } = headingLink;
+      import('../store/richTextPagesStore').then(({ useRichTextPagesStore }) => {
+        const store = useRichTextPagesStore.getState();
+        if (store.activePageId !== pageId) store.setActivePage(pageId);
+        // Id form: the durable block id renders as a real DOM id on the
+        // heading (BlockIdExtension renderHTML), so getElementById resolves
+        // it position-independently. Legacy form: positional index.
+        const resolveTarget = (): HTMLElement | undefined => {
+          if (blockId !== undefined) {
+            const el = document.getElementById(blockId);
+            return el && el.closest('.tiptap-prose') && /^H[1-6]$/.test(el.tagName)
+              ? el
+              : undefined;
+          }
+          const headings = document.querySelectorAll(
+            '.tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose h4, .tiptap-prose h5, .tiptap-prose h6',
+          );
+          return headings[index!] as HTMLElement | undefined;
+        };
+        const scrollToHeading = (attempts = 0) => {
+          const el = resolveTarget();
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } else if (attempts < 30) {
+            requestAnimationFrame(() => scrollToHeading(attempts + 1));
+          }
+        };
+        requestAnimationFrame(() => scrollToHeading());
+      });
+      return true;
+    }
+  }
+
+  if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) {
+    window.open(href, '_blank', 'noopener,noreferrer');
+    return true;
+  }
+  return false;
+}
+
 export function useProseLinkClicks(
   editor: Editor | null,
   opts: ProseLinkClickOptions = {},
@@ -46,50 +97,9 @@ export function useProseLinkClicks(
       const target = event.target as HTMLElement | null;
       const anchor = target?.closest('a[href]') as HTMLAnchorElement | null;
       if (!anchor || !dom.contains(anchor)) return;
-      const href = anchor.getAttribute('href') || '';
-
-      if (headingAnchors) {
-        const headingLink = parseHeadingHref(href);
-        if (headingLink) {
-          event.preventDefault();
-          event.stopPropagation();
-          const { pageId, blockId, index } = headingLink;
-          import('../store/richTextPagesStore').then(({ useRichTextPagesStore }) => {
-            const store = useRichTextPagesStore.getState();
-            if (store.activePageId !== pageId) store.setActivePage(pageId);
-            // Id form: the durable block id renders as a real DOM id on the
-            // heading (BlockIdExtension renderHTML), so getElementById resolves
-            // it position-independently. Legacy form: positional index.
-            const resolveTarget = (): HTMLElement | undefined => {
-              if (blockId !== undefined) {
-                const el = document.getElementById(blockId);
-                return el && el.closest('.tiptap-prose') && /^H[1-6]$/.test(el.tagName)
-                  ? el
-                  : undefined;
-              }
-              const headings = document.querySelectorAll(
-                '.tiptap-prose h1, .tiptap-prose h2, .tiptap-prose h3, .tiptap-prose h4, .tiptap-prose h5, .tiptap-prose h6',
-              );
-              return headings[index!] as HTMLElement | undefined;
-            };
-            const scrollToHeading = (attempts = 0) => {
-              const el = resolveTarget();
-              if (el) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              } else if (attempts < 30) {
-                requestAnimationFrame(() => scrollToHeading(attempts + 1));
-              }
-            };
-            requestAnimationFrame(() => scrollToHeading());
-          });
-          return;
-        }
-      }
-
-      if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) {
+      if (followProseLink(anchor.getAttribute('href') || '', { headingAnchors })) {
         event.preventDefault();
         event.stopPropagation();
-        window.open(href, '_blank', 'noopener,noreferrer');
       }
     };
     dom.addEventListener('click', onClick);

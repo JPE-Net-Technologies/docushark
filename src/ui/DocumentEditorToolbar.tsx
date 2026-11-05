@@ -44,7 +44,7 @@ import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useActivePageMirror, useRichTextPagesStore } from '../store/richTextPagesStore';
 import { MirrorBanner } from './integrations/MirrorBanner';
 import * as cmd from './editorCommands';
-import { registerSlashUiHandler, SLASH_COMMANDS, type SlashCommand } from '../tiptap/slashCommands';
+import { INSERT_COMMANDS, INSERT_GROUPS, registerSlashUiHandler, type SlashCommand } from '../tiptap/slashCommands';
 import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions';
 import { IMAGE_FILE_ACCEPT } from './proseImageUpload';
 import { useRibbonOverflow } from './useRibbonOverflow';
@@ -71,9 +71,6 @@ type RibbonTab = PlainTab | 'table' | 'image';
 
 const TAB_LABELS: Record<RibbonTab, string> = { home: 'Home', insert: 'Insert', table: 'Table', image: 'Image' };
 
-/** The Insert tab offers what "/" inserts, in the registry's groups and order. */
-const INSERT_COMMANDS = SLASH_COMMANDS.filter((command) => command.place === 'insert');
-const INSERT_GROUPS = [...new Set(INSERT_COMMANDS.map((command) => command.group))];
 /** Insert controls that light up when the selection is already one of theirs. */
 const INSERT_ACTIVE_NODE: Partial<Record<string, string>> = { code: 'codeBlock' };
 

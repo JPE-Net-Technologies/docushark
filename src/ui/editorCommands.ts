@@ -152,3 +152,12 @@ export function insertBibliographyOnce(editor: Editor): void {
   }
   insertBibliography(editor);
 }
+
+// Links under the pointer (DSK-213): the context menu acts on the whole link a
+// right-click landed on, wherever the caret was.
+/** Select the whole link at `pos`, for the link dialog to edit. */
+export const selectLinkAt = (editor: Editor, pos: number) =>
+  editor.chain().focus().setTextSelection(pos).extendMarkRange('link').run();
+/** Remove the whole link at `pos`, keeping its text. */
+export const removeLinkAt = (editor: Editor, pos: number) =>
+  editor.chain().focus().setTextSelection(pos).extendMarkRange('link').unsetMark('link').run();

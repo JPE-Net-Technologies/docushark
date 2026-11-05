@@ -93,7 +93,7 @@ import { navigateActivePage } from './pageNavigation';
  * binding is already answered by `keys`, and a second way to say it would drift
  * from the first.
  */
-export type ActionSurface = 'palette' | 'tools';
+export type ActionSurface = 'palette' | 'tools' | 'canvasMenu';
 
 /**
  * Extra commands contributed by feature areas, keyed by source id.
@@ -198,7 +198,8 @@ export interface Command {
   /**
    * Where this command is offered. Defaults to the palette only, which is what
    * every command did before surfaces existed — opting into `'tools'` is what
-   * puts a command in the Tools grid.
+   * puts a command in the Tools grid, and `'canvasMenu'` in the menu a
+   * right-click on empty canvas opens (DSK-213).
    */
   surfaces?: readonly ActionSurface[];
 }
@@ -385,6 +386,7 @@ function buildCommands(): Command[] {
     // --- Editing (canvas scope — active when the canvas owns focus) ---
     {
       id: 'edit.undo', icon: Undo2, label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
+      surfaces: ['palette', 'canvasMenu'],
       execute: () => { if (useHistoryStore.getState().canUndo()) useHistoryStore.getState().undo(); },
       // JP-370: undo/redo aren't selection-gated, so the read-only clear-selection
       // trick doesn't cover them — block them on a view-only doc.
@@ -392,10 +394,11 @@ function buildCommands(): Command[] {
     },
     {
       id: 'edit.redo', icon: Redo2, label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
+      surfaces: ['palette', 'canvasMenu'],
       execute: () => { if (useHistoryStore.getState().canRedo()) useHistoryStore.getState().redo(); },
       canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canRedo(),
     },
-    { id: 'edit.selectAll', icon: BoxSelect, label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
+    { id: 'edit.selectAll', icon: BoxSelect, label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', surfaces: ['palette', 'canvasMenu'], execute: () => useSessionStore.getState().selectAll() },
     {
       id: 'edit.delete', icon: Trash2, label: 'Delete selected', category: 'Editing', keys: 'Delete | Backspace', scope: 'canvas',
       execute: () => { pushHistory('Delete shapes'); deleteSelected(); },
@@ -435,8 +438,8 @@ function buildCommands(): Command[] {
     { id: 'view.zoomIn', icon: ZoomIn, label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
     { id: 'view.zoomOut', icon: ZoomOut, label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
     // Clickable zoom (DSK-211): the canvas's zoom pill runs the same functions.
-    { id: 'view.zoomToFit', icon: Scan, label: 'Zoom to fit', category: 'Navigation', execute: zoomToFit },
-    { id: 'view.zoomTo100', icon: Percent, label: 'Zoom to 100%', category: 'Navigation', execute: zoomTo100 },
+    { id: 'view.zoomToFit', icon: Scan, label: 'Zoom to fit', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomToFit },
+    { id: 'view.zoomTo100', icon: Percent, label: 'Zoom to 100%', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomTo100 },
 
     // --- Clipboard + grouping (canvas scope). Copy/paste are engine-coupled
     // (clipboard + spatial index) so they bridge to the engine via an event;
@@ -587,6 +590,16 @@ export function getToolsActions(): Command[] {
       isOnSurface(c, 'tools') &&
       (!c.canExecute || c.canExecute()),
   );
+}
+
+/**
+ * Commands for the menu a right-click on empty canvas opens (DSK-213), in
+ * catalogue order. The menu shows each one's label and shortcut and greys out
+ * those that can't run now (`canExecute`), so it stays in step with the
+ * palette and the keyboard.
+ */
+export function getCanvasMenuCommands(): Command[] {
+  return getAllCommands().filter((c) => !c.reserved && isOnSurface(c, 'canvasMenu'));
 }
 
 /** Commands the user can run from the palette (executable, non-reserved). */

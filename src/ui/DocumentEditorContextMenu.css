@@ -187,3 +187,8 @@
 [data-theme="dark"] .doc-editor-submenu-search-input:focus {
   border-color: var(--color-primary);
 }
+
+/* A misspelled word's suggestions (DSK-213): bold, as the fixes they are. */
+.doc-editor-context-menu-suggestion .doc-editor-context-menu-label {
+  font-weight: 600;
+}

@@ -8,29 +8,30 @@ import {
 } from '../Shape';
 
 /**
- * Translate a shape by a delta vector.
- * Returns a new shape with updated position.
+ * Translate a shape by a delta vector, returning a new shape: its position and,
+ * on lines and connectors, the second endpoint (`x2`, `y2`) and any waypoints,
+ * which are absolute too. Moving only `x` and `y` would stretch them.
  *
  * @param shape - The shape to translate
  * @param delta - Translation vector
  * @returns New shape with updated position
  */
 export function translateShape<T extends Shape>(shape: T, delta: Vec2): T {
-  if (isLine(shape)) {
-    return {
-      ...shape,
-      x: shape.x + delta.x,
-      y: shape.y + delta.y,
-      x2: shape.x2 + delta.x,
-      y2: shape.y2 + delta.y,
-    } as T;
+  const moved = { ...shape, x: shape.x + delta.x, y: shape.y + delta.y } as T & EndpointGeometry;
+  const geometry = shape as T & EndpointGeometry;
+  if (typeof geometry.x2 === 'number') moved.x2 = geometry.x2 + delta.x;
+  if (typeof geometry.y2 === 'number') moved.y2 = geometry.y2 + delta.y;
+  if (geometry.waypoints) {
+    moved.waypoints = geometry.waypoints.map((point) => ({ x: point.x + delta.x, y: point.y + delta.y }));
   }
+  return moved;
+}
 
-  return {
-    ...shape,
-    x: shape.x + delta.x,
-    y: shape.y + delta.y,
-  };
+/** The absolute geometry lines and connectors carry beyond `x` and `y`. */
+interface EndpointGeometry {
+  x2?: number;
+  y2?: number;
+  waypoints?: Array<{ x: number; y: number }>;
 }
 
 /**
