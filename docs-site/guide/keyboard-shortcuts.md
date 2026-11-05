@@ -24,8 +24,13 @@ Most things in DocuShark have a shortcut. If you ever forget one, you don't need
 | Group / Ungroup | `Ctrl+G` / `Ctrl+Shift+G` |
 | Zoom in / out | Ctrl/⌘ + scroll, pinch, or `E` / `Q` |
 | Pan | Scroll, two-finger drag, `WASD`, or middle-click + drag |
+| Move between the top bar, your text and the canvas | `F6` / `Shift+F6` |
 
 (Use `Cmd` in place of `Ctrl` on macOS.)
+
+In a browser tab, `F6` belongs to the browser. Use the command palette's
+**Move focus to the canvas** and **Move focus to the text** instead; the desktop
+app and an installed app pass `F6` to DocuShark.
 
 ## Everything else
 

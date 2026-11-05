@@ -38,6 +38,21 @@ import type { ImportContext } from '../services/FileImportService';
 import { ICON } from './icons';
 import { ToolbarGroup } from './ToolbarGroup';
 import './CanvasToolbar.css';
+import { focusCanvas } from './layout/focusRegions';
+
+/**
+ * After a pointer click on one of the toolbar's buttons, give keyboard focus
+ * back to the canvas (DSK-214): the canvas hears its shortcuts (V, Delete, the
+ * arrows) only while it has focus, and a click left focus on the button, so
+ * picking a tool silenced them. Keyboard activation (`detail` 0) keeps focus on
+ * the button, and a button that opens a menu or picker keeps it for that.
+ */
+export function returnFocusToCanvas(event: React.MouseEvent): void {
+  if (event.detail === 0) return;
+  const button = (event.target as Element).closest('button');
+  if (!button || button.hasAttribute('aria-haspopup')) return;
+  focusCanvas();
+}
 
 /** Tool definition. */
 interface ToolDef {
@@ -144,7 +159,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
 
   if (isReadOnly) {
     return (
-      <div className="canvas-toolbar">
+      <div className="canvas-toolbar" onClick={returnFocusToCanvas}>
         <ToolbarGroup label="Access">
           <span className="canvas-toolbar-viewonly" title="You have view-only access to this document">
             View only
@@ -158,7 +173,7 @@ export function CanvasToolbar({ onRebuildConnectors, getImportContext }: CanvasT
   }
 
   return (
-    <div className="canvas-toolbar">
+    <div className="canvas-toolbar" onClick={returnFocusToCanvas}>
       <ToolbarGroup label="Drawing tools" className="tool-buttons">
         {TOOLS.map((tool) =>
           tool.type === 'connector' ? (

@@ -448,3 +448,10 @@ html {
   --grad-fill: var(--color-primary);
   --sheet-wash: none;
 }
+
+/* The region F6 just moved focus into (DSK-214): a brief ring, so the jump can
+   be seen. focusRegions.ts sets and clears the attribute. */
+[data-focus-arrived] {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}

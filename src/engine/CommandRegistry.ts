@@ -85,6 +85,7 @@ import { LAYOUT_LABELS, LAYOUT_PRESETS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
 import { navigateActivePage } from './pageNavigation';
+import { cycleFocusRegion, focusRegion, isRegionShown } from '../ui/layout/focusRegions';
 
 /**
  * A place a command can be offered to the user.
@@ -440,6 +441,28 @@ function buildCommands(): Command[] {
     // Clickable zoom (DSK-211): the canvas's zoom pill runs the same functions.
     { id: 'view.zoomToFit', icon: Scan, label: 'Zoom to fit', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomToFit },
     { id: 'view.zoomTo100', icon: Percent, label: 'Zoom to 100%', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomTo100 },
+
+    // Moving focus between the regions (DSK-214). F6 reaches the page in the
+    // desktop app and an installed app; in a browser tab the browser keeps it,
+    // so the two palette commands reach the surfaces too.
+    {
+      id: 'view.nextRegion', label: 'Move focus to the next region', category: 'Navigation', keys: 'F6', scope: 'global', whileTyping: true,
+      execute: () => cycleFocusRegion(1),
+    },
+    {
+      id: 'view.previousRegion', label: 'Move focus to the previous region', category: 'Navigation', keys: 'Shift+F6', scope: 'global', whileTyping: true,
+      execute: () => cycleFocusRegion(-1),
+    },
+    {
+      id: 'view.focusCanvas', label: 'Move focus to the canvas', category: 'Navigation',
+      execute: () => { focusRegion('canvas'); },
+      canExecute: () => isRegionShown('canvas'),
+    },
+    {
+      id: 'view.focusProse', label: 'Move focus to the text', category: 'Navigation',
+      execute: () => { focusRegion('prose'); },
+      canExecute: () => isRegionShown('prose'),
+    },
 
     // --- Clipboard + grouping (canvas scope). Copy/paste are engine-coupled
     // (clipboard + spatial index) so they bridge to the engine via an event;

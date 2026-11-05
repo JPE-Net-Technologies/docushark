@@ -319,7 +319,7 @@ export function UnifiedToolbar({
 
   return (
     <>
-    <div className="unified-toolbar">
+    <div className="unified-toolbar" data-focus-region="topbar">
       {/* Left: Documents launcher + document identity */}
       <div className="unified-toolbar-left">
         {onOpenDocuments && !guest && (

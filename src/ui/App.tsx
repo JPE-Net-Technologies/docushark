@@ -592,6 +592,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               split focus the explicit width is user-draggable. */}
           <div
             className={canvasWrapperClass}
+            data-focus-region="canvas"
             // An explicit (dragged) width wins; when null the responsive
             // `.canvas-area-wrapper--secondary` CSS clamp owns the ~50/50 split.
             style={

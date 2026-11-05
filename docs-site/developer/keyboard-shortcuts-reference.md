@@ -35,6 +35,19 @@ The complete list. For the shortcuts most people actually use day to day — and
 
 `Q`/`E` zoom toward the viewport center; scroll/pinch zoom toward the cursor. See [Canvas & Navigation](../guide/canvas-navigation) for the full rundown, including the Linux trackpad-pinch caveat.
 
+## Moving Between Regions
+
+| Action | Method |
+|--------|--------|
+| Next region (top bar → text → canvas) | `F6` |
+| Previous region | `Shift+F6` |
+| Focus the canvas / the text | Command palette: **Move focus to the canvas**, **Move focus to the text** |
+
+The region that receives focus shows a brief outline. A browser tab keeps `F6`
+for itself; the desktop app and an installed app pass it through. Picking a
+canvas tool with the mouse gives focus back to the canvas, so its shortcuts keep
+working.
+
 ## Selection
 
 | Action | Shortcut |
