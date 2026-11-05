@@ -14,12 +14,15 @@ import { useTiptapEditor } from './TiptapEditorContext';
 import { uploadProseFile } from './proseFileUpload';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { useNotificationStore } from '../store/notificationStore';
+import { tip } from './TooltipLayer';
 
 export interface FileUploadButtonProps {
   className?: string;
+  /** One sentence under the name in its tooltip (DSK-217). */
+  description?: string | undefined;
 }
 
-export function FileUploadButton({ className }: FileUploadButtonProps) {
+export function FileUploadButton({ className, description }: FileUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const editor = useTiptapEditor();
@@ -61,7 +64,7 @@ export function FileUploadButton({ className }: FileUploadButtonProps) {
         className={`toolbar-button ${className ?? ''}`}
         onClick={handleClick}
         disabled={isUploading}
-        title="Attach file"
+        {...tip('Attach file', undefined, description)}
         aria-label="Attach file"
       >
         {isUploading ? (
