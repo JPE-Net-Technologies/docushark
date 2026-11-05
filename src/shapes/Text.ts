@@ -239,9 +239,9 @@ export const textHandler: ShapeHandler<TextShape> = {
   },
 
   /**
-   * In-place edit target. Text shapes edit their `text` field; the inline
-   * editor keeps its bespoke top-left anchoring for text, so the worldRect here
-   * is informational (used for the capability check and fallback sizing).
+   * In-place edit target. Text shapes edit their `text` field. The inline
+   * editor covers the box from its top-left corner in the text's own font
+   * (DSK-220); the worldRect here is the same box, centred on (x, y).
    */
   getLabelEditTarget(shape: TextShape) {
     const align: 'left' | 'center' | 'right' =

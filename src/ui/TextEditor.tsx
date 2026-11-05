@@ -42,16 +42,19 @@ export function TextEditor({ camera }: TextEditorProps) {
   const isTextShape = isText(shape);
   const fontSize = target.fontSize * camera.zoom;
 
-  // Text shapes anchor at their top-left with their own font; every other shape
-  // centers the overlay on the target's world rect.
+  // A text shape's box is centred on its (x, y), like every shape's (DSK-220):
+  // its editor covers the box from the box's top-left corner, in the text's own
+  // font, so the text is edited where it is drawn, and turns about the box's
+  // centre as the shape does. Every other shape centres the editor on its
+  // label's world rect.
   const anchorWorld = isTextShape
-    ? new Vec2(shape.x, shape.y)
+    ? new Vec2(shape.x - shape.width / 2, shape.y - shape.height / 2)
     : new Vec2(target.worldRect.cx, target.worldRect.cy);
   const screenPos = camera.worldToScreen(anchorWorld);
 
   const editWidth = isTextShape ? shape.width : target.worldRect.width;
   const minWidth = Math.max(100, editWidth * camera.zoom);
-  const minHeight = fontSize * 1.5;
+  const minHeight = isTextShape ? Math.max(fontSize * 1.5, shape.height * camera.zoom) : fontSize * 1.5;
 
   const offsetX = isTextShape ? 0 : -minWidth / 2;
   const offsetY = isTextShape ? 0 : -minHeight / 2;
@@ -61,7 +64,9 @@ export function TextEditor({ camera }: TextEditorProps) {
     left: `${screenPos.x + offsetX}px`,
     top: `${screenPos.y + offsetY}px`,
     transform: `rotate(${target.rotation}rad)`,
-    transformOrigin: isTextShape ? 'left top' : 'center center',
+    transformOrigin: isTextShape
+      ? `${(shape.width * camera.zoom) / 2}px ${(shape.height * camera.zoom) / 2}px`
+      : 'center center',
     fontSize: `${fontSize}px`,
     fontFamily: isTextShape ? shape.fontFamily : 'sans-serif',
     minWidth: `${minWidth}px`,
