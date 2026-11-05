@@ -25,6 +25,10 @@
 .mpt-panel .document-editor-toolbar {
   border-bottom: none;
 }
+/* The bar right below this panel has undo and redo. */
+.mpt-panel .ribbon-history {
+  display: none;
+}
 
 /* The bar (DSK-197): a sideways-scrolling row of everyday controls, with
    Format pinned at the end so the full ribbon is always one tap away. */

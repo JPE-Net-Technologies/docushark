@@ -29,6 +29,12 @@ On a touch screen nothing waits for a pointer to hover. Each document's **⋯** 
 
 With mobile preview on, menus open as sheets from the bottom of the screen, with room for a finger on every choice. Tap outside a sheet, or swipe it down, to close it.
 
+## The top bar
+
+The bar at the top of the editor is icons only on a phone: **Documents**, the document's name, **Write** and **Diagram**, the layout, **Tools** and **Settings**.
+
+**Tools** opens a sheet with what **Tools** holds on a computer: importing a diagram, exporting to PDF, version history, the whiteboard and any connected integrations. It also has the documentation, which a computer keeps on its own button, and the command palette, for searching every other action.
+
 ## Writing on a phone
 
 With mobile preview on, a writing bar sits at the bottom of a prose page, above the keyboard. Swipe it sideways for more:
