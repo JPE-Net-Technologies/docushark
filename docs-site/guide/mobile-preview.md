@@ -56,6 +56,12 @@ Pressing and holding text selects it as it does in any other app, with your phon
 
 A page mirrored from another tool, such as Notion, is read-only. Its bar says so and when it last synced, and offers **Refresh**, **Open** in the source, and **Detach**.
 
+## Diagrams on a phone
+
+Tap a shape to select it, and drag it to move it. A bar at the bottom offers **Properties** and **Delete**.
+
+**Properties** rises over the lower part of the screen, with the shape in view above it, so you can see each change as you make it. Tap another shape and it follows. **Done** puts it away and keeps the shape selected. Tap an empty part of the canvas to deselect.
+
 ## What to expect
 
 Mobile preview is still early: expect some panels and workflows to feel tighter or less polished than on desktop. If something feels broken rather than just cramped, that's useful feedback — but it's not yet the primary way DocuShark is meant to be used.

@@ -4,7 +4,7 @@
  * Everything here is scoped to `[data-mobile="true"]`, which App sets on the
  * root `.app` element only when the experimental mobile layout is active
  * (`useMobileAdaptation().mobileActive`). Later slices hang their mobile chrome
- * (collapsed toolbar, full-screen property sheet, partitioned prose toolbar) off
+ * (collapsed toolbar, property sheet, partitioned prose toolbar) off
  * this hook.
  *
  * The `--safe-area-*` tokens (declared in index.css) resolve to 0 outside a

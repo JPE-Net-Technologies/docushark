@@ -4,6 +4,7 @@ import type { PatternConfig, PatternType } from '../shapes/GroupStyles';
 import { PATTERN_TYPE_LABELS } from '../shapes/GroupStyles';
 import { CompactColorInput } from './CompactColorInput';
 import './PatternPicker.css';
+import { useKeepOnScreen } from './components/useKeepOnScreen';
 
 interface PatternPickerProps {
   value: PatternConfig | undefined;
@@ -27,6 +28,7 @@ export function PatternPicker({ value, onChange }: PatternPickerProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  useKeepOnScreen(dropdownRef);
 
   // Current pattern type
   const currentType = value?.type || 'none';

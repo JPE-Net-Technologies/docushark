@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ColorPicker, type ColorSpecial } from './color/ColorPicker';
 import { parseColorInput } from '../utils/color';
 import './CompactColorInput.css';
+import { useKeepOnScreen } from './components/useKeepOnScreen';
 
 /**
  * Props for the CompactColorInput component.
@@ -64,6 +65,8 @@ export function CompactColorInput({
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useKeepOnScreen(dropdownRef);
 
   // Calculate dropdown position
   const updateDropdownPosition = useCallback(() => {
@@ -179,6 +182,7 @@ export function CompactColorInput({
 
   const dropdownContent = isOpen && dropdownPosition && (
     <div
+      ref={dropdownRef}
       className="compact-color-palette-dropdown compact-color-palette-portal"
       // Logically part of whatever panel opened us, even though we render in a
       // portal on document.body — keeps an unpinned FlyoutPanel from collapsing

@@ -1,0 +1,60 @@
+/* The bar a selection brings on a phone (DSK-223): above the status line, in the
+   place of the zoom controls, which step aside while something's selected. */
+.mobile-selection-bar {
+  position: fixed;
+  left: max(var(--space-2), var(--safe-area-left));
+  right: max(var(--space-2), var(--safe-area-right));
+  bottom: calc(var(--safe-area-bottom) + 32px);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+}
+
+.app[data-mobile='true'][data-selection='true'] .canvas-zoom-pill,
+.app[data-mobile='true'][data-selection='true'] .minimap-container {
+  visibility: hidden;
+}
+
+.mobile-selection-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-selection-properties,
+.mobile-selection-delete {
+  flex: 0 0 auto;
+  min-height: 44px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+
+.mobile-selection-properties {
+  padding: 0 var(--space-4);
+  color: var(--color-on-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  background: var(--color-primary);
+  border: none;
+}
+
+.mobile-selection-delete {
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+}
