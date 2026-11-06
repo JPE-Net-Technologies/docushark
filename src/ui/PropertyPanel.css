@@ -27,6 +27,10 @@
 .property-panel.property-panel--mobile .property-panel-resize-handle {
   display: none;
 }
+/* The sheet's own title says what's selected, in a short sheet. */
+.property-panel.property-panel--mobile .property-panel-header {
+  display: none;
+}
 
 /* When the panel is docked on the left of the canvas, swap the border side
  * and put the resize handle on the right edge instead of the left. */

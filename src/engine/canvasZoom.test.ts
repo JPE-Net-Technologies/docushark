@@ -6,7 +6,8 @@ import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
 import { setMotionPreference } from '../platform/adaptiveBudget';
 import type { RectangleShape } from '../shapes/Shape';
-import { GLIDE_MS, fitCamera, glideCamera, peekOverview, zoomIn, zoomOut, zoomTo100, zoomToFit } from './canvasZoom';
+import { GLIDE_MS, cameraToRevealAbove, fitCamera, glideCamera, peekOverview, zoomIn, zoomOut, zoomTo100, zoomToFit } from './canvasZoom';
+import { Box } from '../math/Box';
 import '../shapes/Rectangle';
 
 const camera = () => {
@@ -144,5 +145,48 @@ describe('glideCamera (DSK-212)', () => {
     useSessionStore.getState().setCamera({ zoom: 2 });
     runFrame(1000 + GLIDE_MS);
     expect(camera()).toEqual({ x: 100, y: 0, zoom: 2 });
+  });
+});
+
+describe('cameraToRevealAbove (DSK-223)', () => {
+  // A canvas 700 tall, covered from 300 down: world y=0 is at 350, under the cover.
+  const reveal = (minY: number, maxY: number, zoom = 1, cameraY = 0) =>
+    cameraToRevealAbove(new Box(0, minY, 10, maxY), { x: 5, y: cameraY, zoom }, 700, 300);
+
+  it('leaves alone a shape wholly above the cover', () => {
+    expect(reveal(-300, -100)).toBeNull();
+  });
+
+  it('brings up a shape under the cover, to the middle of the space above it', () => {
+    // Its centre (0) is at 350, and should be at 150: the camera moves down 200.
+    expect(reveal(-10, 10)).toEqual({ x: 5, y: 200 });
+  });
+
+  it('brings up a shape cut by the cover', () => {
+    expect(reveal(-90, -30)).not.toBeNull();
+  });
+
+  it('brings down a shape above the canvas', () => {
+    // Its centre (-500) is at -150, and should be at 150: the camera moves up 300.
+    expect(reveal(-510, -490)).toEqual({ x: 5, y: -300 });
+  });
+
+  it('allows for the zoom', () => {
+    // At 2x, its centre (0) is still at 350, and 200 px is 100 world units.
+    expect(reveal(-10, 10, 2)).toEqual({ x: 5, y: 100 });
+  });
+
+  it('allows for where the camera is', () => {
+    // Its centre (1000) is at 350 with the camera there, and the move adds to it.
+    expect(reveal(990, 1010, 1, 1000)).toEqual({ x: 5, y: 1200 });
+  });
+
+  it('leaves alone a shape too tall for the space, with its middle in view', () => {
+    expect(reveal(-400, -100 + 200)).toBeNull();
+  });
+
+  it('centres a shape too tall for the space, with its middle covered', () => {
+    // Height 500, centre 100 at 450 on screen: to 150, a move of 300.
+    expect(reveal(-150, 350)).toEqual({ x: 5, y: 300 });
   });
 });

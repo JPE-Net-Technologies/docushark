@@ -17,6 +17,7 @@ import type { IconMetadata, IconCategory } from '../storage/IconTypes';
 import { ICON_CATEGORY_LABELS, LAZY_ICON_CATEGORIES } from '../storage/IconTypes';
 import { getIconCategories, isLazyCategory, isCategoryLoaded } from '../storage/builtinIcons';
 import './IconPicker.css';
+import { useKeepOnScreen } from './components/useKeepOnScreen';
 
 /**
  * Props for the IconPicker component.
@@ -66,6 +67,8 @@ export function IconPicker({
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useKeepOnScreen(dropdownRef);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -260,6 +263,7 @@ export function IconPicker({
   // Render the dropdown content
   const dropdownContent = isOpen && dropdownPosition && (
     <div
+      ref={dropdownRef}
       className="icon-picker-dropdown icon-picker-dropdown-portal"
       // Portaled to body but logically part of the host panel — keeps an
       // unpinned FlyoutPanel from collapsing while picking an icon.

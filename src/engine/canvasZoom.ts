@@ -9,6 +9,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { calculateCombinedBounds } from '../shapes/utils/bounds';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
 import { MAX_ZOOM, MIN_ZOOM } from './Camera';
+import type { Box } from '../math/Box';
 
 /** The levels − and + step through. */
 export const ZOOM_PRESETS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
@@ -54,6 +55,26 @@ export function fitCamera(): { x: number; y: number; zoom: number } {
     2
   );
   return { x: bounds.center.x, y: bounds.center.y, zoom: Math.max(MIN_ZOOM, zoom) };
+}
+
+/**
+ * Where the camera should go for `bounds` to be in view above something covering
+ * the canvas from `coveredFrom` (px from its top) down, or null if it's in view
+ * already. Only y moves. A shape too tall for the space is centred in it.
+ */
+export function cameraToRevealAbove(
+  bounds: Box,
+  camera: { x: number; y: number; zoom: number },
+  canvasHeight: number,
+  coveredFrom: number
+): { x: number; y: number } | null {
+  const screenY = (y: number) => canvasHeight / 2 + (y - camera.y) * camera.zoom;
+  const top = screenY(bounds.minY);
+  const bottom = screenY(bounds.maxY);
+  const fits = bottom - top <= coveredFrom;
+  const centre = (top + bottom) / 2;
+  if (fits ? top >= 0 && bottom <= coveredFrom : centre >= 0 && centre <= coveredFrom) return null;
+  return { x: camera.x, y: camera.y + (centre - coveredFrom / 2) / camera.zoom };
 }
 
 export function zoomToFit(): void {
