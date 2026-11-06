@@ -117,7 +117,7 @@
 .reference-manager-btn.primary {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 .reference-manager-btn.primary:hover:not(:disabled) {
   background: var(--color-primary-dark);

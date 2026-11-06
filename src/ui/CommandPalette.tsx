@@ -161,6 +161,17 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       ?.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex, results]);
 
+  // On touch the search field isn't focused (above), so a hardware keyboard's
+  // Escape lands outside the palette and its own handler never hears it.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   const run = useCallback(
     (result: PaletteResult) => {
       onClose();

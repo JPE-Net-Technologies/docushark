@@ -9,7 +9,6 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react';
 import { Editor } from '@tiptap/core';
 
-vi.mock('../../tiptap/slashUi', () => ({ registerSlashUiHandler: () => () => {} }));
 vi.mock('../../services/SpellcheckService', () => ({
   SpellcheckService: {
     prepare: vi.fn(() => Promise.resolve(null)),

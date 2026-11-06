@@ -34,7 +34,6 @@ vi.mock('./TiptapEditorContext', () => ({
     state: { selection: {} },
   }),
 }));
-vi.mock('../tiptap/slashUi', () => ({ registerSlashUiHandler: () => () => {} }));
 
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 

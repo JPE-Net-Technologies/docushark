@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useState, useRef, useLayoutEffect } from
 import { NotebookPen } from 'lucide-react';
 import { useWhiteboardStore } from '../store/whiteboardStore';
 import { StickyNote } from './StickyNote';
+import { device } from '../platform/device';
 import { clampToViewport } from './contextMenuUtils';
 import { Icon } from './icons';
 import './Whiteboard.css';
@@ -276,7 +277,11 @@ export const Whiteboard: React.FC = () => {
             <div className="whiteboard-empty-state">
               <div className="whiteboard-empty-icon"><Icon icon={NotebookPen} size={48} /></div>
               <div className="whiteboard-empty-text">
-                Click <strong>+</strong> or double-click to add a note
+                {device.isTouch() ? (
+                  <>Tap <strong>+</strong> to add a note</>
+                ) : (
+                  <>Click <strong>+</strong> or double-click to add a note</>
+                )}
               </div>
             </div>
           )}

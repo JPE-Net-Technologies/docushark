@@ -6,11 +6,10 @@
  * marks and link, and keeps the caret (and the keyboard) in the editor when a
  * button is pressed.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react';
 import { Editor } from '@tiptap/core';
 
-vi.mock('../../tiptap/slashUi', () => ({ registerSlashUiHandler: () => () => {} }));
 
 import { extensions } from '../TiptapEditor';
 import { TiptapEditorProvider } from '../TiptapEditorContext';

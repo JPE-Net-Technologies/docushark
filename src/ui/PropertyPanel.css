@@ -699,7 +699,7 @@
 
 .rotation-unit-toggle button.active {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 /* Legacy styles for backwards compatibility */
