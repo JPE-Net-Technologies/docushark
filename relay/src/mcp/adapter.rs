@@ -1000,6 +1000,31 @@ mod tests {
         assert!(s.get("label").map(|v| v.is_null()).unwrap_or(true));
     }
 
+    #[test]
+    fn patch_keeps_fields_it_does_not_know() {
+        // The editor adds fields the relay has no use for, such as the style profile
+        // a shape is linked to. A patch leaves them, so agents can't strip them.
+        let d = make(DslKind::Rectangle, 0.0, 0.0);
+        let mut s = dsl_to_shape_json(&d, "r1");
+        s["styleProfileId"] = json!("default-green");
+        let patch = DslPatch {
+            x: Some(50.0),
+            style: Some(DslStyle {
+                fill: Some("#000001".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        apply_dsl_patch(&mut s, &patch);
+        assert_eq!(s["x"], 50.0);
+        assert_eq!(s["fill"], "#000001");
+        assert_eq!(s["styleProfileId"], "default-green");
+
+        // And it stays out of what agents read: it means nothing to them.
+        let read = shape_json_to_dsl(&s).expect("a rectangle reads back");
+        assert!(read.get("styleProfileId").is_none());
+    }
+
     // ---- JP-245: routed-path connector fields ----
 
     #[test]
