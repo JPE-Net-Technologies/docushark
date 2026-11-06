@@ -29,6 +29,12 @@ export interface DocumentActions {
   // CRUD operations
   addShape: (shape: Shape) => void;
   updateShape: (id: string, updates: Partial<Shape>) => void;
+  /**
+   * Put the whole of a shape in place, as the Y.Doc holds it (DSK-228). Unlike
+   * `updateShape` this can take a field away: there a shape is one value, so a field
+   * it has lost is simply not in it.
+   */
+  replaceShape: (shape: Shape) => void;
   deleteShape: (id: string) => void;
 
   // Batch operations
@@ -236,6 +242,16 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         }
         // Merge updates into shape
         Object.assign(shape, updates);
+      });
+    },
+
+    replaceShape: (shape: Shape) => {
+      set((state) => {
+        if (!state.shapes[shape.id]) {
+          console.warn(`Shape with id ${shape.id} not found`);
+          return;
+        }
+        state.shapes[shape.id] = shape;
       });
     },
 
