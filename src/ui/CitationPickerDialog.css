@@ -127,7 +127,7 @@
   border: 1px solid var(--color-primary);
   border-radius: 4px;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   cursor: pointer;
   font: inherit;
 }

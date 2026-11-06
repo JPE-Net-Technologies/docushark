@@ -10,7 +10,7 @@
  */
 
 /** Canonical online docs URL, used as the web/desktop-fallback target. */
-export const DOCS_URL = 'https://JPE-Net-Technologies.github.io/docushark/';
+export const DOCS_URL = 'https://docs.docushark.app/';
 
 export interface Opener {
   /**

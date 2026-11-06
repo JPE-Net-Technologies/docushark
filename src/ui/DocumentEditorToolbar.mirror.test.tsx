@@ -29,7 +29,6 @@ vi.mock('./TiptapEditorContext', () => ({
     view: { dom: h.dom },
   }),
 }));
-vi.mock('../tiptap/slashUi', () => ({ registerSlashUiHandler: () => () => {} }));
 
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { syncedLabel } from './integrations/MirrorBanner';

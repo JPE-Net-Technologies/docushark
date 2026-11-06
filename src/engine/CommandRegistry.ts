@@ -287,6 +287,9 @@ export function createIconShapeAtCenter(iconId: string): void {
 // ---------------------------------------------------------------------------
 // All commands
 // ---------------------------------------------------------------------------
+/** Adding a shape to a canvas nobody can see only looks like nothing happened. */
+const canvasOnScreen = () => isRegionShown('canvas');
+
 function buildCommands(): Command[] {
   return [
     // --- Tools (activate draw mode) --- dispatched by ToolManager (scope 'reserved').
@@ -299,11 +302,11 @@ function buildCommands(): Command[] {
     { id: 'tool.pan', icon: Hand, label: 'Pan (Hand) tool', category: 'Tools', keys: 'H', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('pan') },
 
     // --- Add shape (instant create at viewport center) ---
-    { id: 'add.rectangle', icon: SquarePlus, label: 'Add rectangle', category: 'Editing', execute: () => createShapeAtCenter('rectangle') },
-    { id: 'add.ellipse', icon: CirclePlus, label: 'Add ellipse', category: 'Editing', execute: () => createShapeAtCenter('ellipse') },
-    { id: 'add.text', icon: TypeOutline, label: 'Add text', category: 'Editing', execute: () => createShapeAtCenter('text') },
-    { id: 'add.line', icon: Minus, label: 'Add line', category: 'Editing', execute: () => createShapeAtCenter('line') },
-    { id: 'add.connector', icon: Waypoints, label: 'Add connector', category: 'Editing', execute: () => createShapeAtCenter('connector') },
+    { id: 'add.rectangle', icon: SquarePlus, label: 'Add rectangle', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('rectangle') },
+    { id: 'add.ellipse', icon: CirclePlus, label: 'Add ellipse', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('ellipse') },
+    { id: 'add.text', icon: TypeOutline, label: 'Add text', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('text') },
+    { id: 'add.line', icon: Minus, label: 'Add line', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('line') },
+    { id: 'add.connector', icon: Waypoints, label: 'Add connector', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('connector') },
 
     // --- Import ---
     {
