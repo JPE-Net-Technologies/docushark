@@ -5,7 +5,7 @@ import {
   shapeExists,
 } from './documentStore';
 import { getProvenance } from './writeProvenance';
-import { RectangleShape, type ConnectorShape, type AnchorPosition, DEFAULT_CONNECTOR } from '../shapes/Shape';
+import { RectangleShape, type Shape, type ConnectorShape, type AnchorPosition, DEFAULT_CONNECTOR } from '../shapes/Shape';
 import '../shapes/Rectangle'; // registers the handler computeAutoLayout reads for sizing
 
 /**
@@ -515,14 +515,86 @@ describe('Document Store', () => {
       expect(useDocumentStore.getState().shapeOrder).toEqual(['b', 'a']);
     });
 
-    it('still rejects a genuinely partial order', () => {
+    it('keeps drawing a shape a partial order leaves out', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' }), createTestRect({ id: 'c' })]);
+
+      store.reorderShapes(['c', 'c', 'a']);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['c', 'a', 'b']);
+    });
+  });
+
+  describe('reorderShapes and groups (DSK-221)', () => {
+    const group = (id: string, childIds: string[]) =>
+      ({ ...createTestRect({ id }), type: 'group', childIds }) as unknown as Shape;
+
+    it('takes in shapes that were not in the order, such as a dissolved group\'s children', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' }), createTestRect({ id: 'c' })]);
+      useDocumentStore.setState({ shapeOrder: ['a'] });
+
+      store.reorderShapes(['c', 'a', 'b']);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['c', 'a', 'b']);
+    });
+
+    it('takes out a group\'s children, which the group draws', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' }), group('g', ['a'])]);
+
+      store.reorderShapes(['g', 'a', 'b']);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['g', 'b']);
+    });
+
+    it('keeps what an order leaves out in its present stacking', () => {
+      const store = useDocumentStore.getState();
+      store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' }), createTestRect({ id: 'c' })]);
+      useDocumentStore.setState({ shapeOrder: ['b', 'a', 'c'] });
+
+      store.reorderShapes(['c']);
+
+      expect(useDocumentStore.getState().shapeOrder).toEqual(['c', 'b', 'a']);
+    });
+
+    it('leaves the state alone when the order is already right', () => {
       const store = useDocumentStore.getState();
       store.addShapes([createTestRect({ id: 'a' }), createTestRect({ id: 'b' })]);
+      const before = useDocumentStore.getState().shapeOrder;
 
-      // Only one of two distinct shapes — not a permutation, so ignored.
-      store.reorderShapes(['a', 'a']);
+      store.reorderShapes(['a', 'b']);
 
-      expect(useDocumentStore.getState().shapeOrder).toEqual(['a', 'b']);
+      expect(useDocumentStore.getState().shapeOrder).toBe(before);
+    });
+  });
+
+  describe('groupShapes stacking', () => {
+    const order = () => useDocumentStore.getState().shapeOrder;
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+
+    beforeEach(() => {
+      useDocumentStore.getState().addShapes(ids.map((id) => createTestRect({ id })));
+    });
+
+    it('puts the group where its top child was, below what was above the children', () => {
+      useDocumentStore.getState().groupShapes(['a', 'b'], 'g');
+      expect(order()).toEqual(['g', 'c', 'd', 'e']);
+    });
+
+    it('keeps it between the shapes either side', () => {
+      useDocumentStore.getState().groupShapes(['b', 'c'], 'g');
+      expect(order()).toEqual(['a', 'g', 'd', 'e']);
+    });
+
+    it('rises to the top child when the children are apart', () => {
+      useDocumentStore.getState().groupShapes(['a', 'd'], 'g');
+      expect(order()).toEqual(['b', 'c', 'g', 'e']);
+    });
+
+    it('stays on top when the top child was', () => {
+      useDocumentStore.getState().groupShapes(['d', 'e'], 'g');
+      expect(order()).toEqual(['a', 'b', 'c', 'g']);
     });
   });
 
