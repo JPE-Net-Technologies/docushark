@@ -6,6 +6,7 @@
   padding: var(--space-2) 14px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
+  container-type: inline-size;
 }
 
 .style-row-label {
@@ -71,6 +72,67 @@
   white-space: nowrap;
 }
 
+.style-row-changes {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.style-row-reset {
+  flex: 0 0 auto;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.style-row-reset:hover {
+  color: var(--color-primary);
+  background: var(--bg-hover);
+}
+
+.style-row-reset:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+.style-row-reset-count {
+  display: none;
+  font-size: var(--font-size-xs);
+}
+
+/* Too narrow for the words: the count moves onto the button that clears it, so the
+   profile's name keeps the room. These stay below the rules they override. */
+@container (max-width: 279px) {
+  .style-row-changes {
+    display: none;
+  }
+
+  .style-row-reset {
+    width: auto;
+    gap: 2px;
+    padding: 0 var(--space-1);
+  }
+
+  .style-row-reset-count {
+    display: inline;
+  }
+}
+
+/* Narrower still, as far as the panel goes: the name matters more than its label. */
+@container (max-width: 209px) {
+  .style-row-label {
+    display: none;
+  }
+}
+
 /* While the gallery is open, what it covers can't take the keyboard either. It
    stays laid out, so the properties are where you left them when it closes. */
 .style-row[data-open] ~ *:not(.style-row-layer) {
@@ -105,6 +167,16 @@
 }
 
 /* A finger's worth, in the phone's sheet. */
-.property-panel--mobile .style-row-trigger {
+.property-panel--mobile .style-row-trigger,
+.property-panel--mobile .style-row-reset {
   min-height: 44px;
+}
+
+.property-panel--mobile .style-row-reset {
+  width: 44px;
+}
+
+/* In the phone's sheet the rows' resets need more than the side padding offers. */
+.property-panel--mobile .profile-prop-reset::after {
+  inset: -12px -10px -12px -6px;
 }

@@ -521,20 +521,70 @@ export function getProfileUpdates(profile: StyleProfile, shape: BaseShape): Shap
   return updates;
 }
 
+const CUSTOM_PREFIX = 'customProperties.';
+const differs = (a: unknown, b: unknown) => a !== b && JSON.stringify(a) !== JSON.stringify(b);
+
 /**
- * Whether a shape looks like a profile: applying it would change nothing. Shapes
- * don't record a profile, so this is how one is named (DSK-216).
+ * The properties where a shape differs from what a profile would make it (DSK-224).
+ * Style fields kept among a shape's custom data are named one by one, as the panel
+ * names them: `customProperties.headerBackground`.
  */
-export function shapeMatchesProfile(profile: StyleProfile, shape: BaseShape): boolean {
-  const updates = Object.entries(getProfileUpdates(profile, shape));
+export function profileDepartures(profile: StyleProfile, shape: BaseShape): string[] {
   const current = shape as unknown as Record<string, unknown>;
-  return updates.every(([key, value]) => current[key] === value || JSON.stringify(current[key]) === JSON.stringify(value));
+  return Object.entries(getProfileUpdates(profile, shape)).flatMap(([key, value]) => {
+    if (key !== 'customProperties') return differs(current[key], value) ? [key] : [];
+    const data = (current[key] ?? {}) as Record<string, unknown>;
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([field, fieldValue]) => differs(data[field], fieldValue))
+      .map(([field]) => `${CUSTOM_PREFIX}${field}`);
+  });
 }
 
-/** The first of `profiles` that every shape matches, if any does. */
-export function findSelectionProfile(shapes: BaseShape[], profiles: StyleProfile[]): StyleProfile | null {
-  if (shapes.length === 0) return null;
-  return profiles.find((profile) => shapes.every((shape) => shapeMatchesProfile(profile, shape))) ?? null;
+/** What returns one property, named as `profileDepartures` names it, to a profile's value. */
+export function getProfilePropertyUpdate(profile: StyleProfile, shape: BaseShape, name: string): ShapeStyleUpdate {
+  const updates = getProfileUpdates(profile, shape) as Record<string, unknown>;
+  if (!name.startsWith(CUSTOM_PREFIX)) return name in updates ? ({ [name]: updates[name] } as ShapeStyleUpdate) : {};
+  const field = name.slice(CUSTOM_PREFIX.length);
+  const target = updates['customProperties'] as Record<string, unknown> | undefined;
+  if (!target || !(field in target)) return {};
+  const data = (shape as unknown as Record<string, unknown>)['customProperties'] as Record<string, unknown> | undefined;
+  return { customProperties: { ...data, [field]: target[field] } } as ShapeStyleUpdate;
+}
+
+/** Whether a shape looks like a profile: applying it would change nothing. */
+export function shapeMatchesProfile(profile: StyleProfile, shape: BaseShape): boolean {
+  return profileDepartures(profile, shape).length === 0;
+}
+
+/**
+ * The profile a selection goes with, and the properties where it differs from it
+ * (DSK-224). A shape goes with the profile it was linked to when one was applied. A
+ * link to a profile this client doesn't have (a collaborator's own, or one since
+ * deleted) counts for nothing. Without a link, a shape goes with a profile it looks
+ * like: the first of `candidates`, so a hidden profile can be linked but not guessed.
+ * Shapes going different ways have no profile between them.
+ */
+export function resolveSelectionStyle(
+  shapes: BaseShape[],
+  profiles: StyleProfile[],
+  candidates: StyleProfile[] = profiles,
+): { profile: StyleProfile | null; departures: string[] } {
+  const linkOf = (shape: BaseShape) =>
+    shape.styleProfileId ? profiles.find((candidate) => candidate.id === shape.styleProfileId) : undefined;
+  const linked = shapes.map(linkOf).find((candidate) => candidate !== undefined);
+  const profile =
+    linked ??
+    (shapes.length > 0
+      ? candidates.find((candidate) => shapes.every((shape) => shapeMatchesProfile(candidate, shape)))
+      : undefined);
+  if (!profile) return { profile: null, departures: [] };
+
+  const together = shapes.every((shape) => {
+    const link = linkOf(shape);
+    return link ? link.id === profile.id : shapeMatchesProfile(profile, shape);
+  });
+  if (!together) return { profile: null, departures: [] };
+  return { profile, departures: Array.from(new Set(shapes.flatMap((shape) => profileDepartures(profile, shape)))) };
 }
 
 /**

@@ -3,8 +3,9 @@
  * profile is a property of the shape, like a paragraph style in a word processor,
  * and the gallery used to hold more than half the panel whatever was selected.
  *
- * The row names what the selection looks like. Shapes don't record a profile, so
- * that's the one they all match, or Custom, or Mixed when they differ.
+ * The row names the profile the selection goes with, and how many of its properties
+ * have changed since (DSK-224): the one a shape was linked to when it was applied,
+ * else one it looks like. Otherwise it says Custom, or Mixed when the shapes differ.
  *
  * Pressing it opens the gallery in the panel, under the row, covering the
  * properties until a profile is chosen. It stays in the panel rather than floating
@@ -14,18 +15,17 @@
  * close them, and the fly-out would collapse around them.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, RotateCcw } from 'lucide-react';
 import { useSessionStore } from '../../store/sessionStore';
-import { useSettingsStore } from '../../store/settingsStore';
-import { extractStyleFromShape, findSelectionProfile, useStyleProfileStore } from '../../store/styleProfileStore';
+import { extractStyleFromShape } from '../../store/styleProfileStore';
 import type { Shape } from '../../shapes/Shape';
 import { StyleProfilePanel, getPreviewStyle } from '../StyleProfilePanel';
+import { useProfileDepartures } from './ProfileDepartures';
 import { tip } from '../TooltipLayer';
 import './StyleRow.css';
 
 export function StyleRow({ selectedShapes }: { selectedShapes: Shape[] }) {
-  const profiles = useStyleProfileStore((state) => state.profiles);
-  const hideDefaults = useSettingsStore((state) => state.hideDefaultStyleProfiles);
+  const { profile, changes, reset } = useProfileDepartures();
   const selectedIds = useSessionStore((state) => state.selectedIds);
 
   const [open, setOpen] = useState(false);
@@ -34,16 +34,8 @@ export function StyleRow({ selectedShapes }: { selectedShapes: Shape[] }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
 
-  const profile = useMemo(() => {
-    const candidates = useStyleProfileStore
-      .getState()
-      .getSortedProfiles()
-      .filter((candidate) => !hideDefaults || !candidate.id.startsWith('default-'));
-    return findSelectionProfile(selectedShapes, candidates);
-    // `profiles` is what getSortedProfiles reads.
-  }, [selectedShapes, profiles, hideDefaults]);
-
   const name = profile?.name ?? (selectedShapes.length > 1 ? 'Mixed' : 'Custom');
+  const changesLabel = changes === 1 ? '1 change' : `${changes} changes`;
   const swatch = useMemo(() => {
     if (profile) return getPreviewStyle(profile.properties);
     const [only] = selectedShapes;
@@ -100,14 +92,33 @@ export function StyleRow({ selectedShapes }: { selectedShapes: Shape[] }) {
           className="style-row-trigger"
           aria-haspopup="dialog"
           aria-expanded={open}
-          aria-label={`Style profile: ${name}`}
+          aria-label={`Style profile: ${name}${changes > 0 ? `, ${changesLabel}` : ''}`}
           onClick={() => setOpen((value) => !value)}
-          {...tip('Style profile', undefined, 'A saved look you can apply to any shape. Choose one for this selection, or save its look as a new one.')}
+          {...tip(`Style profile: ${name}`, undefined, 'A saved look you can apply to any shape. Choose one for this selection, or save its look as a new one.')}
         >
           <span className="style-row-swatch" style={swatch} aria-hidden="true" />
           <span className="style-row-name">{name}</span>
+          {changes > 0 && <span className="style-row-changes">{changesLabel}</span>}
           <ChevronDown size={14} aria-hidden="true" />
         </button>
+        {changes > 0 && (
+          <button
+            type="button"
+            className="style-row-reset"
+            onClick={(event) => {
+              reset();
+              // The button goes with the changes. From the keyboard, stay on the row.
+              if (event.detail === 0) triggerRef.current?.focus();
+            }}
+            aria-label={`Reset all to ${name}`}
+            {...tip(`Reset all to ${name}`, undefined, 'Undo every change this selection has made to its style profile.')}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            <span className="style-row-reset-count" aria-hidden="true">
+              {changes}
+            </span>
+          </button>
+        )}
       </div>
       {open && (
         <div ref={layerRef} className="style-row-layer" style={{ top }} role="dialog" aria-label="Style profiles">

@@ -17,7 +17,9 @@ import {
   seedProfiles,
   migrateStyleProfiles,
   useStyleProfileStore,
-  findSelectionProfile,
+  getProfilePropertyUpdate,
+  profileDepartures,
+  resolveSelectionStyle,
   shapeMatchesProfile,
   type StyleProfile,
   type StyleProfileProperties,
@@ -432,17 +434,160 @@ describe('naming what a shape looks like (DSK-216)', () => {
 
   it('finds the first profile all shapes match', () => {
     const [first, second] = profiles();
-    expect(findSelectionProfile([styled(second!, 'a'), styled(second!, 'b')], profiles())?.id).toBe(second!.id);
-    expect(findSelectionProfile([styled(first!, 'a'), styled(second!, 'b')], profiles())).toBeNull();
+    expect(resolveSelectionStyle([styled(second!, 'a'), styled(second!, 'b')], profiles()).profile?.id).toBe(second!.id);
+    expect(resolveSelectionStyle([styled(first!, 'a'), styled(second!, 'b')], profiles()).profile).toBeNull();
   });
 
   it('prefers the earlier of two identical profiles', () => {
     const [first] = profiles();
     const twin = { ...first!, id: 'twin' };
-    expect(findSelectionProfile([styled(first!)], [twin, first!])?.id).toBe('twin');
+    expect(resolveSelectionStyle([styled(first!)], [twin, first!]).profile?.id).toBe('twin');
   });
 
   it('finds nothing for an empty selection', () => {
-    expect(findSelectionProfile([], profiles())).toBeNull();
+    expect(resolveSelectionStyle([], profiles())).toEqual({ profile: null, departures: [] });
+  });
+
+  describe('a shape linked to a profile (DSK-224)', () => {
+    const linked = (profile: StyleProfile, id = 'a', changes: Partial<RectangleShape> = {}): RectangleShape => ({
+      ...styled(profile, id),
+      styleProfileId: profile.id,
+      ...changes,
+    });
+
+    it('goes with it however it looks now, and says where it differs', () => {
+      const [first, second] = profiles();
+      const shape = linked(second!, 'a', { fill: first!.properties.fill!, strokeWidth: 99 });
+      const style = resolveSelectionStyle([shape], profiles());
+      expect(style.profile?.id).toBe(second!.id);
+      expect(style.departures.sort()).toEqual(['fill', 'strokeWidth']);
+    });
+
+    it('goes with it even when it looks exactly like an earlier profile', () => {
+      const [first, second] = profiles();
+      const shape = { ...styled(first!), styleProfileId: second!.id };
+      expect(resolveSelectionStyle([shape], profiles()).profile?.id).toBe(second!.id);
+    });
+
+    it('has nothing to report when it still looks like it', () => {
+      const [, second] = profiles();
+      expect(resolveSelectionStyle([linked(second!)], profiles()).departures).toEqual([]);
+    });
+
+    it('never counts the link itself as a change', () => {
+      const [, second] = profiles();
+      expect(profileDepartures(second!, linked(second!))).toEqual([]);
+    });
+
+    it('gathers what differs across a selection, naming each property once', () => {
+      const [, second] = profiles();
+      const shapes = [
+        linked(second!, 'a', { fill: '#000001' }),
+        linked(second!, 'b', { fill: '#000002', strokeWidth: 99 }),
+      ];
+      expect(resolveSelectionStyle(shapes, profiles()).departures.sort()).toEqual(['fill', 'strokeWidth']);
+    });
+
+    it('finds the link on any shape of the selection, not only the first', () => {
+      const [, second] = profiles();
+      const shapes = [styled(second!, 'a'), linked(second!, 'b', { fill: '#000001' })];
+      const style = resolveSelectionStyle(shapes, profiles());
+      expect(style.profile?.id).toBe(second!.id);
+      expect(style.departures).toEqual(['fill']);
+    });
+
+    it('has no profile when shapes are linked to different ones', () => {
+      const [first, second] = profiles();
+      expect(resolveSelectionStyle([linked(first!, 'a'), linked(second!, 'b')], profiles())).toEqual({
+        profile: null,
+        departures: [],
+      });
+    });
+
+    it('takes an unlinked shape along only if it looks like the profile', () => {
+      const [first, second] = profiles();
+      expect(resolveSelectionStyle([linked(second!, 'a'), styled(second!, 'b')], profiles()).profile?.id).toBe(second!.id);
+      expect(resolveSelectionStyle([linked(second!, 'a'), styled(first!, 'b')], profiles()).profile).toBeNull();
+    });
+
+    it('treats a link to a profile this client lacks as no link at all', () => {
+      const [, second] = profiles();
+      const gone = { ...styled(second!), styleProfileId: 'a-colleagues-own' };
+      expect(resolveSelectionStyle([gone], profiles()).profile?.id).toBe(second!.id);
+      const custom = { ...gone, fill: '#000001' };
+      expect(resolveSelectionStyle([custom], profiles()).profile).toBeNull();
+    });
+
+    it('names a hidden profile by its link, but never guesses one from a look', () => {
+      const [first, second] = profiles();
+      const visible = [first!];
+      expect(resolveSelectionStyle([styled(second!)], profiles(), visible).profile).toBeNull();
+      expect(resolveSelectionStyle([linked(second!)], profiles(), visible).profile?.id).toBe(second!.id);
+    });
+  });
+
+  describe('style kept among a shape\'s custom data', () => {
+    const asProfile = { headerBackground: '#aaaaaa', separatorColor: '#bbbbbb', separatorWidth: 2 };
+    const base = () => profiles()[0]!;
+    const swimlaneProfile = (): StyleProfile => ({
+      ...base(),
+      properties: { ...base().properties, ...asProfile },
+    });
+    const swimlane = (customProperties: Record<string, unknown>) => {
+      const plain = { ...shape(), type: 'activity-swimlane' } as unknown as BaseShape;
+      return { ...plain, ...getProfileUpdates(base(), plain), customProperties } as unknown as BaseShape;
+    };
+
+    it('names each field that differs, as the panel names it', () => {
+      const lane = swimlane({ ...asProfile, headerBackground: '#000001', separatorWidth: 9, lanes: ['one'] });
+      expect(profileDepartures(swimlaneProfile(), lane).sort()).toEqual([
+        'customProperties.headerBackground',
+        'customProperties.separatorWidth',
+      ]);
+    });
+
+    it('ignores the data around them', () => {
+      expect(profileDepartures(swimlaneProfile(), swimlane({ ...asProfile, lanes: ['one', 'two'] }))).toEqual([]);
+    });
+
+    it('counts a field the shape has never had', () => {
+      expect(profileDepartures(swimlaneProfile(), swimlane({ ...asProfile, separatorColor: undefined }))).toEqual([
+        'customProperties.separatorColor',
+      ]);
+    });
+
+    it('resets one field and keeps the rest of the data', () => {
+      const lane = swimlane({ ...asProfile, headerBackground: '#000001', separatorWidth: 9, lanes: ['one'] });
+      expect(getProfilePropertyUpdate(swimlaneProfile(), lane, 'customProperties.headerBackground')).toEqual({
+        customProperties: { ...asProfile, separatorWidth: 9, lanes: ['one'] },
+      });
+    });
+
+    it('resets a field for a shape with no custom data yet', () => {
+      expect(getProfilePropertyUpdate(swimlaneProfile(), swimlane({}), 'customProperties.separatorWidth')).toEqual({
+        customProperties: { separatorWidth: 2 },
+      });
+    });
+
+    it('leaves a field neither of them has', () => {
+      const lane = swimlane({ ...asProfile, lanes: ['one'] });
+      expect(getProfilePropertyUpdate(swimlaneProfile(), lane, 'customProperties.nothing')).toEqual({});
+    });
+
+    it('leaves a shape the profile sets no custom field on', () => {
+      expect(getProfilePropertyUpdate(base(), swimlane({ lanes: ['one'] }), 'customProperties.lanes')).toEqual({});
+    });
+  });
+
+  describe('resetting one property', () => {
+    it('gives back only that property', () => {
+      const [profile] = profiles();
+      expect(getProfilePropertyUpdate(profile!, shape(), 'fill')).toEqual({ fill: profile!.properties.fill });
+    });
+
+    it('gives nothing for one this profile would not set on this shape', () => {
+      const [profile] = profiles();
+      expect(getProfilePropertyUpdate(profile!, shape(), 'startArrow')).toEqual({});
+    });
   });
 });

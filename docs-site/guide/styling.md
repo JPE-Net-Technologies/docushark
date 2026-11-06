@@ -41,12 +41,18 @@ Think of a style profile less as a "saved preset" and more as a **branding kit**
 ### Applying a Style Profile
 
 1. Select one or more shapes
-2. Open **Style**, at the top of the Property Panel. It names the profile the selection matches, or says **Custom**, or **Mixed** when the shapes differ
+2. Open **Style**, at the top of the Property Panel. It names the selection's profile, or says **Custom**, or **Mixed** when the shapes differ
 3. Rest the pointer on a profile to preview it on the canvas, and choose one to apply it
 
 Type to search, and press `Enter` to apply the first match. The arrow keys move between profiles too.
 
 Because a profile can remember per-shape-type styling, applying the same kit across a mixed selection (rectangles, connectors, text) gives you one cohesive look in a single click, instead of restyling each shape type separately.
+
+### Seeing What's Changed
+
+A shape remembers the profile you applied. Change something afterwards and the **Style** row counts it, as in "Default Blue · 2 changes", and each changed property gets a dot. A collapsed section shows the dot on its header. Press the arrow at the end of a changed row to put that property back, or the one beside **Style** to reset them all. In a narrow panel, the count moves onto that button.
+
+Editing a profile doesn't restyle the shapes that use it. They show the difference as changes, and a reset picks up the new values.
 
 ### Managing Profiles
 
