@@ -470,8 +470,10 @@ export function DocumentEditorPanel({
       // flipped to the target page but its content hasn't been swapped into
       // the editor yet — saving here would write the old page's content
       // into the new page's slot).
+      // And never into another document's page with the same id (DSK-230).
       const pageId = lastActivePageRef.current;
-      if (editorRef.current && pageId && !isLoadingRef.current) {
+      const sameDocument = lastDocIdRef.current === usePersistenceStore.getState().currentDocumentId;
+      if (editorRef.current && pageId && !isLoadingRef.current && sameDocument) {
         const content = editorRef.current.getHTML();
         updatePageContent(pageId, content);
         const el = getScrollEl(editorRef.current);
