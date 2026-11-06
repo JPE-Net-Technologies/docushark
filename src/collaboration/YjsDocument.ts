@@ -27,6 +27,7 @@ import * as Y from 'yjs';
 import { yXmlFragmentToProseMirrorRootNode, updateYFragment } from 'y-prosemirror';
 import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
+import { resolveDrawOrder } from '../shapes/GroupHierarchy';
 import type { CSLItem, CitationStyle, ReferenceLibrary } from '../types/Citation';
 import type { Field, FieldLibrary } from '../types/Field';
 import type { PageMirrorMeta } from '../types/PageMirror';
@@ -299,10 +300,15 @@ export class YjsDocument {
     if (this.boundShapes && this.boundShapeOrder) {
       this.undoController.setActivePage(pageId, this.boundShapes, this.boundShapeOrder, this);
     }
-    return {
-      shapes: Array.from(this.getAllShapes().values()),
-      order: this.getShapeOrder(),
-    };
+    const shapes = this.getAllShapes();
+    const order = this.getShapeOrder();
+    // The store draws these anyway, and the next edit to the order writes them
+    // back: a load never writes to the shared document (DSK-221).
+    const { leftOut } = resolveDrawOrder(Object.fromEntries(shapes), order);
+    if (leftOut.length > 0) {
+      console.warn(`[YjsDocument] Page ${pageId} has shapes in no group and not in its order:`, leftOut);
+    }
+    return { shapes: Array.from(shapes.values()), order };
   }
 
   /**

@@ -30,6 +30,7 @@ import { useCollaborationStore } from './collaborationStore';
 import { healOrphanedProseFragments, synthesizeProsePageMeta } from './proseInvariant';
 import { pageMirrorEquals } from '../types/PageMirror';
 import type { YjsDocument, CanvasPageMeta } from './YjsDocument';
+import { isGroup } from '../shapes/Shape';
 
 /**
  * Adopt the relay's authoritative prose page LIST into `richTextPagesStore`
@@ -137,6 +138,13 @@ export function useCollaborationSync(): void {
         // Remove deleted shapes
         if (removed.length > 0) {
           store.deleteShapes(removed);
+        }
+
+        // What's at the top level may have changed. One transaction, an undo
+        // above all, can deliver the order before these shapes, when it named
+        // ones the store didn't have yet: read it again now they're here (DSK-221).
+        if (added.length > 0 || removed.length > 0 || updated.some(isGroup)) {
+          store.reorderShapes(yjsDoc.getShapeOrder());
         }
       });
     });

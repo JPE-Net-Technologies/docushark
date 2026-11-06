@@ -10,6 +10,42 @@
 import { Shape, GroupShape, isGroup } from './Shape';
 
 /**
+ * What a page draws at the top level, from an order that came from outside the
+ * store: a shared document or a snapshot (DSK-221).
+ *
+ * The order decides the stacking of what it names, but every shape is drawn
+ * exactly once. A group's children leave the order, because the group draws
+ * them. A shape the order leaves out joins at the top unless a group draws it,
+ * because nothing else would; `current` keeps those in their present order.
+ *
+ * @returns The order to draw, and the shapes the incoming order left out
+ */
+export function resolveDrawOrder(
+  shapes: Record<string, Shape>,
+  order: readonly string[],
+  current: readonly string[] = []
+): { order: string[]; leftOut: string[] } {
+  const drawnByGroup = new Set<string>();
+  for (const shape of Object.values(shapes)) {
+    if (isGroup(shape)) {
+      for (const id of shape.childIds) drawnByGroup.add(id);
+    }
+  }
+
+  const seen = new Set<string>();
+  const take = (ids: readonly string[]): string[] =>
+    ids.filter((id) => {
+      if (!shapes[id] || drawnByGroup.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+
+  const named = take(order);
+  const leftOut = take([...current, ...Object.keys(shapes)]);
+  return { order: [...named, ...leftOut], leftOut };
+}
+
+/**
  * Check if adding a shape to a target group would create a cycle.
  * A cycle occurs when:
  * 1. The target group is the same as the shape being moved

@@ -54,7 +54,25 @@ describe('documentStore.loadSnapshot integrity', () => {
     errSpy.mockRestore();
   });
 
-  it('does not flag shapes missing from shapeOrder (group children are normal)', () => {
+  const group = (id: string, childIds: string[]) =>
+    ({ ...rect(id), type: 'group', childIds }) as unknown as RectangleShape;
+
+  it('does not flag a group\'s children missing from shapeOrder (they are normal)', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    useDocumentStore.getState().loadSnapshot({
+      shapes: { a: rect('a'), b: rect('b'), g: group('g', ['b']) },
+      shapeOrder: ['a', 'g'],
+      version: 1,
+    });
+    const integrity = useDocumentStore.getState().getLastSnapshotIntegrity();
+    expect(integrity.ok).toBe(true);
+    expect(integrity.unorderedShapes).toEqual([]);
+    expect(useDocumentStore.getState().shapeOrder).toEqual(['a', 'g']);
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it('draws a shape in no group and not in shapeOrder, logs it, and still allows a save (DSK-221)', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     useDocumentStore.getState().loadSnapshot({
       shapes: { a: rect('a'), b: rect('b') },
@@ -63,7 +81,18 @@ describe('documentStore.loadSnapshot integrity', () => {
     });
     const integrity = useDocumentStore.getState().getLastSnapshotIntegrity();
     expect(integrity.ok).toBe(true);
-    expect(errSpy).not.toHaveBeenCalled();
+    expect(integrity.unorderedShapes).toEqual(['b']);
+    expect(useDocumentStore.getState().shapeOrder).toEqual(['a', 'b']);
+    expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+
+  it('takes a group\'s children out of shapeOrder, which would draw them twice (DSK-221)', () => {
+    useDocumentStore.getState().loadSnapshot({
+      shapes: { a: rect('a'), b: rect('b'), g: group('g', ['b']) },
+      shapeOrder: ['a', 'b', 'g'],
+      version: 1,
+    });
+    expect(useDocumentStore.getState().shapeOrder).toEqual(['a', 'g']);
   });
 });

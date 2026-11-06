@@ -231,6 +231,7 @@ Shape library tiers: basic shapes (Rectangle, Ellipse, Line, Text, Connector, Gr
 - **State mutations**: All document mutations through Immer. Never mutate state directly. DocumentStore is the single source of truth.
 - **Canvas rendering**: React handles UI chrome only. Canvas rendering uses requestAnimationFrame in Engine core. Apply camera transform once per frame. Implement viewport culling.
 - **Hit testing**: Use SpatialIndex (RBush) for candidates, then precise hit test. Respects z-order (`shapeOrder` array). Rebuild spatial index when shapes change.
+- **Top-level order**: `shapeOrder` holds only what's drawn at the top level; a group's children are drawn through its `childIds`. An order from outside the store (a shared document, a snapshot) goes through `resolveDrawOrder`, which draws every shape exactly once. Don't compare an incoming order with the current one: undoing a group legitimately adds to it.
 - **Input handling**: InputHandler normalizes mouse/touch/pen. Handle pointer capture on down, release on up. Prevent default on wheel events.
 
 ## MCP (Model Context Protocol) Integration
