@@ -210,6 +210,8 @@
 .flyout-panel .property-panel {
   min-width: 0;
   max-width: none;
-  width: 100%;
+  /* !important over the panel's inline width: that ignores the wrapper's borders,
+     and the 2px it overflowed by raised a scrollbar under the whole panel. */
+  width: 100% !important;
   border-left: none;
 }

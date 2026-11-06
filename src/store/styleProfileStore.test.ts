@@ -17,6 +17,8 @@ import {
   seedProfiles,
   migrateStyleProfiles,
   useStyleProfileStore,
+  findSelectionProfile,
+  shapeMatchesProfile,
   type StyleProfile,
   type StyleProfileProperties,
 } from './styleProfileStore';
@@ -380,5 +382,67 @@ describe('getProfileUpdates — icon coverage (JP-7)', () => {
     expect(updates.iconId).toBeUndefined();
     expect(updates.iconDisplayMode).toBeUndefined();
     expect(updates.iconBadge).toBeUndefined();
+  });
+});
+
+describe('naming what a shape looks like (DSK-216)', () => {
+  const profiles = () => useStyleProfileStore.getState().profiles;
+  const shape = (id = 'a'): RectangleShape => ({
+    id,
+    type: 'rectangle',
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 50,
+    rotation: 0,
+    opacity: 1,
+    locked: false,
+    visible: true,
+    fill: '#123456',
+    stroke: '#654321',
+    strokeWidth: 3,
+    cornerRadius: 1,
+  });
+  const styled = (profile: StyleProfile, id = 'a') =>
+    ({ ...shape(id), ...getProfileUpdates(profile, shape(id)) }) as RectangleShape;
+
+  it('matches a shape to any profile applied to it', () => {
+    expect(profiles().length).toBeGreaterThan(0);
+    for (const profile of profiles()) {
+      expect(shapeMatchesProfile(profile, styled(profile)), profile.name).toBe(true);
+    }
+  });
+
+  it('stops matching when a value departs', () => {
+    const [profile] = profiles();
+    expect(shapeMatchesProfile(profile!, { ...styled(profile!), fill: '#000001' })).toBe(false);
+    expect(shapeMatchesProfile(profile!, { ...styled(profile!), strokeWidth: 99 })).toBe(false);
+  });
+
+  it('compares objects by value, such as a list of icons', () => {
+    const icons: IconConfig[] = [{ id: 'one', iconId: 'star', size: 20, position: 'center' } as IconConfig];
+    const [base] = profiles();
+    const profile = { ...base!, properties: { ...base!.properties, icons } };
+    const applied = { ...shape(), ...getProfileUpdates(profile, shape()) };
+    const copy = JSON.parse(JSON.stringify(applied)) as RectangleShape;
+    expect(copy).not.toBe(applied);
+    expect(shapeMatchesProfile(profile, copy)).toBe(true);
+    expect(shapeMatchesProfile(profile, { ...copy, icons: [] } as RectangleShape)).toBe(false);
+  });
+
+  it('finds the first profile all shapes match', () => {
+    const [first, second] = profiles();
+    expect(findSelectionProfile([styled(second!, 'a'), styled(second!, 'b')], profiles())?.id).toBe(second!.id);
+    expect(findSelectionProfile([styled(first!, 'a'), styled(second!, 'b')], profiles())).toBeNull();
+  });
+
+  it('prefers the earlier of two identical profiles', () => {
+    const [first] = profiles();
+    const twin = { ...first!, id: 'twin' };
+    expect(findSelectionProfile([styled(first!)], [twin, first!])?.id).toBe('twin');
+  });
+
+  it('finds nothing for an empty selection', () => {
+    expect(findSelectionProfile([], profiles())).toBeNull();
   });
 });

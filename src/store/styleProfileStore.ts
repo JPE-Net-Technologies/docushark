@@ -522,6 +522,22 @@ export function getProfileUpdates(profile: StyleProfile, shape: BaseShape): Shap
 }
 
 /**
+ * Whether a shape looks like a profile: applying it would change nothing. Shapes
+ * don't record a profile, so this is how one is named (DSK-216).
+ */
+export function shapeMatchesProfile(profile: StyleProfile, shape: BaseShape): boolean {
+  const updates = Object.entries(getProfileUpdates(profile, shape));
+  const current = shape as unknown as Record<string, unknown>;
+  return updates.every(([key, value]) => current[key] === value || JSON.stringify(current[key]) === JSON.stringify(value));
+}
+
+/** The first of `profiles` that every shape matches, if any does. */
+export function findSelectionProfile(shapes: BaseShape[], profiles: StyleProfile[]): StyleProfile | null {
+  if (shapes.length === 0) return null;
+  return profiles.find((profile) => shapes.every((shape) => shapeMatchesProfile(profile, shape))) ?? null;
+}
+
+/**
  * Get human-readable list of properties that apply to a shape type.
  * Useful for UI to show what a profile will change.
  */
