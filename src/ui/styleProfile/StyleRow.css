@@ -1,0 +1,110 @@
+/* The style row (DSK-216): a selection's profile, as one row of the panel. */
+.style-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.style-row-label {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.style-row-trigger {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.style-row-trigger:hover {
+  background: var(--bg-hover);
+}
+
+.style-row-trigger[aria-expanded='true'] {
+  border-color: var(--color-primary);
+}
+
+.style-row-trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+.style-row-trigger svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.style-row-swatch {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border-radius: 3px;
+}
+
+/* Mixed and a shape with no fill: no single colour to show. */
+.style-row-swatch:not([style]) {
+  border: 1px dashed var(--text-muted);
+}
+
+.style-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* While the gallery is open, what it covers can't take the keyboard either. It
+   stays laid out, so the properties are where you left them when it closes. */
+.style-row[data-open] ~ *:not(.style-row-layer) {
+  visibility: hidden;
+}
+
+/* `top` comes from the component: everything below the row. */
+.style-row-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-primary);
+}
+
+.style-row-layer .style-profile-panel {
+  border-top: none;
+}
+
+/* No title here: the row above says what this is. */
+.style-row-layer .style-profile-header-actions {
+  margin-left: auto;
+}
+
+/* The profile the selection already looks like. */
+.style-profile-grid-item.current,
+.style-profile-item.current {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+/* A finger's worth, in the phone's sheet. */
+.property-panel--mobile .style-row-trigger {
+  min-height: 44px;
+}

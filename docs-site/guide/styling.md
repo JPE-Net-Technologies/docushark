@@ -35,14 +35,16 @@ Think of a style profile less as a "saved preset" and more as a **branding kit**
 ### Saving a Style Profile
 
 1. Style a shape exactly how you want it (fill, stroke, font, shadow, etc.)
-2. Right-click the shape → **Save Style**
+2. In the Property Panel, open **Style** and press **+**
 3. Give your profile a name — something like your team or product name works well, since this is the kit you'll reuse everywhere
 
 ### Applying a Style Profile
 
 1. Select one or more shapes
-2. Open the **Style** dropdown in the Property Panel
-3. Choose a saved profile — all the styling applies instantly
+2. Open **Style**, at the top of the Property Panel. It names the profile the selection matches, or says **Custom**, or **Mixed** when the shapes differ
+3. Rest the pointer on a profile to preview it on the canvas, and choose one to apply it
+
+Type to search, and press `Enter` to apply the first match. The arrow keys move between profiles too.
 
 Because a profile can remember per-shape-type styling, applying the same kit across a mixed selection (rectangles, connectors, text) gives you one cohesive look in a single click, instead of restyling each shape type separately.
 

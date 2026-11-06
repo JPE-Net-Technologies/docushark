@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Search, LayoutGrid, List, Plus, X, RefreshCw } from 'lucide-react';
 import { getSelectedShapes, useSessionStore } from '../store/sessionStore';
 import { useStyleProfileStore, type StyleProfile } from '../store/styleProfileStore';
 import { useCollectionStore, isWorkspaceCollection } from '../store/collectionStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { device } from '../platform/device';
 import { clampToViewport, MENU_SIZE_ESTIMATES } from './contextMenuUtils';
 import { useProfileActions } from './styleProfile/useProfileActions';
 import { ProfileCard, type MenuAnchor } from './styleProfile/ProfileCard';
@@ -17,19 +18,34 @@ interface ContextMenuState {
   profileId: string;
 }
 
-/** Preview swatch style for a profile (the universal dimensions). */
-function getPreviewStyle(profile: StyleProfile): CSSProperties {
+/** Preview swatch style for a profile's properties (the universal dimensions). */
+export function getPreviewStyle(properties: StyleProfile['properties']): CSSProperties {
   return {
-    backgroundColor: profile.properties.fill || 'transparent',
-    borderColor: profile.properties.stroke || 'transparent',
-    borderWidth: Math.min(profile.properties.strokeWidth, 3),
+    backgroundColor: properties.fill || 'transparent',
+    borderColor: properties.stroke || 'transparent',
+    borderWidth: Math.min(properties.strokeWidth, 3),
     borderStyle: 'solid',
-    opacity: profile.properties.opacity,
-    borderRadius: profile.properties.cornerRadius || 0,
+    opacity: properties.opacity,
+    borderRadius: properties.cornerRadius || 0,
   };
 }
 
-export function StyleProfilePanel() {
+/** The view you chose: the gallery unmounts whenever the style row closes it. */
+let rememberedView: ViewMode = 'grid';
+
+/** A card's own control, in either view. */
+const CARD_SELECTOR = '.style-profile-grid-apply, .style-profile-apply';
+
+export interface StyleProfilePanelProps {
+  /** Opened to choose a profile (the style row, DSK-216): search is ready at once. */
+  picker?: boolean;
+  /** A profile was applied to the selection. */
+  onApplied?: () => void;
+  /** The profile the selection already looks like, marked among the cards. */
+  currentProfileId?: string | undefined;
+}
+
+export function StyleProfilePanel({ picker = false, onApplied, currentProfileId }: StyleProfilePanelProps = {}) {
   const profilesRaw = useStyleProfileStore((state) => state.profiles);
   const hideDefaultStyleProfiles = useSettingsStore((state) => state.hideDefaultStyleProfiles);
 
@@ -39,14 +55,18 @@ export function StyleProfilePanel() {
   const actions = useProfileActions(selectedShapes);
   const { hasSelection, endPreview } = actions;
 
-  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [viewMode, setViewModeState] = useState<ViewMode>(rememberedView);
+  const setViewMode = useCallback((mode: ViewMode) => {
+    rememberedView = mode;
+    setViewModeState(mode);
+  }, []);
   const [isCreating, setIsCreating] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
+  const [isSearching, setIsSearching] = useState(picker);
   const searchInputRef = useRef<HTMLInputElement>(null);
   /** Collection filter (JP-301). `null` = show everything. */
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
@@ -84,8 +104,9 @@ export function StyleProfilePanel() {
   );
 
   useEffect(() => {
-    if (isSearching && searchInputRef.current) searchInputRef.current.focus();
-  }, [isSearching]);
+    // On touch that would pop the keyboard over the cards you came to tap.
+    if (isSearching && searchInputRef.current && !(picker && device.isTouch())) searchInputRef.current.focus();
+  }, [isSearching, picker]);
 
   // Clear any live preview when the selection changes or the panel unmounts.
   useEffect(() => endPreview, [selectedIds, endPreview]);
@@ -120,6 +141,37 @@ export function StyleProfilePanel() {
     setViewMode('list');
     setEditingId(profile.id);
     setEditingName(profile.name);
+  }, [setViewMode]);
+
+  const apply = useCallback(
+    (profile: StyleProfile) => {
+      actions.applyProfile(profile);
+      onApplied?.();
+    },
+    [actions, onApplied],
+  );
+
+  // The arrow keys walk the cards, so the keyboard needn't tab through them all.
+  const handleCardKeys = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const cards = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(CARD_SELECTOR));
+    const index = cards.indexOf(document.activeElement as HTMLElement);
+    if (index === -1) return;
+    const firstRowTop = cards[0]!.getBoundingClientRect().top;
+    const columns = cards.filter((card) => card.getBoundingClientRect().top === firstRowTop).length;
+    const steps: Record<string, number> = {
+      ArrowRight: index + 1,
+      ArrowLeft: index - 1,
+      ArrowDown: index + columns,
+      ArrowUp: index - columns,
+      Home: 0,
+      End: cards.length - 1,
+    };
+    const next = steps[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    // Above the first row is the search field, when there is one.
+    if (next < 0) searchInputRef.current?.focus();
+    else cards[Math.min(next, cards.length - 1)]!.focus();
   }, []);
 
   const commitEdit = useCallback(() => {
@@ -156,15 +208,18 @@ export function StyleProfilePanel() {
   return (
     <div className="style-profile-panel">
       <div className="style-profile-header">
-        <span>Style Profiles</span>
+        {/* The style row above the picker already says what this is. */}
+        {!picker && <span>Style Profiles</span>}
         <div className="style-profile-header-actions">
-          <button
-            className={`style-profile-view-btn ${isSearching || searchQuery ? 'active' : ''}`}
-            onClick={() => setIsSearching((v) => !v)}
-            title="Search profiles"
-          >
-            <Search size={15} />
-          </button>
+          {!picker && (
+            <button
+              className={`style-profile-view-btn ${isSearching || searchQuery ? 'active' : ''}`}
+              onClick={() => setIsSearching((v) => !v)}
+              title="Search profiles"
+            >
+              <Search size={15} />
+            </button>
+          )}
           <button
             className={`style-profile-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
             onClick={() => setViewMode('grid')}
@@ -212,8 +267,17 @@ export function StyleProfilePanel() {
             className="style-profile-search-input"
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
-                setIsSearching(false);
+                // In the picker the field stays, and an empty one lets the
+                // Escape through to close the gallery.
+                if (picker && !searchQuery) return;
+                e.stopPropagation();
+                setIsSearching(picker);
                 setSearchQuery('');
+              } else if (picker && e.key === 'Enter' && visible[0]) {
+                apply(visible[0]);
+              } else if (picker && e.key === 'ArrowDown') {
+                e.preventDefault();
+                e.currentTarget.closest('.style-profile-panel')?.querySelector<HTMLElement>(CARD_SELECTOR)?.focus();
               }
             }}
           />
@@ -293,18 +357,19 @@ export function StyleProfilePanel() {
         </div>
       )}
 
-      <div className={`style-profile-container ${viewMode}`}>
+      <div className={`style-profile-container ${viewMode}`} onKeyDown={handleCardKeys}>
         {visible.map((profile) => (
           <ProfileCard
             key={profile.id}
             profile={profile}
             viewMode={viewMode}
             hasSelection={hasSelection}
+            isCurrent={profile.id === currentProfileId}
             isEditing={editingId === profile.id}
             editingName={editingName}
-            previewStyle={getPreviewStyle(profile)}
+            previewStyle={getPreviewStyle(profile.properties)}
             titleText={titleFor(profile)}
-            onApply={() => actions.applyProfile(profile)}
+            onApply={() => apply(profile)}
             onToggleFavorite={() => actions.toggleFavorite(profile.id)}
             onOpenMenu={(anchor) => openMenu(profile.id, anchor)}
             onStartEdit={() => {
@@ -341,8 +406,8 @@ export function StyleProfilePanel() {
             <button
               className="style-profile-context-menu-item"
               onClick={() => {
-                actions.applyProfile(menuProfile);
                 closeMenu();
+                apply(menuProfile);
               }}
             >
               Apply Style

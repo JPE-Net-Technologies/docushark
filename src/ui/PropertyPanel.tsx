@@ -41,6 +41,7 @@ import { PropertySection } from './PropertySection';
 import { CompactColorInput } from './CompactColorInput';
 import { AlignmentPanel } from './AlignmentPanel';
 import { StyleProfilePanel } from './StyleProfilePanel';
+import { StyleRow } from './styleProfile/StyleRow';
 import { IconPicker } from './IconPicker';
 import { NumberInput } from './NumberInput';
 import { PatternPicker } from './PatternPicker';
@@ -1756,7 +1757,11 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
       />
       <div className="property-panel-header">
         <span className="property-panel-header-title">
-          Properties{isMultiple && ` (${selectedShapes.length})`}
+          {isMultiple
+            ? `${selectedShapes.length} shapes`
+            : isGroupSelected
+              ? `Group (${(shape as GroupShape).childIds.length})`
+              : (shapeMetadata?.name || shape.type.charAt(0).toUpperCase() + shape.type.slice(1))}
         </span>
         <button
           type="button"
@@ -1768,6 +1773,8 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           {allExpanded ? <ChevronsDownUp size={15} strokeWidth={2} /> : <ChevronsUpDown size={15} strokeWidth={2} />}
         </button>
       </div>
+
+      <StyleRow selectedShapes={selectedShapes} />
 
       {/* Alignment Panel for multi-selection */}
       <AlignmentPanel />
@@ -1785,11 +1792,6 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
       )}
 
       <div className="property-panel-content" ref={contentRef}>
-        {/* Shape Type Badge */}
-        <div className="property-type-badge">
-          {isGroupSelected ? 'Group' : (shapeMetadata?.name || shape.type)}
-          {isGroupSelected && ` (${(shape as GroupShape).childIds.length})`}
-        </div>
 
         {/* Library shape properties - metadata-driven */}
         {isLibraryShapeSelected && shapeMetadata && (
@@ -3140,9 +3142,6 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           <FileShapeProperties shape={shape} updateShape={updateShape} />
         )}
       </div>
-
-      {/* Style Profiles */}
-      <StyleProfilePanel />
     </div>
   );
 }

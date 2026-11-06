@@ -41,6 +41,8 @@ interface ProfileCardProps {
   profile: StyleProfile;
   viewMode: 'grid' | 'list';
   hasSelection: boolean;
+  /** The selection already looks like this profile. */
+  isCurrent?: boolean;
   isEditing: boolean;
   editingName: string;
   /** CSS fallback used when the shape registry can't draw this profile. */
@@ -105,7 +107,7 @@ function ProfileSwatch({
 
 export function ProfileCard(props: ProfileCardProps) {
   const {
-    profile, viewMode, hasSelection, isEditing, editingName, previewStyle, titleText,
+    profile, viewMode, hasSelection, isCurrent = false, isEditing, editingName, previewStyle, titleText,
     onApply, onToggleFavorite, onOpenMenu, onStartEdit, onEditNameChange,
     onCommitEdit, onCancelEdit, onPreviewEnter, onPreviewLeave, onUpdateFromShape,
   } = props;
@@ -186,7 +188,7 @@ export function ProfileCard(props: ProfileCardProps) {
   if (viewMode === 'grid') {
     return (
       <div
-        className={`style-profile-grid-item ${!hasSelection ? 'disabled' : ''} ${profile.favorite ? 'favorite' : ''}`}
+        className={`style-profile-grid-item ${!hasSelection ? 'disabled' : ''} ${profile.favorite ? 'favorite' : ''} ${isCurrent ? 'current' : ''}`}
         onContextMenu={handleContextMenu}
         onMouseEnter={() => hasSelection && onPreviewEnter()}
         onMouseLeave={onPreviewLeave}
@@ -194,6 +196,7 @@ export function ProfileCard(props: ProfileCardProps) {
         <button
           type="button"
           className="style-profile-grid-apply"
+          aria-current={isCurrent || undefined}
           onClick={apply}
           onFocus={() => hasSelection && onPreviewEnter()}
           onBlur={onPreviewLeave}
@@ -236,7 +239,7 @@ export function ProfileCard(props: ProfileCardProps) {
 
   return (
     <div
-      className={`style-profile-item ${!hasSelection ? 'disabled' : ''}`}
+      className={`style-profile-item ${!hasSelection ? 'disabled' : ''} ${isCurrent ? 'current' : ''}`}
       onContextMenu={handleContextMenu}
       onMouseEnter={() => hasSelection && onPreviewEnter()}
       onMouseLeave={onPreviewLeave}
@@ -244,6 +247,7 @@ export function ProfileCard(props: ProfileCardProps) {
       <button
         type="button"
         className="style-profile-apply"
+        aria-current={isCurrent || undefined}
         onClick={apply}
         onFocus={() => hasSelection && onPreviewEnter()}
         onBlur={onPreviewLeave}
