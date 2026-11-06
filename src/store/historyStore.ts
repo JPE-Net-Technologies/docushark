@@ -277,7 +277,7 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
 
     // Debounce rapid pushes
     const now = Date.now();
-    if (now - pageHist.lastPushTime < DEBOUNCE_TIME) {
+    if (Math.abs(now - pageHist.lastPushTime) < DEBOUNCE_TIME) {
       return;
     }
 
@@ -557,6 +557,20 @@ export const useHistoryStore = create<HistoryState & HistoryActions>()((set, get
  */
 export function pushHistory(description?: string): void {
   useHistoryStore.getState().push(description);
+}
+
+const EDIT_PAUSE_MS = 500;
+let lastEditAt = Number.NEGATIVE_INFINITY;
+
+/**
+ * Record an edit that may arrive as a stream, such as a dragged colour or a slider:
+ * one undo step however many changes there are, until they pause (DSK-229).
+ */
+export function pushEditHistory(description?: string): void {
+  const now = Date.now();
+  // Either way: a clock set back mustn't stop edits being recorded until it catches up.
+  if (Math.abs(now - lastEditAt) > EDIT_PAUSE_MS) pushHistory(description);
+  lastEditAt = now;
 }
 
 /**
