@@ -694,3 +694,29 @@ describe('Document Store', () => {
     });
   });
 });
+
+describe('replaceShape (DSK-228)', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().clear();
+    useDocumentStore.getState().addShape(createTestRect({ label: 'Old' }));
+  });
+
+  it('takes away a field the new value does not have, where updateShape would keep it', () => {
+    useDocumentStore.getState().replaceShape(createTestRect({ fill: '#222222' }));
+    const shape = useDocumentStore.getState().shapes['test-rect']!;
+    expect(shape.fill).toBe('#222222');
+    expect(shape).not.toHaveProperty('label');
+  });
+
+  it('leaves the order alone', () => {
+    useDocumentStore.getState().addShape(createTestRect({ id: 'second' }));
+    useDocumentStore.getState().replaceShape(createTestRect({ fill: '#222222' }));
+    expect(useDocumentStore.getState().shapeOrder).toEqual(['test-rect', 'second']);
+  });
+
+  it('adds nothing for a shape the store does not have', () => {
+    useDocumentStore.getState().replaceShape(createTestRect({ id: 'never-added' }));
+    expect(useDocumentStore.getState().shapes['never-added']).toBeUndefined();
+    expect(useDocumentStore.getState().shapeOrder).toEqual(['test-rect']);
+  });
+});

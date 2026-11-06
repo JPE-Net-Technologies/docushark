@@ -130,9 +130,11 @@ export function useCollaborationSync(): void {
           store.addShapes(added);
         }
 
-        // Update existing shapes
+        // Update existing shapes: whole, not merged. A field this one has lost (an
+        // undo, or a colleague clearing it) would otherwise stay here, and go back
+        // into the document with the next edit (DSK-228).
         for (const shape of updated) {
-          store.updateShape(shape.id, shape);
+          store.replaceShape(shape);
         }
 
         // Remove deleted shapes
