@@ -13,13 +13,13 @@ import {
   CircleHelp,
   Settings,
   FolderOpen,
-  MoreHorizontal,
   Wrench,
   Pencil,
 } from 'lucide-react';
 import { Icon } from './icons';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { MobileDocumentInfo } from './mobile/MobileDocumentInfo';
+import { MobileSheet } from './mobile/MobileSheet';
 import { ToolbarGroup } from './ToolbarGroup';
 import { PDFExportDialog } from './PDFExportDialog';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
@@ -283,8 +283,8 @@ export function UnifiedToolbar({
     },
     [onOpenDocuments],
   );
-  // On mobile the low-frequency actions collapse into the command palette; the
-  // bar keeps just Documents, the doc identity, the view cluster, and Settings.
+  // On mobile the bar goes icon-only and Tools opens as a sheet, which also holds
+  // the documentation: there is no room for a Help button (DSK-222).
   const { mobileActive } = useMobileAdaptation();
 
   // The PDF export dialog lives in this component's local state, so the palette
@@ -347,68 +347,65 @@ export function UnifiedToolbar({
         </ToolbarGroup>
 
         <ToolbarGroup label="Actions" className="unified-toolbar-actions">
-          {mobileActive ? (
-            // Collapse Import / Whiteboard / Export / Help into the command
-            // palette (which doubles as the touch action menu). One affordance.
+          {/* A panel, not a menu: `DropdownMenu` is a role="menu" with
+              roving tabindex whose children must be menu items, so a tile
+              grid inside it would break its keyboard model. Deliberately
+              click-to-open too — the old menu opened on hover, which is
+              fine for a four-row list and a hazard for a grid you scan. */}
+          <button
+            ref={toolsBtnRef}
+            type="button"
+            className="toolbar-menu-chip toolbar-tools-btn"
+            title="Tools"
+            aria-label="Tools"
+            aria-haspopup="dialog"
+            aria-expanded={toolsOpen}
+            onClick={() =>
+              setToolsAnchor(
+                toolsOpen ? null : (toolsBtnRef.current?.getBoundingClientRect() ?? null),
+              )
+            }
+          >
+            <Icon icon={Wrench} size={14} />
+            <span>Tools</span>
+            <span className="toolbar-tools-chevron" aria-hidden="true">▾</span>
+          </button>
+          {toolsAnchor &&
+            (mobileActive ? (
+              <MobileSheet placement="bottom" title="Tools" onClose={() => setToolsAnchor(null)}>
+                <ToolsPanel
+                  phone
+                  onAction={() => setToolsAnchor(null)}
+                  onOpenPalette={() =>
+                    window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette'))
+                  }
+                />
+              </MobileSheet>
+            ) : (
+              <Popover
+                anchor={toolsAnchor}
+                align="right"
+                label="Tools"
+                triggerRef={toolsBtnRef}
+                onClose={() => setToolsAnchor(null)}
+              >
+                <ToolsPanel
+                  onAction={() => setToolsAnchor(null)}
+                  onOpenPalette={() =>
+                    window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette'))
+                  }
+                />
+              </Popover>
+            ))}
+          {!mobileActive && (
             <button
               className="toolbar-help-btn"
-              onClick={() =>
-                window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette'))
-              }
-              title="More actions"
-              aria-label="More actions"
+              onClick={() => void openDocsHandler()}
+              title="Open documentation (F1)"
+              aria-label="Open documentation"
             >
-              <Icon icon={MoreHorizontal} />
+              <Icon icon={CircleHelp} />
             </button>
-          ) : (
-            <>
-              {/* A panel, not a menu: `DropdownMenu` is a role="menu" with
-                  roving tabindex whose children must be menu items, so a tile
-                  grid inside it would break its keyboard model. Deliberately
-                  click-to-open too — the old menu opened on hover, which is
-                  fine for a four-row list and a hazard for a grid you scan. */}
-              <button
-                ref={toolsBtnRef}
-                type="button"
-                className="toolbar-menu-chip toolbar-tools-btn"
-                title="Tools"
-                aria-haspopup="dialog"
-                aria-expanded={toolsOpen}
-                onClick={() =>
-                  setToolsAnchor(
-                    toolsOpen ? null : (toolsBtnRef.current?.getBoundingClientRect() ?? null),
-                  )
-                }
-              >
-                <Icon icon={Wrench} size={14} />
-                <span>Tools</span>
-                <span className="toolbar-tools-chevron" aria-hidden="true">▾</span>
-              </button>
-              {toolsAnchor && (
-                <Popover
-                  anchor={toolsAnchor}
-                  align="right"
-                  label="Tools"
-                  triggerRef={toolsBtnRef}
-                  onClose={() => setToolsAnchor(null)}
-                >
-                  <ToolsPanel
-                    onAction={() => setToolsAnchor(null)}
-                    onOpenPalette={() =>
-                      window.dispatchEvent(new CustomEvent('docushark:toggle-command-palette'))
-                    }
-                  />
-                </Popover>
-              )}
-              <button
-                className="toolbar-help-btn"
-                onClick={() => void openDocsHandler()}
-                title="Open documentation (F1)"
-                aria-label="Open documentation"
-              >
-                <Icon icon={CircleHelp} />
-              </button>
-            </>
           )}
           {onOpenSettings && !guest && (
             <button

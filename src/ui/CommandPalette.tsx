@@ -139,8 +139,8 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       setSelectedIndex(0);
       // Focus the search input after render — but NOT on touch, where it would
       // pop the on-screen keyboard and shove the layout up. On touch the palette
-      // opens straight to the tappable command list (it doubles as the mobile
-      // action menu); tapping the field still focuses it to type.
+      // opens straight to the tappable command list; tapping the field still
+      // focuses it to type.
       if (!device.isTouch()) {
         requestAnimationFrame(() => inputRef.current?.focus());
       }

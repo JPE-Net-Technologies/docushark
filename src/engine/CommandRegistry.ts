@@ -94,7 +94,7 @@ import { cycleFocusRegion, focusRegion, isRegionShown } from '../ui/layout/focus
  * binding is already answered by `keys`, and a second way to say it would drift
  * from the first.
  */
-export type ActionSurface = 'palette' | 'tools' | 'canvasMenu';
+export type ActionSurface = 'palette' | 'tools' | 'phoneTools' | 'canvasMenu';
 
 /**
  * Extra commands contributed by feature areas, keyed by source id.
@@ -199,8 +199,9 @@ export interface Command {
   /**
    * Where this command is offered. Defaults to the palette only, which is what
    * every command did before surfaces existed — opting into `'tools'` is what
-   * puts a command in the Tools grid, and `'canvasMenu'` in the menu a
-   * right-click on empty canvas opens (DSK-213).
+   * puts a command in the Tools grid, `'phoneTools'` in that grid on a phone
+   * only, for what a desktop has its own button for (DSK-222), and
+   * `'canvasMenu'` in the menu a right-click on empty canvas opens (DSK-213).
    */
   surfaces?: readonly ActionSurface[];
 }
@@ -523,6 +524,7 @@ function buildCommands(): Command[] {
     },
     {
       id: 'view.docs', icon: BookOpen, label: 'Open documentation', category: 'View', keys: 'F1', scope: 'global', whileTyping: true,
+      surfaces: ['palette', 'phoneTools'],
       execute: () => { void opener.openDocs(); },
     },
 
@@ -603,14 +605,14 @@ export function isOnSurface(c: Command, surface: ActionSurface): boolean {
  * how the toolbar and the palette came to describe the same four actions with
  * different labels and two different paths into the PDF dialog.
  */
-export function getToolsActions(): Command[] {
+export function getToolsActions(phone = false): Command[] {
   return getAllCommands().filter(
     (c) =>
       !c.reserved &&
       // The tile anatomy opens with a chip, so an action with neither a glyph
       // nor a mark cannot render — drop it rather than leave a hole.
       (c.icon || c.iconNode) &&
-      isOnSurface(c, 'tools') &&
+      (isOnSurface(c, 'tools') || (phone && isOnSurface(c, 'phoneTools'))) &&
       (!c.canExecute || c.canExecute()),
   );
 }

@@ -416,6 +416,14 @@
   border-top: 1px solid var(--border-color);
 }
 
+/* A phone's dialog can't hold all four buttons in a row: the first ran off the
+ * left edge, out of reach. */
+@media (max-width: 640px) {
+  .pdf-export-footer {
+    flex-wrap: wrap;
+  }
+}
+
 .pdf-export-btn {
   padding: 10px 20px;
   border-radius: 6px;
