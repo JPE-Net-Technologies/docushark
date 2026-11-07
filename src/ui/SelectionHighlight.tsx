@@ -22,10 +22,21 @@ interface SelectionBoxProps {
   cameraX: number;
   cameraY: number;
   cameraZoom: number;
+  containerWidth: number;
+  containerHeight: number;
   shapes: Record<string, Shape>;
 }
 
-function SelectionBox({ user, shapeId, cameraX, cameraY, cameraZoom, shapes }: SelectionBoxProps) {
+function SelectionBox({
+  user,
+  shapeId,
+  cameraX,
+  cameraY,
+  cameraZoom,
+  containerWidth,
+  containerHeight,
+  shapes,
+}: SelectionBoxProps) {
   const shape = shapes[shapeId];
   if (!shape) return null;
 
@@ -39,9 +50,10 @@ function SelectionBox({ user, shapeId, cameraX, cameraY, cameraZoom, shapes }: S
     return null;
   }
 
-  // Transform world coordinates to screen coordinates
-  const screenX = (bounds.minX - cameraX) * cameraZoom;
-  const screenY = (bounds.minY - cameraY) * cameraZoom;
+  // World to screen, as Camera.worldToScreen does: the camera is the viewport's
+  // centre, and the container is the viewport (DSK-231).
+  const screenX = containerWidth / 2 + (bounds.minX - cameraX) * cameraZoom;
+  const screenY = containerHeight / 2 + (bounds.minY - cameraY) * cameraZoom;
   const screenWidth = bounds.width * cameraZoom;
   const screenHeight = bounds.height * cameraZoom;
 
@@ -71,9 +83,9 @@ function SelectionBox({ user, shapeId, cameraX, cameraY, cameraZoom, shapes }: S
 }
 
 export interface SelectionHighlightProps {
-  /** Container width for bounds checking */
+  /** Container width: the camera's viewport */
   width?: number;
-  /** Container height for bounds checking */
+  /** Container height: the camera's viewport */
   height?: number;
 }
 
@@ -130,6 +142,8 @@ export function SelectionHighlight({ width = 800, height = 600 }: SelectionHighl
             cameraX={cameraX}
             cameraY={cameraY}
             cameraZoom={cameraZoom}
+            containerWidth={width}
+            containerHeight={height}
             shapes={shapes}
           />
         ))
