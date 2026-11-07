@@ -32,6 +32,7 @@ import type { Doc as YDoc } from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AnyExtension } from '@tiptap/core';
 import { sharedProseExtensions, sharedProseEditorProps, ProseEditorContent } from './TiptapEditor';
+import { isOpenSessionDoc } from '../collaboration/collaborationStore';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore, usePageMirror } from '../store/richTextPagesStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
@@ -121,6 +122,9 @@ export function CollaborativeProseEditor({
         const html = editor.getHTML();
         // Deferred so it doesn't run inside Tiptap's flushSync dispatch.
         queueMicrotask(() => {
+          // Only while this editor's session is the open document: the write goes by
+          // page id, and the next document's page may have the same one (DSK-230).
+          if (!isOpenSessionDoc(ydoc)) return;
           // Keep the projection current: richTextPages is the durable HTML
           // mirror for non-editor consumers (offline cache / outline / PDF). It
           // derives FROM the fragment and is never written independently, so it
