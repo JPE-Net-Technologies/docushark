@@ -56,6 +56,8 @@ export interface SettingsState {
   saveLabelStyleToProfile: boolean;
   /** Show minimap for canvas navigation */
   showMinimap: boolean;
+  /** Selecting a shape shows the bar beside it; More opens Properties (DSK-225). */
+  showSelectionBar: boolean;
   /** Auto-focus camera on shape when clicking layer item */
   layerClickFocusShape: boolean;
   /** Grid opacity (0-100, percentage) */
@@ -92,6 +94,7 @@ export interface SettingsActions {
   toggleShowMinimap: () => void;
   /** Set minimap visibility */
   setShowMinimap: (show: boolean) => void;
+  setShowSelectionBar: (show: boolean) => void;
   /** Toggle layer click focus shape */
   toggleLayerClickFocusShape: () => void;
   /** Set layer click focus shape */
@@ -144,6 +147,7 @@ const initialState: SettingsState = {
   saveIconStyleToProfile: true,
   saveLabelStyleToProfile: true,
   showMinimap: false,
+  showSelectionBar: true,
   layerClickFocusShape: false,
   gridOpacity: 100,
   animationDuration: 300,
@@ -219,6 +223,10 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
         set({ showMinimap: show });
       },
 
+      setShowSelectionBar: (show: boolean) => {
+        set({ showSelectionBar: show });
+      },
+
       toggleLayerClickFocusShape: () => {
         set({ layerClickFocusShape: !get().layerClickFocusShape });
       },
@@ -253,6 +261,7 @@ export const useSettingsStore = create<SettingsState & SettingsActions>()(
         saveIconStyleToProfile: state.saveIconStyleToProfile,
         saveLabelStyleToProfile: state.saveLabelStyleToProfile,
         showMinimap: state.showMinimap,
+        showSelectionBar: state.showSelectionBar,
         layerClickFocusShape: state.layerClickFocusShape,
         gridOpacity: state.gridOpacity,
         animationDuration: state.animationDuration,

@@ -9,6 +9,7 @@ import { CollaborativeCursors } from './CollaborativeCursors';
 import { SelectionHighlight } from './SelectionHighlight';
 import { Minimap } from './Minimap';
 import { CanvasZoomPill } from './CanvasZoomPill';
+import { CanvasSelectionBar } from './selectionBar/CanvasSelectionBar';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useThemeStore } from '../store/themeStore';
@@ -618,6 +619,7 @@ export function CanvasContainer({
       <CollaborativeCursors width={dimensions.width} height={dimensions.height} />
       <Minimap canvasWidth={dimensions.width} canvasHeight={dimensions.height} />
       <CanvasZoomPill />
+      <CanvasSelectionBar canvasWidth={dimensions.width} canvasHeight={dimensions.height} />
       <TextEditor camera={camera} />
       {contextMenu && (
         <ContextMenu

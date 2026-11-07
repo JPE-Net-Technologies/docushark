@@ -9,7 +9,7 @@
  * `iconBadge`, and `icons[]` never survived a save+apply cycle.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   extractStyleFromShape,
   getProfileUpdates,
@@ -589,5 +589,43 @@ describe('naming what a shape looks like (DSK-216)', () => {
       const [profile] = profiles();
       expect(getProfilePropertyUpdate(profile!, shape(), 'startArrow')).toEqual({});
     });
+  });
+});
+
+describe('the profiles used last (DSK-225)', () => {
+  beforeEach(() => useStyleProfileStore.setState({ recentProfileIds: [] }));
+  const recent = () => useStyleProfileStore.getState().recentProfileIds;
+  const note = (id: string) => useStyleProfileStore.getState().noteProfileUsed(id);
+
+  it('puts the latest first, each once', () => {
+    note('a');
+    note('b');
+    note('a');
+    expect(recent()).toEqual(['a', 'b']);
+  });
+
+  it('remembers only so many', () => {
+    for (const id of ['1', '2', '3', '4', '5', '6', '7', '8', '9']) note(id);
+    expect(recent()).toHaveLength(8);
+    expect(recent()[0]).toBe('9');
+    expect(recent()).not.toContain('1');
+  });
+
+  it('persists, and reads older storage that has none as none', () => {
+    const options = useStyleProfileStore.persist.getOptions();
+    note('a');
+    const saved = options.partialize!(useStyleProfileStore.getState()) as { recentProfileIds: string[] };
+    expect(saved.recentProfileIds).toEqual(['a']);
+    const current = useStyleProfileStore.getState();
+    const merged = options.merge!({ profiles: [], favoriteDefaultIds: [] }, current) as typeof current;
+    expect(merged.recentProfileIds).toEqual([]);
+    const restored = options.merge!({ profiles: [], favoriteDefaultIds: [], recentProfileIds: ['b'] }, current);
+    expect((restored as typeof current).recentProfileIds).toEqual(['b']);
+  });
+
+  it('forgets them with the profiles', () => {
+    note('a');
+    useStyleProfileStore.getState().clearProfiles();
+    expect(recent()).toEqual([]);
   });
 });

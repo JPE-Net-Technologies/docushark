@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { useSessionStore } from '../store/sessionStore';
+import { useSettingsStore } from '../store/settingsStore';
 import {
   getPaletteCommands,
   findShortcutConflicts,
@@ -128,5 +130,38 @@ describe('command sources', () => {
     expect(getPaletteCommands().map((c) => c.id)).toContain('src.d');
     available = false;
     expect(getPaletteCommands().map((c) => c.id)).not.toContain('src.d');
+  });
+});
+
+describe('asking for the Properties panel (DSK-225)', () => {
+  const command = () => getAllCommands().find((candidate) => candidate.id === 'view.properties')!;
+
+  afterEach(() => {
+    useSessionStore.getState().clearSelection();
+    useSessionStore.setState({ propertiesRequested: false });
+    useSettingsStore.setState({ showSelectionBar: true });
+  });
+
+  it('is in the palette', () => {
+    expect(command().surfaces).toContain('palette');
+  });
+
+  it('asks for the panel', () => {
+    useSessionStore.getState().select(['a']);
+    command().execute();
+    expect(useSessionStore.getState().propertiesRequested).toBe(true);
+  });
+
+  it('has nothing to show without a selection', () => {
+    useSessionStore.getState().clearSelection();
+    expect(command().canExecute?.()).toBe(false);
+  });
+
+  it('has nothing to do with the bar off, when a selection opens the panel anyway', () => {
+    useSessionStore.getState().select(['a']);
+    useSettingsStore.setState({ showSelectionBar: false });
+    expect(command().canExecute?.()).toBe(false);
+    useSettingsStore.setState({ showSelectionBar: true });
+    expect(command().canExecute?.()).toBe(true);
   });
 });

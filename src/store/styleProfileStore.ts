@@ -67,12 +67,15 @@ interface StyleProfileState {
    * mutation — the favorite flag — is tracked here as an overlay.
    */
   favoriteDefaultIds: string[];
+  /** Profiles applied on this device, latest first (DSK-225). */
+  recentProfileIds: string[];
 }
 
 /** Shape persisted to localStorage: user profiles only + the favorite overlay. */
 interface PersistedStyleProfiles {
   profiles: StyleProfile[];
   favoriteDefaultIds: string[];
+  recentProfileIds?: string[];
 }
 
 /**
@@ -112,6 +115,8 @@ interface StyleProfileActions {
   deleteProfile: (id: string) => void;
   /** Rename a profile */
   renameProfile: (id: string, name: string) => void;
+  /** Remember that a profile was just applied. */
+  noteProfileUsed: (id: string) => void;
   /** Toggle favorite status */
   toggleFavorite: (id: string) => void;
   /** Get a profile by ID */
@@ -283,6 +288,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
     (set, get) => ({
       profiles: seedProfiles([], []),
       favoriteDefaultIds: [],
+      recentProfileIds: [],
 
       addProfile: (
         name: string,
@@ -379,6 +385,11 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
         }));
       },
 
+      noteProfileUsed: (id: string) => {
+        const others = get().recentProfileIds.filter((recent) => recent !== id);
+        set({ recentProfileIds: [id, ...others].slice(0, 8) });
+      },
+
       toggleFavorite: (id: string) => {
         if (isDefaultProfileId(id)) {
           // Favorite is the only allowed mutation on a built-in; track it in the
@@ -411,7 +422,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
 
       clearProfiles: () => {
         // Drop user profiles + the favorite overlay; reseed canonical built-ins.
-        set({ profiles: seedProfiles([], []), favoriteDefaultIds: [] });
+        set({ profiles: seedProfiles([], []), favoriteDefaultIds: [], recentProfileIds: [] });
       },
 
       getSortedProfiles: () => {
@@ -433,6 +444,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       partialize: (state): PersistedStyleProfiles => ({
         profiles: state.profiles.filter((p) => !isDefaultProfileId(p.id)),
         favoriteDefaultIds: state.favoriteDefaultIds,
+        recentProfileIds: state.recentProfileIds,
       }),
       migrate: (persisted, version): PersistedStyleProfiles => migrateStyleProfiles(persisted, version),
       merge: (persisted, current) => {
@@ -443,6 +455,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
           ...current,
           favoriteDefaultIds,
           profiles: seedProfiles(userProfiles, favoriteDefaultIds),
+          recentProfileIds: Array.isArray(prev.recentProfileIds) ? prev.recentProfileIds : [],
         };
       },
     }

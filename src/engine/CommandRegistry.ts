@@ -56,9 +56,11 @@ import {
   Waypoints,
   ZoomIn,
   ZoomOut,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 import { useSessionStore, deleteSelected, getSelectedShapes } from '../store/sessionStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
@@ -445,6 +447,13 @@ function buildCommands(): Command[] {
     // Clickable zoom (DSK-211): the canvas's zoom pill runs the same functions.
     { id: 'view.zoomToFit', icon: Scan, label: 'Zoom to fit', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomToFit },
     { id: 'view.zoomTo100', icon: Percent, label: 'Zoom to 100%', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomTo100 },
+
+    // With the selection bar on, a selection no longer opens Properties (DSK-225).
+    {
+      id: 'view.properties', icon: SlidersHorizontal, label: 'Show properties', category: 'Navigation', surfaces: ['palette'],
+      canExecute: () => useSettingsStore.getState().showSelectionBar && useSessionStore.getState().selectedIds.size > 0,
+      execute: () => useSessionStore.getState().setPropertiesRequested(true),
+    },
 
     // Moving focus between the regions (DSK-214). F6 reaches the page in the
     // desktop app and an installed app; in a browser tab the browser keeps it,

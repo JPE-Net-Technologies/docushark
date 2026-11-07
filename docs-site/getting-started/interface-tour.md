@@ -67,7 +67,7 @@ takes center stage in Relaxed and tucks away in Designer. See
 
 ## Property Panel
 
-The right-side panel shows properties for whatever you have selected:
+Selecting a shape shows a small bar above it with its style and colors. Press **More** on that bar to open this panel, which shows every property of what you have selected. Some layouts keep it showing all the time.
 
 - **Position & size** — X, Y, width, height, rotation
 - **Fill & stroke** — Colors, opacity, border style

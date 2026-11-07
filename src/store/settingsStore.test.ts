@@ -64,3 +64,17 @@ describe('migrateSettings — v1→v2 (defaultConnectorType → lastConnector)',
     expect(migrateSettings(v2, 2)).toEqual(v2);
   });
 });
+
+describe('the selection bar setting (DSK-225)', () => {
+  it('is on by default', () => {
+    expect(useSettingsStore.getInitialState().showSelectionBar).toBe(true);
+  });
+
+  it('is remembered', () => {
+    const saved = useSettingsStore.persist.getOptions().partialize!({
+      ...useSettingsStore.getState(),
+      showSelectionBar: false,
+    }) as { showSelectionBar: boolean };
+    expect(saved.showSelectionBar).toBe(false);
+  });
+});

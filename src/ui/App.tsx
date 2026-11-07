@@ -20,6 +20,7 @@ import { COMPACT_WIDTH_QUERY, useMediaQuery } from './layout/useMediaQuery';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
 import { MobileSelection } from './mobile/MobileSelection';
 import { FlyoutPanel } from './layout/FlyoutPanel';
+import { usePropertiesOnSelection } from './selectionBar/usePropertiesOnSelection';
 import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
 import { DocumentToggleRail } from './layout/DocumentToggleRail';
@@ -168,11 +169,13 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // Suppressed in `write` focus — the canvas is hidden there, so a lingering
   // selection must not pop the Properties overlay over the prose.
   const selectionCount = useSessionStore((s) => s.selectedIds.size);
+  const { followsSelection: propertiesFollowSelection, onDismiss: onDismissProperties } = usePropertiesOnSelection();
   const relaxedTransientProps =
     activeMode === 'relaxed' &&
     relaxedFocus !== 'write' &&
     !isPropertiesVisible &&
-    selectionCount > 0;
+    selectionCount > 0 &&
+    propertiesFollowSelection;
   const renderProperties = isPropertiesVisible || relaxedTransientProps;
 
   const { band } = useBreakpoint();
@@ -579,7 +582,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     panelId="properties"
                     label="Properties"
                     icon={<span style={{ fontSize: 12, fontWeight: 700 }}>P</span>}
-                    expandOnSelection
+                    expandOnSelection={propertiesFollowSelection}
+                    onDismiss={onDismissProperties}
                     side="left"
                     showRail={!relaxedTransientProps}
                   >
@@ -638,7 +642,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     panelId="properties"
                     label="Properties"
                     icon={<span style={{ fontSize: 12, fontWeight: 700 }}>P</span>}
-                    expandOnSelection
+                    expandOnSelection={propertiesFollowSelection}
+                    onDismiss={onDismissProperties}
                     side="right"
                     showRail={!relaxedTransientProps}
                   >

@@ -328,13 +328,18 @@ The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
 
 | Mode | Document | Canvas | Properties | Persona |
 |------|----------|--------|------------|---------|
-| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on selection) | Personal — writing |
+| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on request) | Personal — writing |
 | `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Personal — diagramming |
 | `technician` | left, split | split | fly-out (auto-collapse) | Researcher / mid-power |
 | `power` | left, split | split | docked, pinned | Power-User |
 
 Switch via the **layout selector** chip in the toolbar, `Cmd+Shift+1..4`, or
 the command palette ("Switch to … layout"). Zen is a backlog item (Linear).
+
+A selection shows the **selection bar** on the canvas (`src/ui/selectionBar/`);
+its More opens Properties in the fly-out layouts, which then follows the
+selection until closed (`sessionStore.propertiesRequested`). With the bar off in
+Settings, every selection opens the fly-out instead.
 
 In **Relaxed** the document editor is the *primary* region (a centered reading
 column), not a sidebar. A `Write · Split · Diagram` segmented control

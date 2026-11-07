@@ -131,6 +131,12 @@ export interface SessionState {
   hoveredId: string | null;
   /** ID of text shape currently being edited (null if not editing) */
   editingTextId: string | null;
+
+  /**
+   * The selection bar's More asked for the Properties panel (DSK-225): it follows
+   * the selection until closed. Ephemeral.
+   */
+  propertiesRequested: boolean;
   /**
    * The file currently open in the viewer, or null (JP-495).
    *
@@ -218,6 +224,7 @@ export interface SessionActions {
 
   // Text editing
   startTextEdit: (id: string) => void;
+  setPropertiesRequested: (requested: boolean) => void;
   stopTextEdit: () => void;
   isEditingText: () => boolean;
 
@@ -318,6 +325,7 @@ const initialState: SessionState = {
   isInteracting: false,
   hoveredId: null,
   editingTextId: null,
+  propertiesRequested: false,
   viewingFile: null,
   fileViewerMode: 'modal',
   snapSettings: { ...DEFAULT_SNAP_SETTINGS },
@@ -434,6 +442,10 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
   },
 
   // Text editing
+  setPropertiesRequested: (requested: boolean) => {
+    set({ propertiesRequested: requested });
+  },
+
   startTextEdit: (id: string) => {
     set({ editingTextId: id });
   },

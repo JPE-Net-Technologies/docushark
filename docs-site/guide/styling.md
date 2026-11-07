@@ -26,7 +26,17 @@ Every shape has styling properties you can adjust in the Property Panel:
 | **Opacity** | Overall shape transparency |
 | **Text** | Font, size, color, alignment |
 
-Select a shape and tweak these in the Property Panel on the right side of the screen.
+Select a shape and the **selection bar** appears above it, with the colours you change most. For everything else, press **More** to open the Property Panel.
+
+## The Selection Bar
+
+The bar stays with your selection as you move around the canvas, and steps aside while you drag, resize or edit text.
+
+- **Style profiles:** the ones you used last. Rest on one to preview it, press it to apply it, or press the arrow for the full list.
+- **Colours:** fill, stroke and text colour, for whichever of these the selection has.
+- **More:** opens the Property Panel, which then stays open as you select other shapes until you close it. In a layout with the panel always showing, the bar has no **More**.
+
+Don't want it? Turn off **Selection bar** in **Settings → General**, and selecting a shape opens the Property Panel instead. On a phone, a selection has a bar of its own.
 
 ## Style Profiles — your branding kit
 

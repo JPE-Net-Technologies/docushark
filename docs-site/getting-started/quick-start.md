@@ -40,7 +40,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 ## Edit and Style
 
 - **Double-click** a shape to edit its text
-- **Click** a shape to select it, then use the **Property Panel** on the right to change colors, borders, and fonts
+- **Click** a shape to select it, then use the bar above it to change its colors, or **More** for the **Property Panel** and everything else
 - **Shift+Click** to select multiple shapes
 - Press `Delete` to remove selected shapes
 
