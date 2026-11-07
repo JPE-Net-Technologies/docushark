@@ -97,8 +97,21 @@ export function CompactColorInput({
       }
     };
 
+    // One press closes the top layer, so it stops here: a panel around this listens
+    // on the window, and would close as well.
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setIsOpen(false);
+      triggerRef.current?.querySelector('button')?.focus();
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [isOpen]);
 
   // Update position on scroll/resize

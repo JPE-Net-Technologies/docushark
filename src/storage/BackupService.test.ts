@@ -181,6 +181,13 @@ describe('BackupExportService', () => {
       expect(parsed.name).toBe('Alpha');
     });
 
+    it('backs up every setting that is saved, so a restore loses none', async () => {
+      const entries = readArchiveZip(await blobToUint8Array(await createBackup(DEFAULT_BACKUP_OPTIONS)));
+      const settings = decodeJSON<object>(entries.find((e) => e.path === 'settings.json')!.data);
+      const saved = useSettingsStore.persist.getOptions().partialize!(useSettingsStore.getState()) as object;
+      expect(Object.keys(settings).sort()).toEqual(Object.keys(saved).sort());
+    });
+
     it('includes settings JSON', async () => {
       useSettingsStore.setState({ gridOpacity: 42 });
 

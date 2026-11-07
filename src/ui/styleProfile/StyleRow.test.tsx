@@ -397,6 +397,12 @@ describe('a selection linked to its profile (DSK-224)', () => {
     expect(changes()).toBeNull();
   });
 
+  it('counts as the profile used last, wherever it was applied from', () => {
+    useStyleProfileStore.setState({ recentProfileIds: [] });
+    applied(GREEN);
+    expect(useStyleProfileStore.getState().recentProfileIds).toEqual([profile(GREEN).id]);
+  });
+
   it('links nothing while only previewing', () => {
     rect('a');
     select('a');

@@ -59,27 +59,47 @@ const ProfileDeparturesContext = createContext<ProfileDeparturesValue>({
 
 export const useProfileDepartures = () => useContext(ProfileDeparturesContext);
 
+/** The profiles on offer, in their usual order: a hidden one is one you asked not to see. */
+export function useOfferedProfiles(): StyleProfile[] {
+  const profiles = useStyleProfileStore((state) => state.profiles);
+  const hideDefaults = useSettingsStore((state) => state.hideDefaultStyleProfiles);
+  return useMemo(
+    () =>
+      useStyleProfileStore
+        .getState()
+        .getSortedProfiles()
+        .filter((candidate) => !hideDefaults || !candidate.id.startsWith('default-')),
+    // `profiles` is what getSortedProfiles reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [profiles, hideDefaults],
+  );
+}
+
+/** The profile a selection goes with, and where it differs. A hidden one is named only if applied. */
+export function useSelectionStyle(selected: Shape[]) {
+  const profiles = useStyleProfileStore((state) => state.profiles);
+  const offered = useOfferedProfiles();
+  return useMemo(() => {
+    const sorted = useStyleProfileStore.getState().getSortedProfiles();
+    const style = resolveSelectionStyle(selected, sorted, offered);
+    return { profile: style.profile, departures: new Set(style.departures) };
+    // `profiles` is what getSortedProfiles reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, profiles, offered]);
+}
+
 export function ProfileDeparturesProvider({ children }: { children: ReactNode }) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
   const updateShape = useDocumentStore((state) => state.updateShape);
   const push = useHistoryStore((state) => state.push);
-  const profiles = useStyleProfileStore((state) => state.profiles);
-  const hideDefaults = useSettingsStore((state) => state.hideDefaultStyleProfiles);
 
   const selected = useMemo(
     () => Array.from(selectedIds).map((id) => shapes[id]).filter((shape): shape is Shape => shape !== undefined),
     [selectedIds, shapes],
   );
 
-  const { profile, departures } = useMemo(() => {
-    const sorted = useStyleProfileStore.getState().getSortedProfiles();
-    // A hidden profile is one you asked not to see: it's named only if applied.
-    const visible = sorted.filter((candidate) => !hideDefaults || !candidate.id.startsWith('default-'));
-    const style = resolveSelectionStyle(selected, sorted, visible);
-    return { profile: style.profile, departures: new Set(style.departures) };
-    // `profiles` is what getSortedProfiles reads.
-  }, [selected, profiles, hideDefaults]);
+  const { profile, departures } = useSelectionStyle(selected);
 
   const reset = useCallback(
     (name?: string) => {

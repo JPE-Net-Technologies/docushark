@@ -4,7 +4,8 @@
  * Renders as a thin rail along the canvas edge; expands into a full panel on:
  *  - rail click
  *  - focus entering the panel body
- *  - shape selection (Properties only — opt-in via `expandOnSelection`)
+ *  - shape selection (Properties only — opt-in via `expandOnSelection`, which
+ *    with the selection bar on means once More has asked for it; DSK-225)
  *
  * Collapses 500ms after focus leaves the panel, or immediately on Escape /
  * outside-click. A pin button promotes the panel to docked for the active
@@ -16,6 +17,7 @@
  */
 
 import { ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import { useSessionStore } from '../../store/sessionStore';
 import { useActivePanelState, useLayoutActions } from './useLayout';
 import type { PanelId } from './types';
@@ -39,6 +41,12 @@ export interface FlyoutPanelProps {
    * the collapsed state. Used in Relaxed for selection-only Properties.
    */
   showRail?: boolean;
+  /**
+   * Asked to go away for good, by a closing or Escape or leaving it with something
+   * still selected, rather than by the selection ending. With this, the header
+   * also offers a close button.
+   */
+  onDismiss?: (() => void) | undefined;
   /** Panel body — only mounted/visible when expanded. */
   children: ReactNode;
 }
@@ -50,6 +58,7 @@ export function FlyoutPanel({
   expandOnSelection = false,
   side = 'right',
   showRail = true,
+  onDismiss,
   children,
 }: FlyoutPanelProps) {
   const { togglePin } = useLayoutActions();
@@ -125,12 +134,31 @@ export function FlyoutPanel({
     }
   }, [selectedIds, hasSelection, expandOnSelection, expand, scheduleCollapse, cancelCollapseTimer]);
 
+  // No longer following the selection, as when the selection bar's More is pressed
+  // again: there's nothing left to keep it open.
+  const followedSelection = useRef(expandOnSelection);
+  useEffect(() => {
+    if (followedSelection.current && !expandOnSelection) collapseNow();
+    followedSelection.current = expandOnSelection;
+  }, [expandOnSelection, collapseNow]);
+
+  // Collapsing with something still selected is a choice. Collapsing because the
+  // selection ended isn't, and the next selection brings it back (DSK-225).
+  const wasExpanded = useRef(false);
+  useEffect(() => {
+    if (wasExpanded.current && !isExpanded && useSessionStore.getState().selectedIds.size > 0) onDismiss?.();
+    wasExpanded.current = isExpanded;
+  }, [isExpanded, onDismiss]);
+
   // Focus-trap + outside-click + Escape handling while expanded.
   useEffect(() => {
     if (!isExpanded) return;
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Whatever else Escape does: if it clears the selection too, this still
+        // meant the panel.
+        onDismiss?.();
         collapseNow();
         railRef.current?.focus();
       } else if (e.key === 'Tab' && panelRef.current) {
@@ -175,7 +203,7 @@ export function FlyoutPanel({
       window.removeEventListener('keydown', handleKey);
       window.removeEventListener('pointerdown', handlePointerDown);
     };
-  }, [isExpanded, collapseNow, expandOnSelection]);
+  }, [isExpanded, collapseNow, expandOnSelection, onDismiss]);
 
   // Auto-collapse 500ms after focus leaves the panel body.
   const handleFocusIn = useCallback(() => {
@@ -274,6 +302,17 @@ export function FlyoutPanel({
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                   <path d="M9.828.722a.5.5 0 0 1 .354.146l4.95 4.95a.5.5 0 0 1 0 .707c-.48.48-1.072.588-1.503.588-.177 0-.335-.018-.46-.039l-3.134 3.134a5.927 5.927 0 0 1 .16 1.013c.046.702-.032 1.687-.72 2.375a.5.5 0 0 1-.707 0l-2.829-2.828-3.182 3.182c-.195.195-1.219.902-1.414.707-.195-.195.512-1.22.707-1.414l3.182-3.182-2.828-2.829a.5.5 0 0 1 0-.707c.688-.688 1.673-.767 2.375-.72a5.922 5.922 0 0 1 1.013.16l3.134-3.133a2.772 2.772 0 0 1-.04-.461c0-.43.108-1.022.589-1.503a.5.5 0 0 1 .353-.146z" />
                 </svg>
+              </button>
+            )}
+            {onDismiss && (
+              <button
+                type="button"
+                className="flyout-panel-pin"
+                onClick={collapseNow}
+                aria-label={`Close ${label}`}
+                title={`Close ${label}`}
+              >
+                <X size={14} aria-hidden="true" />
               </button>
             )}
           </div>

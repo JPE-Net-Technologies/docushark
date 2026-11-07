@@ -64,6 +64,7 @@ export function useProfileActions(selectedShapes: Shape[]) {
       for (const shape of selectedShapes) {
         updateShape(shape.id, { ...getProfileUpdates(profile, shape), styleProfileId: profile.id } as Partial<Shape>);
       }
+      useStyleProfileStore.getState().noteProfileUsed(profile.id);
     },
     [selectedShapes, push, updateShape, clearStylePreview]
   );

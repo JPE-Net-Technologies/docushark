@@ -76,12 +76,12 @@ export async function estimateBackupSize(
   if (options.includeSettings) {
     const { lastConnector, defaultStyleProfileId, showStaticProperties,
       hideDefaultStyleProfiles, saveIconStyleToProfile, saveLabelStyleToProfile,
-      showMinimap, layerClickFocusShape, gridOpacity, animationDuration,
+      showMinimap, showSelectionBar, layerClickFocusShape, gridOpacity, animationDuration,
     } = useSettingsStore.getState();
     breakdown.settings = new Blob([JSON.stringify({
       lastConnector, defaultStyleProfileId, showStaticProperties,
       hideDefaultStyleProfiles, saveIconStyleToProfile, saveLabelStyleToProfile,
-      showMinimap, layerClickFocusShape, gridOpacity, animationDuration,
+      showMinimap, showSelectionBar, layerClickFocusShape, gridOpacity, animationDuration,
     })]).size;
   }
 
@@ -235,12 +235,12 @@ export async function createBackup(
   if (options.includeSettings) {
     const { lastConnector, defaultStyleProfileId, showStaticProperties,
       hideDefaultStyleProfiles, saveIconStyleToProfile, saveLabelStyleToProfile,
-      showMinimap, layerClickFocusShape, gridOpacity, animationDuration,
+      showMinimap, showSelectionBar, layerClickFocusShape, gridOpacity, animationDuration,
     } = useSettingsStore.getState();
     const settingsData = encodeJSON({
       lastConnector, defaultStyleProfileId, showStaticProperties,
       hideDefaultStyleProfiles, saveIconStyleToProfile, saveLabelStyleToProfile,
-      showMinimap, layerClickFocusShape, gridOpacity, animationDuration,
+      showMinimap, showSelectionBar, layerClickFocusShape, gridOpacity, animationDuration,
     });
     const settingsPath = 'settings.json';
     entries.push({ path: settingsPath, data: settingsData });
