@@ -157,6 +157,25 @@ passwords — it **validates** RS256 JWTs:
 Rotating signing keys at the issuer is picked up automatically within the JWKS
 cache window — no relay restart required.
 
+### Connection limits
+
+The relay keeps one connection from holding up the others:
+
+- **Authenticate first.** Until `AUTH` succeeds, the relay answers only `AUTH`
+  and `HEARTBEAT` and ignores everything else. A connection that hasn't
+  authenticated within 30 seconds is closed. Sending `JOIN_DOC` and the rest
+  straight after `AUTH` is fine: the relay handles a connection's messages in
+  order, so they arrive after authentication.
+- **Keep reading.** A connection that stops taking delivery is dropped. A frame
+  gets at least 30 seconds to reach the client, and a large one gets the time it
+  would take at 32 KiB/s.
+- **State requests are limited.** A `SyncStep1` is answered with up to the whole
+  document, so it draws from a per-workspace bucket of its own, sized by the read
+  quota (`reads_per_sec`/`reads_burst`) and separate from the write bucket. A
+  connection with eight frames already waiting for it gets no more state until
+  it catches up. A refused request gets `ERR_RATE_LIMIT`: back off and request
+  again.
+
 ## Offline Support
 
 DocuShark is offline-first. Collaboration features degrade gracefully when the

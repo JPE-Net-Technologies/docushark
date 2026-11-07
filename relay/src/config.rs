@@ -50,7 +50,8 @@ pub const DEFAULT_WRITES_PER_SEC: u32 = 40;
 pub const DEFAULT_WRITES_BURST: u32 = 80;
 /// Default token-bucket refill rate (MCP reads / sec) per workspace (JP-249).
 /// Reads are cheap, so this is generous — a public-pod backstop against a
-/// read-storm, not a throttle on normal agent use. `0` = unlimited.
+/// read-storm, not a throttle on normal agent use. `0` = unlimited. The same
+/// rate sizes a separate bucket for sync state requests (DSK-232).
 pub const DEFAULT_READS_PER_SEC: u32 = 100;
 /// Default burst size for the per-workspace MCP read bucket.
 pub const DEFAULT_READS_BURST: u32 = 200;
@@ -463,7 +464,9 @@ pub struct LimitsConfig {
     pub writes_burst: u32,
     /// Token-bucket refill rate (MCP reads / second) per workspace (JP-249).
     /// `0` = unlimited (loopback/self-host). Separate from the write bucket so a
-    /// read-storm never contends with live WS editing.
+    /// read-storm never contends with live WS editing. Also sizes the separate
+    /// bucket for WS state requests (SyncStep1), each answered with up to the
+    /// whole document (DSK-232).
     pub reads_per_sec: u32,
     /// Burst capacity for the per-workspace MCP read bucket.
     pub reads_burst: u32,
