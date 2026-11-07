@@ -3,6 +3,7 @@ import { commandShortcut } from '../engine/CommandRegistry';
 import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square, Blend } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
+import { pushEditHistory } from '../store/historyStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
@@ -1579,7 +1580,17 @@ export interface PropertyPanelProps {
 function PropertyPanelBody({ className }: PropertyPanelProps) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
-  const updateShape = useDocumentStore((state) => state.updateShape);
+  const writeShape = useDocumentStore((state) => state.updateShape);
+  // Every edit in the panel goes through here, and each is an undo step. A local
+  // document only undoes to a recorded one, so without this undo removes the shape
+  // that was just edited (DSK-229).
+  const updateShape = useCallback(
+    (id: string, updates: Partial<Shape>) => {
+      pushEditHistory('Edit properties');
+      writeShape(id, updates);
+    },
+    [writeShape],
+  );
   // JP-370: read-only entry clears the selection (so this normally renders the
   // empty state), but if a selection lingers a frame, neutralize edit controls
   // defensively — pointer-events:none over the `inert` attribute, which is
