@@ -193,6 +193,13 @@ the flatten writes **every** page's shape surface back to its `pages[id]` object
 (not just the hydrated `activePageId`), so a live page-switch mid-session no
 longer risks dropping the other pages' edits.
 
+**One connection can't hold up the others (DSK-232):** the relay never waits on
+a client while holding the shared client map, and drops a connection that stops
+reading. Until it authenticates, a connection may send only `AUTH` and
+`HEARTBEAT`, for at most 30 seconds. State requests (`SyncStep1`) draw from a
+per-workspace bucket of their own, sized by the read quota, and stop while a
+connection has a backlog.
+
 **Offline-first architecture**:
 - **OfflineQueue**: Queues save/delete operations when disconnected, processes on reconnect
 - **SyncStateManager**: Coordinates queue, storage, and connection state with auto-retry

@@ -557,6 +557,17 @@ pub struct ServerState {
     /// `/metrics`; the metering observability signal for the internal
     /// save/write fair-use throttle.
     rate_limit_rejections: Arc<AtomicU64>,
+    /// DSK-232: per-workspace bucket for state requests (SyncStep1), which the
+    /// authoritative Y.Doc answers with up to the whole document. Sized by the
+    /// read quota (`reads_per_sec` / `reads_burst`, `0` = unlimited), but apart
+    /// from MCP's read bucket, so neither surface can starve the other.
+    state_request_limiter: Option<WorkspaceWriteLimiter>,
+    /// DSK-232: state requests refused by that bucket or by a connection's
+    /// backlog. Read by `/metrics`.
+    state_request_rejections: AtomicU64,
+    /// DSK-232: how long a connection may stay unauthenticated, and how long a
+    /// frame may take to reach a client.
+    client_deadlines: ClientDeadlines,
     /// Snapshot of `config.observability.metering_debug_log`. When true,
     /// `/metrics` also logs the per-workspace metering breakdown.
     metering_debug_log: bool,
@@ -634,6 +645,9 @@ impl ServerState {
         #[cfg(debug_assertions)] panic_tenant_trigger: Option<WorkspaceId>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(100);
+        let state_request_limiter = (tenancy.limits.reads_per_sec > 0).then(|| {
+            build_workspace_limiter(tenancy.limits.reads_per_sec, tenancy.limits.reads_burst)
+        });
         let s3 = build_s3_backend(&storage);
         let blob_store = {
             // JP-127: defer orphaned-blob reclaim by the configured grace so a
@@ -730,6 +744,9 @@ impl ServerState {
             sync_registry: Arc::new(DocRegistry::new()),
             panic_count,
             rate_limit_rejections,
+            state_request_limiter,
+            state_request_rejections: AtomicU64::new(0),
+            client_deadlines: ClientDeadlines::default(),
             metering_debug_log,
             binary_persistence,
             poison_guard,
@@ -1242,6 +1259,12 @@ impl ServerState {
     /// Read the pod-wide handler-panic counter.
     pub(crate) fn panic_count(&self) -> u64 {
         self.panic_count.load(Ordering::Relaxed)
+    }
+
+    /// DSK-232: replace the connection deadlines (tests shorten them).
+    fn with_client_deadlines(mut self, deadlines: ClientDeadlines) -> Self {
+        self.client_deadlines = deadlines;
+        self
     }
 
     /// Increment the pod-wide write-limiter rejection counter.
@@ -1903,6 +1926,8 @@ pub struct WebSocketServer {
     /// per-tenant accounting is consistent across subsystems.
     /// Phase 21.3.
     write_limiter: RwLock<Option<Arc<WorkspaceWriteLimiter>>>,
+    /// DSK-232: connection deadlines handed to `ServerState` in `start()`.
+    client_deadlines: RwLock<ClientDeadlines>,
     /// Shared panic counter handed out to subsystems (MCP) and read
     /// by `/metrics`. Constructed once per `WebSocketServer` instance
     /// so the relay binary's `WebSocketServer` and `McpServer` see
@@ -1958,6 +1983,7 @@ impl WebSocketServer {
             sync_config: RwLock::new(SyncConfig::default()),
             snapshot_task: RwLock::new(None),
             write_limiter: RwLock::new(None),
+            client_deadlines: RwLock::new(ClientDeadlines::default()),
             panic_count: Arc::new(AtomicU64::new(0)),
             rate_limit_rejections: Arc::new(AtomicU64::new(0)),
             metering_debug_log: AtomicBool::new(false),
@@ -1993,6 +2019,13 @@ impl WebSocketServer {
     /// `relay.toml` + CLI overrides). Must be called before `start()`.
     pub async fn set_tenancy(&self, tenancy: TenancyConfig) {
         *self.tenancy.write().await = tenancy;
+    }
+
+    /// DSK-232: replace the connection deadlines. Must precede `start()`. The
+    /// defaults suit production; tests shorten them.
+    #[doc(hidden)]
+    pub async fn set_client_deadlines(&self, deadlines: ClientDeadlines) {
+        *self.client_deadlines.write().await = deadlines;
     }
 
     /// Replace the persistence config (JP-36). Must precede `start()`.
@@ -2282,6 +2315,8 @@ impl WebSocketServer {
         #[cfg(debug_assertions)]
         let panic_tenant_trigger = self.panic_tenant_trigger.read().await.clone();
 
+        let client_deadlines = *self.client_deadlines.read().await;
+
         // Create server state with document store
         let server_state = Arc::new(ServerState::new(
             app_data_dir,
@@ -2301,7 +2336,7 @@ impl WebSocketServer {
             enforce_private_docs,
             #[cfg(debug_assertions)]
             panic_tenant_trigger,
-        ));
+        ).with_client_deadlines(client_deadlines));
 
         // JP-120: seed the blob refcount from the documents already on disk,
         // then sweep orphaned blobs. Done once at startup before serving.
@@ -2638,6 +2673,7 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
     let active_editors = state.active_editor_count().await;
     let active_viewers = state.active_viewer_count().await;
     let rate_limit_rejections = state.rate_limit_rejections();
+    let state_request_rejections = state.state_request_rejections.load(Ordering::Relaxed);
     let version_points = state.version_points.load(Ordering::Relaxed);
     // JP-443: the document half of the storage meter (recorded serialized-JSON
     // bytes, from the durable index — survives eviction) + the on-volume cache
@@ -2712,6 +2748,9 @@ async fn metrics_handler(State(state): State<Arc<ServerState>>) -> impl IntoResp
          # HELP relay_rate_limit_rejections_total Write frames (CRDT + MCP) throttled by the per-workspace fair-use limiter.\n\
          # TYPE relay_rate_limit_rejections_total counter\n\
          relay_rate_limit_rejections_total {rate_limit_rejections}\n\
+         # HELP relay_state_request_rejections_total Sync state requests refused by the per-workspace state-request bucket or a connection's backlog.\n\
+         # TYPE relay_state_request_rejections_total counter\n\
+         relay_state_request_rejections_total {state_request_rejections}\n\
          # HELP relay_version_points_total Recovery points captured this process (periodic + session-end + poison guard).\n\
          # TYPE relay_version_points_total counter\n\
          relay_version_points_total {version_points}\n",
@@ -3182,6 +3221,61 @@ const SESSION_RECHECK_INTERVAL_SECS: u64 = 60;
 /// told to chunk) so a transitional/legacy client isn't punished for one frame.
 const MAX_OVER_CAP_FRAMES: u32 = 3;
 
+/// DSK-232: a connection with this many frames already waiting for it is sent
+/// no more state, since each answer can be the whole document. A join queues at
+/// most three frames for its own client, which leaves room for peers' traffic.
+const STATE_REQUEST_MAX_BACKLOG: usize = 8;
+
+/// DSK-232: the timers that stop one connection holding resources for good.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct ClientDeadlines {
+    /// How long a connection may go without authenticating.
+    pub auth: std::time::Duration,
+    /// The least time a frame gets to reach a client.
+    pub write_floor: std::time::Duration,
+    /// The slowest delivery still treated as a live client, in bytes per
+    /// second: a large frame gets proportionally longer than the floor.
+    pub write_min_bytes_per_sec: u64,
+}
+
+impl Default for ClientDeadlines {
+    fn default() -> Self {
+        Self {
+            auth: std::time::Duration::from_secs(30),
+            write_floor: std::time::Duration::from_secs(30),
+            write_min_bytes_per_sec: 32 * 1024,
+        }
+    }
+}
+
+impl ClientDeadlines {
+    /// How long a frame of `len` bytes may take to reach a client before the
+    /// connection is dropped as no longer reading.
+    pub(crate) fn write_deadline(&self, len: usize) -> std::time::Duration {
+        let rate = self.write_min_bytes_per_sec.max(1);
+        let proportional =
+            std::time::Duration::from_millis((len as u64).saturating_mul(1000) / rate);
+        self.write_floor.max(proportional)
+    }
+}
+
+/// DSK-232: what a connection may send before it authenticates: AUTH itself,
+/// and heartbeats, so a client can tell its socket is alive while it waits.
+fn allowed_before_auth(msg_type: u8) -> bool {
+    matches!(msg_type, MESSAGE_AUTH | MESSAGE_HEARTBEAT)
+}
+
+/// Whether `client_id` has authenticated.
+async fn is_authenticated(client_id: u64, state: &Arc<ServerState>) -> bool {
+    state
+        .clients
+        .read()
+        .await
+        .get(&client_id)
+        .is_some_and(|client| client.authenticated)
+}
+
 /// AU-3: whether `client_id`'s authenticating token is now revoked or past its
 /// expiry. Unauthenticated connections have nothing to recheck yet (`false`).
 async fn session_revoked_or_expired(client_id: u64, state: &Arc<ServerState>) -> bool {
@@ -3285,11 +3379,24 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         }
     });
 
-    // Task to send messages from rx channel to WebSocket
-    let send_task = tokio::spawn(async move {
+    // Task to send messages from rx channel to WebSocket. DSK-232: a frame that
+    // can't be written in time means the client stopped reading, so the task
+    // ends and the loop below drops the connection.
+    let deadlines = state.client_deadlines;
+    let mut send_task = tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
-            if ws_sender.send(Message::Binary(data)).await.is_err() {
-                break;
+            let deadline = deadlines.write_deadline(data.len());
+            match tokio::time::timeout(deadline, ws_sender.send(Message::Binary(data))).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => break,
+                Err(_) => {
+                    log::warn!(
+                        "Client {} stopped reading: a frame went unwritten for {:?}",
+                        client_id,
+                        deadline
+                    );
+                    break;
+                }
             }
         }
     });
@@ -3305,6 +3412,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
 
     // JP-309: per-connection count of over-cap frames; sustained abuse drops.
     let mut over_cap_count: u32 = 0;
+
+    // DSK-232: until it authenticates, a connection may send only AUTH and
+    // heartbeats, and only until the deadline.
+    let mut authenticated = false;
+    let auth_deadline = tokio::time::sleep(deadlines.auth);
+    tokio::pin!(auth_deadline);
 
     // Handle incoming messages from this client
     loop {
@@ -3343,11 +3456,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
                             continue;
                         }
                         if let Some(msg_type) = decode_message_type(&data) {
+                            if !authenticated && !allowed_before_auth(msg_type) {
+                                log::debug!(
+                                    "Client {} sent message type {} before authenticating; ignored",
+                                    client_id, msg_type
+                                );
+                                continue;
+                            }
                             if !handle_message(client_id, msg_type, &data, &state).await {
                                 // A handler panicked. Drop just this connection;
                                 // the cleanup block below removes the client and
                                 // aborts its tasks. Other tenants are unaffected.
                                 break;
+                            }
+                            if msg_type == MESSAGE_AUTH {
+                                authenticated = is_authenticated(client_id, &state).await;
                             }
                         }
                     }
@@ -3366,6 +3489,19 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
                         break;
                     }
                 }
+            }
+            _ = &mut auth_deadline, if !authenticated => {
+                log::info!(
+                    "Client {} disconnected: not authenticated within {:?}",
+                    client_id, deadlines.auth
+                );
+                break;
+            }
+            // DSK-232: the send task ends when the client stops taking delivery
+            // (or has gone), and nothing more can reach it.
+            _ = &mut send_task => {
+                log::debug!("Client {} disconnected: its frames can no longer be delivered", client_id);
+                break;
             }
             _ = recheck.tick() => {
                 if session_revoked_or_expired(client_id, &state).await {
@@ -3733,11 +3869,12 @@ async fn handle_sync_chunk(client_id: u64, data: &[u8], state: &Arc<ServerState>
 /// an ERROR frame); the connection isn't closed.
 async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
     #[allow(clippy::type_complexity)]
-    let (doc_id, workspace_id, user_id, role): (
+    let (doc_id, workspace_id, user_id, role, backlog): (
         Option<DocId>,
         WorkspaceId,
         Option<String>,
         Option<WorkspaceRole>,
+        usize,
     ) = {
         let clients = state.clients.read().await;
         clients
@@ -3748,18 +3885,26 @@ async fn handle_sync(client_id: u64, data: &[u8], state: &Arc<ServerState>) {
                     c.current_workspace_id.clone(),
                     c.user_id.clone(),
                     c.role.clone(),
+                    // Frames already waiting for this client (DSK-232).
+                    c.tx.max_capacity() - c.tx.capacity(),
                 )
             })
-            .unwrap_or_else(|| (None, WorkspaceId::single_tenant(), None, None))
+            .unwrap_or_else(|| (None, WorkspaceId::single_tenant(), None, None, 0))
     };
 
     // DSK-210: a state request (SyncStep1, sub-type 0) is a read that the
     // authoritative Y.Doc answers, so it doesn't draw from the write bucket: a
     // write burst in the workspace can't stop an editor syncing. Every other
     // frame does, and so does a state request that ends up forwarded opaquely
-    // to peers below.
+    // to peers below. DSK-232: state requests have limits of their own instead,
+    // since each answer can be the whole document.
     let state_request = data.len() > 1 && data[1] == 0;
-    if !state_request && !admit_write(client_id, &workspace_id, state).await {
+    let admitted = if state_request {
+        admit_state_request(client_id, &workspace_id, backlog, state).await
+    } else {
+        admit_write(client_id, &workspace_id, state).await
+    };
+    if !admitted {
         return;
     }
 
@@ -3892,6 +4037,36 @@ async fn admit_write(client_id: u64, workspace_id: &WorkspaceId, state: &Arc<Ser
         "ws sync frame rate-limited client_id={} workspace_id={}",
         client_id,
         workspace_id.as_str()
+    );
+    send_rate_limit_error(client_id, state).await;
+    false
+}
+
+/// DSK-232: whether to answer a state request. Each answer can be the whole
+/// document, so a connection with `STATE_REQUEST_MAX_BACKLOG` frames already
+/// waiting for it gets none until it catches up, and the rest draw from the
+/// workspace's state-request bucket. A refusal tells the sender
+/// (ERR_RATE_LIMIT), which re-syncs after a backoff.
+async fn admit_state_request(
+    client_id: u64,
+    workspace_id: &WorkspaceId,
+    backlog: usize,
+    state: &Arc<ServerState>,
+) -> bool {
+    let admitted = backlog < STATE_REQUEST_MAX_BACKLOG
+        && match &state.state_request_limiter {
+            Some(limiter) => limiter.check_key(workspace_id).is_ok(),
+            None => true,
+        };
+    if admitted {
+        return true;
+    }
+    state.state_request_rejections.fetch_add(1, Ordering::Relaxed);
+    log::debug!(
+        "state request refused client_id={} workspace_id={} backlog={}",
+        client_id,
+        workspace_id.as_str(),
+        backlog
     );
     send_rate_limit_error(client_id, state).await;
     false
@@ -4109,9 +4284,12 @@ async fn handle_join_doc(client_id: u64, data: &[u8], state: &Arc<ServerState>) 
 
 /// Send data to a specific client
 async fn send_to_client(client_id: u64, data: Vec<u8>, state: &Arc<ServerState>) {
-    let clients = state.clients.read().await;
-    if let Some(client) = clients.get(&client_id) {
-        let _ = client.tx.send(data).await;
+    // DSK-232: wait on the client's queue without holding the client map. A
+    // client that stops reading fills its queue, and every connect, disconnect
+    // and join on the pod would otherwise wait behind it.
+    let tx = state.clients.read().await.get(&client_id).map(|client| client.tx.clone());
+    if let Some(tx) = tx {
+        let _ = tx.send(data).await;
     }
 }
 
@@ -4626,6 +4804,12 @@ mod tests {
         let mut tenancy = TenancyConfig::default();
         tenancy.limits.writes_per_sec = 1;
         tenancy.limits.writes_burst = 1;
+        joined(tenancy).await
+    }
+
+    /// A client joined to a relay doc, with the join's own frames already
+    /// drained from `rx`.
+    async fn joined(tenancy: TenancyConfig) -> (Arc<ServerState>, u64, mpsc::Receiver<Vec<u8>>) {
         let state = test_server_state(tenancy).await;
         let ws = WorkspaceId::single_tenant();
         let doc = serde_json::json!({
@@ -4711,6 +4895,151 @@ mod tests {
 
         handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
         assert!(is_rate_limit_error(&rx.try_recv().expect("an error frame")));
+    }
+
+    /// DSK-232: an authenticated client with a queue of `capacity` frames.
+    async fn connect_test_client(
+        state: &Arc<ServerState>,
+        capacity: usize,
+    ) -> (u64, mpsc::Receiver<Vec<u8>>) {
+        let (tx, rx) = mpsc::channel(capacity);
+        let client_id = state.next_client_id();
+        state.clients.write().await.insert(
+            client_id,
+            ClientState {
+                id: client_id,
+                user_id: Some(format!("user-{client_id}")),
+                username: None,
+                role: Some(WorkspaceRole::Member),
+                current_doc_id: None,
+                current_workspace_id: WorkspaceId::single_tenant(),
+                authenticated: true,
+                jti: None,
+                token_exp: None,
+                tx,
+                reassembly: chunk::ChunkReassembler::default(),
+            },
+        );
+        (client_id, rx)
+    }
+
+    /// DSK-232: a client that stops reading fills its queue. Waiting on it must
+    /// not hold up anyone else, even while a new connection needs the client map.
+    #[tokio::test]
+    async fn a_client_that_stops_reading_does_not_hold_up_the_others() {
+        let state = test_server_state(TenancyConfig::default()).await;
+        let (stalled, _stalled_rx) = connect_test_client(&state, 1).await;
+        let (healthy, mut healthy_rx) = connect_test_client(&state, 4).await;
+
+        // The stalled client's queue is full, so its next reply waits.
+        send_to_client(stalled, vec![MESSAGE_HEARTBEAT], &state).await;
+        let waiting = tokio::spawn({
+            let state = state.clone();
+            async move { handle_message(stalled, MESSAGE_HEARTBEAT, &[MESSAGE_HEARTBEAT], &state).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished(), "the stalled client's reply should be waiting");
+
+        // A new connection needs the client map...
+        let connecting = tokio::spawn({
+            let state = state.clone();
+            async move { connect_test_client(&state, 4).await.0 }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), connecting)
+            .await
+            .expect("a new connection waited on the stalled client")
+            .expect("connected");
+
+        // ...and the healthy client is still answered.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            handle_message(healthy, MESSAGE_HEARTBEAT, &[MESSAGE_HEARTBEAT], &state),
+        )
+        .await
+        .expect("the healthy client waited on the stalled client");
+        assert_eq!(healthy_rx.try_recv().expect("an echo"), vec![MESSAGE_HEARTBEAT]);
+        waiting.abort();
+    }
+
+    /// DSK-232: a frame gets at least the floor, and a large one gets the time a
+    /// slow but live link needs.
+    #[test]
+    fn a_large_frame_gets_longer_to_reach_a_client() {
+        let deadlines = ClientDeadlines::default();
+        assert_eq!(deadlines.write_deadline(3), deadlines.write_floor);
+        // 2.5 MiB at 32 KiB/s takes 80 s, past the 30 s floor.
+        assert_eq!(deadlines.write_deadline(2_621_440), std::time::Duration::from_secs(80));
+    }
+
+    /// DSK-232: before it authenticates, a connection may only authenticate and
+    /// check that its socket is alive.
+    #[test]
+    fn only_auth_and_heartbeats_are_handled_before_authentication() {
+        assert!(allowed_before_auth(MESSAGE_AUTH));
+        assert!(allowed_before_auth(MESSAGE_HEARTBEAT));
+        for msg_type in [MESSAGE_SYNC, MESSAGE_AWARENESS, MESSAGE_JOIN_DOC, MESSAGE_SYNC_CHUNK] {
+            assert!(!allowed_before_auth(msg_type), "message type {msg_type}");
+        }
+    }
+
+    /// DSK-232: state requests draw from a bucket of their own, sized by the read
+    /// quota, and a refusal is reported like any other.
+    #[tokio::test]
+    async fn state_requests_draw_from_their_own_bucket() {
+        let mut tenancy = TenancyConfig::default();
+        tenancy.limits.reads_per_sec = 1;
+        tenancy.limits.reads_burst = 1;
+        tenancy.limits.writes_per_sec = 1;
+        tenancy.limits.writes_burst = 1;
+        let (state, client_id, mut rx) = joined(tenancy).await;
+
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+        let reply = rx.try_recv().expect("a reply");
+        assert_eq!((reply[0], reply[1]), (MESSAGE_SYNC, 1), "SyncStep2");
+
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+        assert!(is_rate_limit_error(&rx.try_recv().expect("an error frame")));
+        assert_eq!(state.state_request_rejections.load(Ordering::Relaxed), 1);
+        assert_eq!(state.rate_limit_rejections(), 0, "not counted as a write");
+        let metrics = metrics_handler(State(state.clone())).await.into_response();
+        let body = axum::body::to_bytes(metrics.into_body(), usize::MAX).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\nrelay_state_request_rejections_total 1\n"), "{body}");
+        // The write bucket is untouched: it still holds its one write.
+        assert!(state.write_limiter().check_key(&WorkspaceId::single_tenant()).is_ok());
+    }
+
+    /// DSK-232: a read quota of 0 means unlimited, as it does for MCP reads.
+    #[tokio::test]
+    async fn state_requests_are_unlimited_without_a_read_quota() {
+        let mut tenancy = TenancyConfig::default();
+        tenancy.limits.reads_per_sec = 0;
+        tenancy.limits.reads_burst = 1;
+        let (state, client_id, mut rx) = joined(tenancy).await;
+        for _ in 0..5 {
+            handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+            let reply = rx.try_recv().expect("a reply");
+            assert_eq!((reply[0], reply[1]), (MESSAGE_SYNC, 1), "SyncStep2");
+        }
+    }
+
+    /// DSK-232: a connection that isn't taking delivery is sent no more state
+    /// until it catches up.
+    #[tokio::test]
+    async fn a_connection_with_a_backlog_is_sent_no_more_state() {
+        let (state, client_id, mut rx) = joined(TenancyConfig::default()).await;
+        for _ in 0..STATE_REQUEST_MAX_BACKLOG {
+            send_to_client(client_id, vec![MESSAGE_HEARTBEAT], &state).await;
+        }
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+        let frames: Vec<Vec<u8>> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(frames.len(), STATE_REQUEST_MAX_BACKLOG + 1);
+        assert!(is_rate_limit_error(frames.last().expect("a frame")), "refused, not answered");
+
+        // Caught up, it is answered again.
+        handle_sync(client_id, &[MESSAGE_SYNC, 0, 1, 0], &state).await;
+        let reply = rx.try_recv().expect("a reply");
+        assert_eq!((reply[0], reply[1]), (MESSAGE_SYNC, 1), "SyncStep2");
     }
 
     /// DSK-210: pin the limiter's clock. A TSC-backed clock (governor's default
