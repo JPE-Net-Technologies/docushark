@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useDocumentStore } from './documentStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import type { Shape } from '../shapes/Shape';
-import type { RelaxedFocus } from '../ui/layout/types';
+import type { EditingSurface, RelaxedFocus } from '../ui/layout/types';
 import type { FileDescriptor } from '../ui/fileDescriptor';
 
 /** What the file viewer is currently showing. */
@@ -131,6 +131,12 @@ export interface SessionState {
   hoveredId: string | null;
   /** ID of text shape currently being edited (null if not editing) */
   editingTextId: string | null;
+
+  /**
+   * The selection bar's More asked for the Properties panel (DSK-225): it follows
+   * the selection until closed. Ephemeral.
+   */
+  propertiesRequested: boolean;
   /**
    * The file currently open in the viewer, or null (JP-495).
    *
@@ -180,6 +186,12 @@ export interface SessionState {
    * Relaxed layout. See `resolveRegions` in ui/layout/modes.ts.
    */
   relaxedFocus: RelaxedFocus;
+  /**
+   * The editing surface last focused or pointed at (DSK-211); null until the
+   * first interaction. Ephemeral. Only consulted while both surfaces are on
+   * screen — see `resolveActiveSurface` in ui/layout/modes.ts.
+   */
+  lastSurface: EditingSurface | null;
 }
 
 /**
@@ -212,6 +224,7 @@ export interface SessionActions {
 
   // Text editing
   startTextEdit: (id: string) => void;
+  setPropertiesRequested: (requested: boolean) => void;
   stopTextEdit: () => void;
   isEditingText: () => boolean;
 
@@ -258,6 +271,8 @@ export interface SessionActions {
   setRelaxedFocus: (focus: RelaxedFocus) => void;
   /** Advance the Relaxed focus write → split → diagram → write. */
   cycleRelaxedFocus: () => void;
+  /** Record the editing surface last focused or pointed at. */
+  setLastSurface: (surface: EditingSurface) => void;
 
   // Page Camera
   /** Save current camera state for a page */
@@ -310,6 +325,7 @@ const initialState: SessionState = {
   isInteracting: false,
   hoveredId: null,
   editingTextId: null,
+  propertiesRequested: false,
   viewingFile: null,
   fileViewerMode: 'modal',
   snapSettings: { ...DEFAULT_SNAP_SETTINGS },
@@ -320,6 +336,7 @@ const initialState: SessionState = {
   blobSyncProgress: null,
   editingGroupId: null,
   relaxedFocus: 'write',
+  lastSurface: null,
 };
 
 /**
@@ -425,6 +442,10 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
   },
 
   // Text editing
+  setPropertiesRequested: (requested: boolean) => {
+    set({ propertiesRequested: requested });
+  },
+
   startTextEdit: (id: string) => {
     set({ editingTextId: id });
   },
@@ -552,6 +573,10 @@ export const useSessionStore = create<SessionState & SessionActions>()((set, get
     const idx = order.indexOf(get().relaxedFocus);
     const next = order[(idx + 1) % order.length] ?? 'write';
     set({ relaxedFocus: next });
+  },
+
+  setLastSurface: (surface: EditingSurface) => {
+    if (get().lastSurface !== surface) set({ lastSurface: surface });
   },
 
 

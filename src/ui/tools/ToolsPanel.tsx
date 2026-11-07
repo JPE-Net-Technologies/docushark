@@ -43,6 +43,11 @@ export interface ToolsPanelProps {
   onAction?: () => void;
   /** Open the command palette. Rendered as its own tile, always last. */
   onOpenPalette?: () => void;
+  /**
+   * On a phone (DSK-222): the commands a desktop has its own button for join
+   * the grid, and no tile shows a shortcut, with no keyboard to press it on.
+   */
+  phone?: boolean;
 }
 
 function groupOf(c: Command): ShortcutCategory {
@@ -56,11 +61,11 @@ function groupOf(c: Command): ShortcutCategory {
  */
 const TOOLS_TILE_MIN = 170;
 
-export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
+export function ToolsPanel({ onAction, onOpenPalette, phone = false }: ToolsPanelProps) {
   // Deliberately not memoized on the actions themselves: `canExecute` is read at
   // render time, and the toolbar re-renders when the stores behind those guards
   // change. Caching here would show a stale availability set.
-  const actions = getToolsActions();
+  const actions = getToolsActions(phone);
 
   const groups = useMemo(() => {
     const byGroup = new Map<ShortcutCategory, Command[]>();
@@ -100,7 +105,7 @@ export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
                   ? { chip: action.iconNode }
                   : { icon: action.icon })}
                 label={action.label}
-                {...(action.shortcut ? { value: action.shortcut } : {})}
+                {...(action.shortcut && !phone ? { value: action.shortcut } : {})}
                 onClick={() => {
                   // Same bookkeeping the palette does, so a tool used from here
                   // ranks in the palette's recents too — one action, one history.
@@ -121,7 +126,7 @@ export function ToolsPanel({ onAction, onOpenPalette }: ToolsPanelProps) {
               appearance="button"
               icon={CommandIcon}
               label="Command palette"
-              value={commandShortcut('view.commandPalette')}
+              value={phone ? undefined : commandShortcut('view.commandPalette')}
               hint="Search every action, including ones without a tile."
               wide
               onClick={() => {

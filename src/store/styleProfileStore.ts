@@ -67,12 +67,15 @@ interface StyleProfileState {
    * mutation — the favorite flag — is tracked here as an overlay.
    */
   favoriteDefaultIds: string[];
+  /** Profiles applied on this device, latest first (DSK-225). */
+  recentProfileIds: string[];
 }
 
 /** Shape persisted to localStorage: user profiles only + the favorite overlay. */
 interface PersistedStyleProfiles {
   profiles: StyleProfile[];
   favoriteDefaultIds: string[];
+  recentProfileIds?: string[];
 }
 
 /**
@@ -112,6 +115,8 @@ interface StyleProfileActions {
   deleteProfile: (id: string) => void;
   /** Rename a profile */
   renameProfile: (id: string, name: string) => void;
+  /** Remember that a profile was just applied. */
+  noteProfileUsed: (id: string) => void;
   /** Toggle favorite status */
   toggleFavorite: (id: string) => void;
   /** Get a profile by ID */
@@ -283,6 +288,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
     (set, get) => ({
       profiles: seedProfiles([], []),
       favoriteDefaultIds: [],
+      recentProfileIds: [],
 
       addProfile: (
         name: string,
@@ -379,6 +385,11 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
         }));
       },
 
+      noteProfileUsed: (id: string) => {
+        const others = get().recentProfileIds.filter((recent) => recent !== id);
+        set({ recentProfileIds: [id, ...others].slice(0, 8) });
+      },
+
       toggleFavorite: (id: string) => {
         if (isDefaultProfileId(id)) {
           // Favorite is the only allowed mutation on a built-in; track it in the
@@ -411,7 +422,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
 
       clearProfiles: () => {
         // Drop user profiles + the favorite overlay; reseed canonical built-ins.
-        set({ profiles: seedProfiles([], []), favoriteDefaultIds: [] });
+        set({ profiles: seedProfiles([], []), favoriteDefaultIds: [], recentProfileIds: [] });
       },
 
       getSortedProfiles: () => {
@@ -433,6 +444,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
       partialize: (state): PersistedStyleProfiles => ({
         profiles: state.profiles.filter((p) => !isDefaultProfileId(p.id)),
         favoriteDefaultIds: state.favoriteDefaultIds,
+        recentProfileIds: state.recentProfileIds,
       }),
       migrate: (persisted, version): PersistedStyleProfiles => migrateStyleProfiles(persisted, version),
       merge: (persisted, current) => {
@@ -443,6 +455,7 @@ export const useStyleProfileStore = create<StyleProfileState & StyleProfileActio
           ...current,
           favoriteDefaultIds,
           profiles: seedProfiles(userProfiles, favoriteDefaultIds),
+          recentProfileIds: Array.isArray(prev.recentProfileIds) ? prev.recentProfileIds : [],
         };
       },
     }
@@ -519,6 +532,72 @@ export function getProfileUpdates(profile: StyleProfile, shape: BaseShape): Shap
     Object.assign(updates, facet.apply(profile.properties, shape));
   }
   return updates;
+}
+
+const CUSTOM_PREFIX = 'customProperties.';
+const differs = (a: unknown, b: unknown) => a !== b && JSON.stringify(a) !== JSON.stringify(b);
+
+/**
+ * The properties where a shape differs from what a profile would make it (DSK-224).
+ * Style fields kept among a shape's custom data are named one by one, as the panel
+ * names them: `customProperties.headerBackground`.
+ */
+export function profileDepartures(profile: StyleProfile, shape: BaseShape): string[] {
+  const current = shape as unknown as Record<string, unknown>;
+  return Object.entries(getProfileUpdates(profile, shape)).flatMap(([key, value]) => {
+    if (key !== 'customProperties') return differs(current[key], value) ? [key] : [];
+    const data = (current[key] ?? {}) as Record<string, unknown>;
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([field, fieldValue]) => differs(data[field], fieldValue))
+      .map(([field]) => `${CUSTOM_PREFIX}${field}`);
+  });
+}
+
+/** What returns one property, named as `profileDepartures` names it, to a profile's value. */
+export function getProfilePropertyUpdate(profile: StyleProfile, shape: BaseShape, name: string): ShapeStyleUpdate {
+  const updates = getProfileUpdates(profile, shape) as Record<string, unknown>;
+  if (!name.startsWith(CUSTOM_PREFIX)) return name in updates ? ({ [name]: updates[name] } as ShapeStyleUpdate) : {};
+  const field = name.slice(CUSTOM_PREFIX.length);
+  const target = updates['customProperties'] as Record<string, unknown> | undefined;
+  if (!target || !(field in target)) return {};
+  const data = (shape as unknown as Record<string, unknown>)['customProperties'] as Record<string, unknown> | undefined;
+  return { customProperties: { ...data, [field]: target[field] } } as ShapeStyleUpdate;
+}
+
+/** Whether a shape looks like a profile: applying it would change nothing. */
+export function shapeMatchesProfile(profile: StyleProfile, shape: BaseShape): boolean {
+  return profileDepartures(profile, shape).length === 0;
+}
+
+/**
+ * The profile a selection goes with, and the properties where it differs from it
+ * (DSK-224). A shape goes with the profile it was linked to when one was applied. A
+ * link to a profile this client doesn't have (a collaborator's own, or one since
+ * deleted) counts for nothing. Without a link, a shape goes with a profile it looks
+ * like: the first of `candidates`, so a hidden profile can be linked but not guessed.
+ * Shapes going different ways have no profile between them.
+ */
+export function resolveSelectionStyle(
+  shapes: BaseShape[],
+  profiles: StyleProfile[],
+  candidates: StyleProfile[] = profiles,
+): { profile: StyleProfile | null; departures: string[] } {
+  const linkOf = (shape: BaseShape) =>
+    shape.styleProfileId ? profiles.find((candidate) => candidate.id === shape.styleProfileId) : undefined;
+  const linked = shapes.map(linkOf).find((candidate) => candidate !== undefined);
+  const profile =
+    linked ??
+    (shapes.length > 0
+      ? candidates.find((candidate) => shapes.every((shape) => shapeMatchesProfile(candidate, shape)))
+      : undefined);
+  if (!profile) return { profile: null, departures: [] };
+
+  const together = shapes.every((shape) => {
+    const link = linkOf(shape);
+    return link ? link.id === profile.id : shapeMatchesProfile(profile, shape);
+  });
+  if (!together) return { profile: null, departures: [] };
+  return { profile, departures: Array.from(new Set(shapes.flatMap((shape) => profileDepartures(profile, shape)))) };
 }
 
 /**

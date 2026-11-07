@@ -102,6 +102,8 @@ export interface AppearancePrefs {
   spellcheck: SpellcheckMode;
   /** Rounded corners on prose tables. Opt-out — on by default (JP-416). */
   roundedTables: boolean;
+  /** Formatting floats above selected prose text (DSK-200). Opt-out; on by default. */
+  selectionBubble: boolean;
   /**
    * Translucent ("glass") chrome on floating surfaces — the settings sheet and
    * the layout menu. Opt-out; on by default (JP-253).
@@ -269,6 +271,8 @@ export interface UIPreferencesActions {
   setSmoothCaret: (smoothCaret: boolean) => void;
   /** Toggle rounded corners on prose tables. */
   setRoundedTables: (roundedTables: boolean) => void;
+  /** Toggle the formatting bubble on selected prose text. */
+  setSelectionBubble: (selectionBubble: boolean) => void;
   /** Toggle translucent ("glass") chrome on floating surfaces. */
   setGlass: (glass: boolean) => void;
   /** Set the interface size multiplier (clamped to [0.9, 1.25]). */
@@ -339,6 +343,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   caretColor: null,
   spellcheck: 'custom',
   roundedTables: true,
+  selectionBubble: true,
   glass: true,
 };
 
@@ -652,6 +657,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setRoundedTables: (roundedTables) => {
         set({ appearancePrefs: { ...get().appearancePrefs, roundedTables } });
+      },
+
+      setSelectionBubble: (selectionBubble) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, selectionBubble } });
       },
 
       setGlass: (glass) => {

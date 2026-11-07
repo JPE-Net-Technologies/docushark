@@ -3,6 +3,7 @@ import { commandShortcut } from '../engine/CommandRegistry';
 import { ChevronsDownUp, ChevronsUpDown, MousePointerClick, ArrowRight, GitFork, Square, Blend } from 'lucide-react';
 import { useSessionStore } from '../store/sessionStore';
 import { useDocumentStore } from '../store/documentStore';
+import { pushEditHistory } from '../store/historyStore';
 import { useActiveDocReadOnly } from '../store/documentRegistry';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
@@ -41,6 +42,8 @@ import { PropertySection } from './PropertySection';
 import { CompactColorInput } from './CompactColorInput';
 import { AlignmentPanel } from './AlignmentPanel';
 import { StyleProfilePanel } from './StyleProfilePanel';
+import { StyleRow } from './styleProfile/StyleRow';
+import { ProfileDeparturesProvider, ProfileProp } from './styleProfile/ProfileDepartures';
 import { IconPicker } from './IconPicker';
 import { NumberInput } from './NumberInput';
 import { PatternPicker } from './PatternPicker';
@@ -482,12 +485,13 @@ function LibraryShapeProperties({
       {groupedProperties.has('appearance') && (
         <PropertySection id="appearance" title={SECTION_LABELS.appearance} defaultExpanded>
           {groupedProperties.get('appearance')!.map((prop) => (
-            <MetadataPropertyEditor
-              key={prop.key}
-              definition={prop}
-              value={getShapeProperty(shape, prop.key)}
-              onChange={(v) => handleUpdate(prop.key, v)}
-            />
+            <ProfileProp key={prop.key} name={prop.key}>
+              <MetadataPropertyEditor
+                definition={prop}
+                value={getShapeProperty(shape, prop.key)}
+                onChange={(v) => handleUpdate(prop.key, v)}
+              />
+            </ProfileProp>
           ))}
         </PropertySection>
       )}
@@ -502,19 +506,23 @@ function LibraryShapeProperties({
             className="property-text-input"
             placeholder="Enter label..."
           />
-          <CompactNumberInput
-            label="Font Size"
-            value={shape.labelFontSize || 14}
-            onChange={(val) => handleUpdate('labelFontSize', val)}
-            min={8}
-            max={100}
-          />
-          <CompactColorInput
-            label="Color"
-            value={shape.labelColor || '#000000'}
-            onChange={(color) => handleUpdate('labelColor', color)}
-            showAuto
-          />
+          <ProfileProp name="labelFontSize">
+            <CompactNumberInput
+              label="Font Size"
+              value={shape.labelFontSize || 14}
+              onChange={(val) => handleUpdate('labelFontSize', val)}
+              min={8}
+              max={100}
+            />
+          </ProfileProp>
+          <ProfileProp name="labelColor">
+            <CompactColorInput
+              label="Color"
+              value={shape.labelColor || '#000000'}
+              onChange={(color) => handleUpdate('labelColor', color)}
+              showAuto
+            />
+          </ProfileProp>
           <CompactColorInput
             label="Background"
             value={shape.labelBackground || ''}
@@ -580,11 +588,13 @@ function LibraryShapeProperties({
         <PropertySection id="icon" title="Icons" defaultExpanded={false}>
           {/* Multi-icon mode: shape has icons array */}
           {(shape.icons && shape.icons.length > 0) ? (
-            <IconListEditor
-              icons={shape.icons}
-              defaultColor={shape.stroke || '#333333'}
-              onChange={(icons) => handleUpdate('icons', icons)}
-            />
+            <ProfileProp name="icons" tall>
+              <IconListEditor
+                icons={shape.icons}
+                defaultColor={shape.stroke || '#333333'}
+                onChange={(icons) => handleUpdate('icons', icons)}
+              />
+            </ProfileProp>
           ) : (
             /* Legacy single-icon mode or no icons */
             <>
@@ -593,10 +603,14 @@ function LibraryShapeProperties({
                 displayMode={shape.iconDisplayMode}
                 onChange={(mode) => handleUpdate('iconDisplayMode', mode)}
               />
-              <IconPicker
-                value={shape.iconId}
-                onChange={(iconId: string | undefined) => handleUpdate('iconId', iconId || '')}
-              />
+              <ProfileProp name="icons">
+                <ProfileProp name="iconId">
+                  <IconPicker
+                    value={shape.iconId}
+                    onChange={(iconId: string | undefined) => handleUpdate('iconId', iconId || '')}
+                  />
+                </ProfileProp>
+              </ProfileProp>
               {shape.iconId && (
                 <>
                   {/* Migrate to multi-icon button */}
@@ -623,76 +637,86 @@ function LibraryShapeProperties({
                   </button>
 
                   {/* Display Mode */}
-                  <div className="compact-select-row">
-                    <label className="compact-select-label">Mode</label>
-                    <select
-                      value={shape.iconDisplayMode || 'inside'}
-                      onChange={(e) => handleUpdate('iconDisplayMode', e.target.value as IconDisplayMode)}
-                      className="compact-select"
-                    >
-                      <option value="inside">Inside</option>
-                      <option value="badge">Badge</option>
-                      <option value="icon-only">Icon Only</option>
-                    </select>
-                  </div>
+                  <ProfileProp name="iconDisplayMode">
+                    <div className="compact-select-row">
+                      <label className="compact-select-label">Mode</label>
+                      <select
+                        value={shape.iconDisplayMode || 'inside'}
+                        onChange={(e) => handleUpdate('iconDisplayMode', e.target.value as IconDisplayMode)}
+                        className="compact-select"
+                      >
+                        <option value="inside">Inside</option>
+                        <option value="badge">Badge</option>
+                        <option value="icon-only">Icon Only</option>
+                      </select>
+                    </div>
+                  </ProfileProp>
 
-                  <CompactNumberInput
-                    label="Size"
-                    value={shape.iconSize || 24}
-                    onChange={(val) => handleUpdate('iconSize', val)}
-                    min={12}
-                    max={64}
-                  />
+                  <ProfileProp name="iconSize">
+                    <CompactNumberInput
+                      label="Size"
+                      value={shape.iconSize || 24}
+                      onChange={(val) => handleUpdate('iconSize', val)}
+                      min={12}
+                      max={64}
+                    />
+                  </ProfileProp>
 
                   {/* Hide padding/position for icon-only mode */}
                   {shape.iconDisplayMode !== 'icon-only' && (
                     <>
-                      <CompactNumberInput
-                        label="Padding"
-                        value={shape.iconPadding || 8}
-                        onChange={(val) => handleUpdate('iconPadding', val)}
-                        min={0}
-                        max={32}
-                      />
-                      <div className="compact-select-row">
-                        <label className="compact-select-label">Position</label>
-                        <select
-                          value={shape.iconPosition || 'top-left'}
-                          onChange={(e) => handleUpdate('iconPosition', e.target.value as IconPosition)}
-                          className="compact-select"
-                        >
-                          <optgroup label="Corners">
-                            <option value="top-left">Top Left</option>
-                            <option value="top-right">Top Right</option>
-                            <option value="bottom-left">Bottom Left</option>
-                            <option value="bottom-right">Bottom Right</option>
-                          </optgroup>
-                          <optgroup label="Edges">
-                            <option value="top">Top Center</option>
-                            <option value="bottom">Bottom Center</option>
-                            <option value="left">Left Center</option>
-                            <option value="right">Right Center</option>
-                          </optgroup>
-                          <optgroup label="Other">
-                            <option value="center">Center</option>
-                          </optgroup>
-                          <optgroup label="Outside">
-                            <option value="top-left-outer">Top Left (Outside)</option>
-                            <option value="top-right-outer">Top Right (Outside)</option>
-                            <option value="bottom-left-outer">Bottom Left (Outside)</option>
-                            <option value="bottom-right-outer">Bottom Right (Outside)</option>
-                          </optgroup>
-                        </select>
-                      </div>
+                      <ProfileProp name="iconPadding">
+                        <CompactNumberInput
+                          label="Padding"
+                          value={shape.iconPadding || 8}
+                          onChange={(val) => handleUpdate('iconPadding', val)}
+                          min={0}
+                          max={32}
+                        />
+                      </ProfileProp>
+                      <ProfileProp name="iconPosition">
+                        <div className="compact-select-row">
+                          <label className="compact-select-label">Position</label>
+                          <select
+                            value={shape.iconPosition || 'top-left'}
+                            onChange={(e) => handleUpdate('iconPosition', e.target.value as IconPosition)}
+                            className="compact-select"
+                          >
+                            <optgroup label="Corners">
+                              <option value="top-left">Top Left</option>
+                              <option value="top-right">Top Right</option>
+                              <option value="bottom-left">Bottom Left</option>
+                              <option value="bottom-right">Bottom Right</option>
+                            </optgroup>
+                            <optgroup label="Edges">
+                              <option value="top">Top Center</option>
+                              <option value="bottom">Bottom Center</option>
+                              <option value="left">Left Center</option>
+                              <option value="right">Right Center</option>
+                            </optgroup>
+                            <optgroup label="Other">
+                              <option value="center">Center</option>
+                            </optgroup>
+                            <optgroup label="Outside">
+                              <option value="top-left-outer">Top Left (Outside)</option>
+                              <option value="top-right-outer">Top Right (Outside)</option>
+                              <option value="bottom-left-outer">Bottom Left (Outside)</option>
+                              <option value="bottom-right-outer">Bottom Right (Outside)</option>
+                            </optgroup>
+                          </select>
+                        </div>
+                      </ProfileProp>
                     </>
                   )}
 
                   <div className="icon-color-row">
-                    <CompactColorInput
-                      label="Color"
-                      value={shape.iconColor || shape.stroke || '#333333'}
-                      onChange={(color) => handleUpdate('iconColor', color)}
-                    />
+                    <ProfileProp name="iconColor">
+                      <CompactColorInput
+                        label="Color"
+                        value={shape.iconColor || shape.stroke || '#333333'}
+                        onChange={(color) => handleUpdate('iconColor', color)}
+                      />
+                    </ProfileProp>
                     {shape.iconColor && (
                       <button
                         className="icon-color-reset"
@@ -706,75 +730,77 @@ function LibraryShapeProperties({
 
                   {/* Badge Options */}
                   {shape.iconDisplayMode === 'badge' && (
-                    <div className="badge-options">
-                      <div className="badge-options-header">Badge Options</div>
-                      <div className="compact-select-row">
-                        <label className="compact-select-label">Shape</label>
-                        <select
-                          value={shape.iconBadge?.shape || 'circle'}
-                          onChange={(e) => {
-                            const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                            handleUpdate('iconBadge', { ...currentBadge, shape: e.target.value as IconBadgeShape });
-                          }}
-                          className="compact-select"
-                        >
-                          <option value="circle">Circle</option>
-                          <option value="rounded-rect">Rounded</option>
-                          <option value="square">Square</option>
-                        </select>
-                      </div>
-                      <CompactColorInput
-                        label="Background"
-                        value={shape.iconBadge?.backgroundColor || '#ffffff'}
-                        onChange={(color) => {
-                          const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                          handleUpdate('iconBadge', { ...currentBadge, backgroundColor: color });
-                        }}
-                      />
-                      <CompactColorInput
-                        label="Border"
-                        value={shape.iconBadge?.borderColor || ''}
-                        onChange={(color) => {
-                          const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                          const updatedBadge = {
-                            ...currentBadge,
-                            borderWidth: color ? (currentBadge.borderWidth || 1) : 0,
-                          };
-                          if (color) {
-                            updatedBadge.borderColor = color;
-                          } else {
-                            delete updatedBadge.borderColor;
-                          }
-                          handleUpdate('iconBadge', updatedBadge);
-                        }}
-                      />
-                      {shape.iconBadge?.borderColor && (
-                        <CompactNumberInput
-                          label="Border Width"
-                          value={shape.iconBadge?.borderWidth || 1}
-                          onChange={(val) => {
-                            const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                            handleUpdate('iconBadge', { ...currentBadge, borderWidth: val });
-                          }}
-                          min={0}
-                          max={4}
-                          suffix="px"
-                        />
-                      )}
-                      <div className="compact-checkbox-row">
-                        <label className="compact-checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={shape.iconBadge?.shadow || false}
+                    <ProfileProp name="iconBadge" tall>
+                      <div className="badge-options">
+                        <div className="badge-options-header">Badge Options</div>
+                        <div className="compact-select-row">
+                          <label className="compact-select-label">Shape</label>
+                          <select
+                            value={shape.iconBadge?.shape || 'circle'}
                             onChange={(e) => {
                               const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                              handleUpdate('iconBadge', { ...currentBadge, shadow: e.target.checked });
+                              handleUpdate('iconBadge', { ...currentBadge, shape: e.target.value as IconBadgeShape });
                             }}
+                            className="compact-select"
+                          >
+                            <option value="circle">Circle</option>
+                            <option value="rounded-rect">Rounded</option>
+                            <option value="square">Square</option>
+                          </select>
+                        </div>
+                        <CompactColorInput
+                          label="Background"
+                          value={shape.iconBadge?.backgroundColor || '#ffffff'}
+                          onChange={(color) => {
+                            const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                            handleUpdate('iconBadge', { ...currentBadge, backgroundColor: color });
+                          }}
+                        />
+                        <CompactColorInput
+                          label="Border"
+                          value={shape.iconBadge?.borderColor || ''}
+                          onChange={(color) => {
+                            const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                            const updatedBadge = {
+                              ...currentBadge,
+                              borderWidth: color ? (currentBadge.borderWidth || 1) : 0,
+                            };
+                            if (color) {
+                              updatedBadge.borderColor = color;
+                            } else {
+                              delete updatedBadge.borderColor;
+                            }
+                            handleUpdate('iconBadge', updatedBadge);
+                          }}
+                        />
+                        {shape.iconBadge?.borderColor && (
+                          <CompactNumberInput
+                            label="Border Width"
+                            value={shape.iconBadge?.borderWidth || 1}
+                            onChange={(val) => {
+                              const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                              handleUpdate('iconBadge', { ...currentBadge, borderWidth: val });
+                            }}
+                            min={0}
+                            max={4}
+                            suffix="px"
                           />
-                          Shadow
-                        </label>
+                        )}
+                        <div className="compact-checkbox-row">
+                          <label className="compact-checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={shape.iconBadge?.shadow || false}
+                              onChange={(e) => {
+                                const currentBadge = shape.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                                handleUpdate('iconBadge', { ...currentBadge, shadow: e.target.checked });
+                              }}
+                            />
+                            Shadow
+                          </label>
+                        </div>
                       </div>
-                    </div>
+                    </ProfileProp>
                   )}
                 </>
               )}
@@ -801,12 +827,13 @@ function LibraryShapeProperties({
       {groupedProperties.has('custom') && (
         <PropertySection id="custom" title={SECTION_LABELS.custom} defaultExpanded>
           {groupedProperties.get('custom')!.map((prop) => (
-            <MetadataPropertyEditor
-              key={prop.key}
-              definition={prop}
-              value={getCustomProperty(shape, prop.key)}
-              onChange={(v) => handleCustomUpdate(prop.key, v)}
-            />
+            <ProfileProp key={prop.key} name={prop.key}>
+              <MetadataPropertyEditor
+                definition={prop}
+                value={getCustomProperty(shape, prop.key)}
+                onChange={(v) => handleCustomUpdate(prop.key, v)}
+              />
+            </ProfileProp>
           ))}
         </PropertySection>
       )}
@@ -952,49 +979,59 @@ function ERDEntityProperties({
           </label>
         </div>
         {rowSeparatorEnabled && (
+          <ProfileProp name="customProperties.rowSeparatorColor">
+            <CompactColorInput
+              label="Separator Color"
+              value={rowSeparatorColor}
+              onChange={(color) => updateCustomProps({ rowSeparatorColor: color })}
+              showNoFill
+            />
+          </ProfileProp>
+        )}
+        <ProfileProp name="customProperties.rowBackgroundColor">
           <CompactColorInput
-            label="Separator Color"
-            value={rowSeparatorColor}
-            onChange={(color) => updateCustomProps({ rowSeparatorColor: color })}
+            label="Row Background"
+            value={rowBackgroundColor}
+            onChange={(color) => updateCustomProps({ rowBackgroundColor: color })}
             showNoFill
           />
-        )}
-        <CompactColorInput
-          label="Row Background"
-          value={rowBackgroundColor}
-          onChange={(color) => updateCustomProps({ rowBackgroundColor: color })}
-          showNoFill
-        />
-        <CompactColorInput
-          label="Alternate Row"
-          value={rowAlternateColor}
-          onChange={(color) => updateCustomProps({ rowAlternateColor: color })}
-          showNoFill
-        />
-        <div className="compact-number-row">
-          <label className="compact-number-label">H Padding</label>
-          <input
-            type="number"
-            value={attributePaddingHorizontal}
-            onChange={(e) => updateCustomProps({ attributePaddingHorizontal: Number(e.target.value) })}
-            className="styled-number-input"
-            min={0}
-            max={50}
-            step={1}
+        </ProfileProp>
+        <ProfileProp name="customProperties.rowAlternateColor">
+          <CompactColorInput
+            label="Alternate Row"
+            value={rowAlternateColor}
+            onChange={(color) => updateCustomProps({ rowAlternateColor: color })}
+            showNoFill
           />
-        </div>
-        <div className="compact-number-row">
-          <label className="compact-number-label">V Padding</label>
-          <input
-            type="number"
-            value={attributePaddingVertical}
-            onChange={(e) => updateCustomProps({ attributePaddingVertical: Number(e.target.value) })}
-            className="styled-number-input"
-            min={0}
-            max={20}
-            step={1}
-          />
-        </div>
+        </ProfileProp>
+        <ProfileProp name="customProperties.attributePaddingHorizontal">
+          <div className="compact-number-row">
+            <label className="compact-number-label">H Padding</label>
+            <input
+              type="number"
+              value={attributePaddingHorizontal}
+              onChange={(e) => updateCustomProps({ attributePaddingHorizontal: Number(e.target.value) })}
+              className="styled-number-input"
+              min={0}
+              max={50}
+              step={1}
+            />
+          </div>
+        </ProfileProp>
+        <ProfileProp name="customProperties.attributePaddingVertical">
+          <div className="compact-number-row">
+            <label className="compact-number-label">V Padding</label>
+            <input
+              type="number"
+              value={attributePaddingVertical}
+              onChange={(e) => updateCustomProps({ attributePaddingVertical: Number(e.target.value) })}
+              className="styled-number-input"
+              min={0}
+              max={20}
+              step={1}
+            />
+          </div>
+        </ProfileProp>
       </PropertySection>
     </>
   );
@@ -1467,19 +1504,23 @@ function FileShapeProperties({
           className="property-text-input"
           placeholder="Uses filename if empty"
         />
-        <CompactNumberInput
-          label="Font Size"
-          value={shape.labelFontSize || 12}
-          onChange={(val) => updateShape(shape.id, { labelFontSize: val })}
-          min={8}
-          max={36}
-        />
-        <CompactColorInput
-          label="Color"
-          value={shape.labelColor || '#333333'}
-          onChange={(color) => updateShape(shape.id, { labelColor: color })}
-          showAuto
-        />
+        <ProfileProp name="labelFontSize">
+          <CompactNumberInput
+            label="Font Size"
+            value={shape.labelFontSize || 12}
+            onChange={(val) => updateShape(shape.id, { labelFontSize: val })}
+            min={8}
+            max={36}
+          />
+        </ProfileProp>
+        <ProfileProp name="labelColor">
+          <CompactColorInput
+            label="Color"
+            value={shape.labelColor || '#333333'}
+            onChange={(color) => updateShape(shape.id, { labelColor: color })}
+            showAuto
+          />
+        </ProfileProp>
       </PropertySection>
 
       <PropertySection id="file-tags" title="Tags" defaultExpanded={false}>
@@ -1536,10 +1577,20 @@ export interface PropertyPanelProps {
   className?: string;
 }
 
-export function PropertyPanel({ className }: PropertyPanelProps = {}) {
+function PropertyPanelBody({ className }: PropertyPanelProps) {
   const selectedIds = useSessionStore((state) => state.selectedIds);
   const shapes = useDocumentStore((state) => state.shapes);
-  const updateShape = useDocumentStore((state) => state.updateShape);
+  const writeShape = useDocumentStore((state) => state.updateShape);
+  // Every edit in the panel goes through here, and each is an undo step. A local
+  // document only undoes to a recorded one, so without this undo removes the shape
+  // that was just edited (DSK-229).
+  const updateShape = useCallback(
+    (id: string, updates: Partial<Shape>) => {
+      pushEditHistory('Edit properties');
+      writeShape(id, updates);
+    },
+    [writeShape],
+  );
   // JP-370: read-only entry clears the selection (so this normally renders the
   // empty state), but if a selection lingers a frame, neutralize edit controls
   // defensively — pointer-events:none over the `inert` attribute, which is
@@ -1756,7 +1807,11 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
       />
       <div className="property-panel-header">
         <span className="property-panel-header-title">
-          Properties{isMultiple && ` (${selectedShapes.length})`}
+          {isMultiple
+            ? `${selectedShapes.length} shapes`
+            : isGroupSelected
+              ? `Group (${(shape as GroupShape).childIds.length})`
+              : (shapeMetadata?.name || shape.type.charAt(0).toUpperCase() + shape.type.slice(1))}
         </span>
         <button
           type="button"
@@ -1768,6 +1823,8 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           {allExpanded ? <ChevronsDownUp size={15} strokeWidth={2} /> : <ChevronsUpDown size={15} strokeWidth={2} />}
         </button>
       </div>
+
+      <StyleRow selectedShapes={selectedShapes} />
 
       {/* Alignment Panel for multi-selection */}
       <AlignmentPanel />
@@ -1785,11 +1842,6 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
       )}
 
       <div className="property-panel-content" ref={contentRef}>
-        {/* Shape Type Badge */}
-        <div className="property-type-badge">
-          {isGroupSelected ? 'Group' : (shapeMetadata?.name || shape.type)}
-          {isGroupSelected && ` (${(shape as GroupShape).childIds.length})`}
-        </div>
 
         {/* Library shape properties - metadata-driven */}
         {isLibraryShapeSelected && shapeMetadata && (
@@ -1833,12 +1885,14 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
         {isGroupSelected && (
           <>
             <PropertySection id="group" title="Group" defaultExpanded>
-              <CompactSliderInput
-                label="Opacity"
-                value={shape.opacity}
-                onChange={(val) => handleBulkUpdate({ opacity: val })}
-                formatValue={(v) => `${Math.round(v * 100)}%`}
-              />
+              <ProfileProp name="opacity">
+                <CompactSliderInput
+                  label="Opacity"
+                  value={shape.opacity}
+                  onChange={(val) => handleBulkUpdate({ opacity: val })}
+                  formatValue={(v) => `${Math.round(v * 100)}%`}
+                />
+              </ProfileProp>
               {groupBounds && (
                 <>
                   <InfoRow label="Size" value={`${Math.round(groupBounds.width)} × ${Math.round(groupBounds.height)}`} />
@@ -1877,12 +1931,14 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                   {(!(shape as GroupShape).patternConfig ||
                     (shape as GroupShape).patternConfig?.type === 'none' ||
                     (shape as GroupShape).patternConfig?.type === 'solid') && (
-                    <CompactColorInput
-                      label="Color"
-                      value={(shape as GroupShape).backgroundColor || '#ffffff'}
-                      onChange={(color) => handleBulkUpdate({ backgroundColor: color })}
-                      showAuto
-                    />
+                    <ProfileProp name="backgroundColor">
+                      <CompactColorInput
+                        label="Color"
+                        value={(shape as GroupShape).backgroundColor || '#ffffff'}
+                        onChange={(color) => handleBulkUpdate({ backgroundColor: color })}
+                        showAuto
+                      />
+                    </ProfileProp>
                   )}
                   <CompactNumberInput
                     label="Padding"
@@ -1891,33 +1947,39 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                     min={0}
                     max={100}
                   />
-                  <CompactNumberInput
-                    label="Radius"
-                    value={(shape as GroupShape).cornerRadius ?? 0}
-                    onChange={(val) => handleBulkUpdate({ cornerRadius: val })}
-                    min={0}
-                    max={50}
-                  />
+                  <ProfileProp name="cornerRadius">
+                    <CompactNumberInput
+                      label="Radius"
+                      value={(shape as GroupShape).cornerRadius ?? 0}
+                      onChange={(val) => handleBulkUpdate({ cornerRadius: val })}
+                      min={0}
+                      max={50}
+                    />
+                  </ProfileProp>
                 </>
               )}
             </PropertySection>
 
             {/* Border Section */}
             <PropertySection id="group-border" title="Border" defaultExpanded={false}>
-              <CompactColorInput
-                label="Color"
-                value={(shape as GroupShape).borderColor || '#000000'}
-                onChange={(color) => handleBulkUpdate({ borderColor: color })}
-                showNoFill
-                showAuto
-              />
-              <CompactNumberInput
-                label="Width"
-                value={(shape as GroupShape).borderWidth ?? 0}
-                onChange={(val) => handleBulkUpdate({ borderWidth: val })}
-                min={0}
-                max={20}
-              />
+              <ProfileProp name="borderColor">
+                <CompactColorInput
+                  label="Color"
+                  value={(shape as GroupShape).borderColor || '#000000'}
+                  onChange={(color) => handleBulkUpdate({ borderColor: color })}
+                  showNoFill
+                  showAuto
+                />
+              </ProfileProp>
+              <ProfileProp name="borderWidth">
+                <CompactNumberInput
+                  label="Width"
+                  value={(shape as GroupShape).borderWidth ?? 0}
+                  onChange={(val) => handleBulkUpdate({ borderWidth: val })}
+                  min={0}
+                  max={20}
+                />
+              </ProfileProp>
               {((shape as GroupShape).borderWidth ?? 0) > 0 && (
                 <BorderStylePicker
                   value={(shape as GroupShape).borderDashArray}
@@ -1945,18 +2007,22 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               </div>
               {(shape as GroupShape).label && (
                 <>
-                  <CompactNumberInput
-                    label="Font Size"
-                    value={(shape as GroupShape).labelFontSize ?? 14}
-                    onChange={(val) => handleBulkUpdate({ labelFontSize: val })}
-                    min={8}
-                    max={48}
-                  />
-                  <CompactColorInput
-                    label="Color"
-                    value={(shape as GroupShape).labelColor || '#000000'}
-                    onChange={(color) => handleBulkUpdate({ labelColor: color })}
-                  />
+                  <ProfileProp name="labelFontSize">
+                    <CompactNumberInput
+                      label="Font Size"
+                      value={(shape as GroupShape).labelFontSize ?? 14}
+                      onChange={(val) => handleBulkUpdate({ labelFontSize: val })}
+                      min={8}
+                      max={48}
+                    />
+                  </ProfileProp>
+                  <ProfileProp name="labelColor">
+                    <CompactColorInput
+                      label="Color"
+                      value={(shape as GroupShape).labelColor || '#000000'}
+                      onChange={(color) => handleBulkUpdate({ labelColor: color })}
+                    />
+                  </ProfileProp>
                   <CompactColorInput
                     label="Background"
                     value={(shape as GroupShape).labelBackground || ''}
@@ -2039,59 +2105,69 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           >
             {/* Fill Color (Text shapes always show — `fill` is the text colour) */}
             {(shape.fill !== null || isText(shape)) && (
-              <CompactColorInput
-                label={
-                  isText(shape)
-                    ? (isMultiple && getSharedValue(selectedShapes, (s) => s.fill) === MIXED ? 'Color (Mixed)' : 'Color')
-                    : (isMultiple && getSharedValue(selectedShapes, (s) => s.fill) === MIXED ? 'Fill (Mixed)' : 'Fill')
-                }
-                value={shape.fill || ''}
-                onChange={(color) => handleBulkUpdate({ fill: color })}
-                showNoFill={!isText(shape)}
-                showAuto
-              />
+              <ProfileProp name="fill">
+                <CompactColorInput
+                  label={
+                    isText(shape)
+                      ? (isMultiple && getSharedValue(selectedShapes, (s) => s.fill) === MIXED ? 'Color (Mixed)' : 'Color')
+                      : (isMultiple && getSharedValue(selectedShapes, (s) => s.fill) === MIXED ? 'Fill (Mixed)' : 'Fill')
+                  }
+                  value={shape.fill || ''}
+                  onChange={(color) => handleBulkUpdate({ fill: color })}
+                  showNoFill={!isText(shape)}
+                  showAuto
+                />
+              </ProfileProp>
             )}
 
             {/* Stroke Color & Width */}
             {shape.stroke !== null && (
               <div className="stroke-row">
-                <CompactColorInput
-                  label={isMultiple && getSharedValue(selectedShapes, (s) => s.stroke) === MIXED ? 'Stroke (Mixed)' : 'Stroke'}
-                  value={shape.stroke || ''}
-                  onChange={(color) => handleBulkUpdate({ stroke: color })}
-                  showAuto
-                />
-                <CompactNumberInput
-                  label="W"
-                  value={shape.strokeWidth}
-                  onChange={(val) => handleBulkUpdate({ strokeWidth: val })}
-                  min={0}
-                  max={50}
-                />
+                <ProfileProp name="stroke">
+                  <CompactColorInput
+                    label={isMultiple && getSharedValue(selectedShapes, (s) => s.stroke) === MIXED ? 'Stroke (Mixed)' : 'Stroke'}
+                    value={shape.stroke || ''}
+                    onChange={(color) => handleBulkUpdate({ stroke: color })}
+                    showAuto
+                  />
+                </ProfileProp>
+                <ProfileProp name="strokeWidth">
+                  <CompactNumberInput
+                    label="W"
+                    value={shape.strokeWidth}
+                    onChange={(val) => handleBulkUpdate({ strokeWidth: val })}
+                    min={0}
+                    max={50}
+                  />
+                </ProfileProp>
               </div>
             )}
 
             {/* Opacity */}
-            <CompactSliderInput
-              label={isMultiple && getSharedValue(selectedShapes, (s) => s.opacity) === MIXED ? 'Opacity (Mixed)' : 'Opacity'}
-              value={shape.opacity}
-              onChange={(val) => handleBulkUpdate({ opacity: val })}
-              formatValue={(v) => `${Math.round(v * 100)}%`}
-            />
+            <ProfileProp name="opacity">
+              <CompactSliderInput
+                label={isMultiple && getSharedValue(selectedShapes, (s) => s.opacity) === MIXED ? 'Opacity (Mixed)' : 'Opacity'}
+                value={shape.opacity}
+                onChange={(val) => handleBulkUpdate({ opacity: val })}
+                formatValue={(v) => `${Math.round(v * 100)}%`}
+              />
+            </ProfileProp>
 
             {/* Corner Radius for rectangles */}
             {isRectangle(shape) && (
-              <CompactNumberInput
-                label="Radius"
-                value={shape.cornerRadius}
-                onChange={(val) => {
-                  selectedShapes.forEach((s) => {
-                    if (isRectangle(s)) updateShape(s.id, { cornerRadius: val });
-                  });
-                }}
-                min={0}
-                max={100}
-              />
+              <ProfileProp name="cornerRadius">
+                <CompactNumberInput
+                  label="Radius"
+                  value={shape.cornerRadius}
+                  onChange={(val) => {
+                    selectedShapes.forEach((s) => {
+                      if (isRectangle(s)) updateShape(s.id, { cornerRadius: val });
+                    });
+                  }}
+                  min={0}
+                  max={100}
+                />
+              </ProfileProp>
             )}
           </PropertySection>
         )}
@@ -2113,32 +2189,36 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               className="property-text-input"
               placeholder="Enter label..."
             />
-            <CompactNumberInput
-              label="Font Size"
-              value={shape.labelFontSize || 14}
-              onChange={(val) => {
-                selectedShapes.forEach((s) => {
-                  if (isRectangle(s) || isEllipse(s)) {
-                    updateShape(s.id, { labelFontSize: val });
-                  }
-                });
-              }}
-              min={8}
-              max={100}
-              suffix="px"
-            />
-            <CompactColorInput
-              label="Color"
-              value={shape.labelColor || shape.stroke || '#000000'}
-              onChange={(color) => {
-                selectedShapes.forEach((s) => {
-                  if (isRectangle(s) || isEllipse(s)) {
-                    updateShape(s.id, { labelColor: color });
-                  }
-                });
-              }}
-              showAuto
-            />
+            <ProfileProp name="labelFontSize">
+              <CompactNumberInput
+                label="Font Size"
+                value={shape.labelFontSize || 14}
+                onChange={(val) => {
+                  selectedShapes.forEach((s) => {
+                    if (isRectangle(s) || isEllipse(s)) {
+                      updateShape(s.id, { labelFontSize: val });
+                    }
+                  });
+                }}
+                min={8}
+                max={100}
+                suffix="px"
+              />
+            </ProfileProp>
+            <ProfileProp name="labelColor">
+              <CompactColorInput
+                label="Color"
+                value={shape.labelColor || shape.stroke || '#000000'}
+                onChange={(color) => {
+                  selectedShapes.forEach((s) => {
+                    if (isRectangle(s) || isEllipse(s)) {
+                      updateShape(s.id, { labelColor: color });
+                    }
+                  });
+                }}
+                showAuto
+              />
+            </ProfileProp>
             <CompactColorInput
               label="Background"
               value={shape.labelBackground || ''}
@@ -2226,30 +2306,36 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           <PropertySection id="icon" title="Icons" defaultExpanded={false}>
             {/* Multi-icon mode: shape has icons array */}
             {(shape.icons && shape.icons.length > 0) ? (
-              <IconListEditor
-                icons={shape.icons}
-                defaultColor={shape.stroke || '#333333'}
-                onChange={(icons) => {
-                  selectedShapes.forEach((s) => {
-                    if (isRectangle(s) || isEllipse(s)) {
-                      updateShape(s.id, { icons });
-                    }
-                  });
-                }}
-              />
-            ) : (
-              /* Legacy single-icon mode or no icons */
-              <>
-                <IconPicker
-                  value={shape.iconId}
-                  onChange={(iconId: string | undefined) => {
+              <ProfileProp name="icons" tall>
+                <IconListEditor
+                  icons={shape.icons}
+                  defaultColor={shape.stroke || '#333333'}
+                  onChange={(icons) => {
                     selectedShapes.forEach((s) => {
                       if (isRectangle(s) || isEllipse(s)) {
-                        updateShape(s.id, { iconId: iconId || '' });
+                        updateShape(s.id, { icons });
                       }
                     });
                   }}
                 />
+              </ProfileProp>
+            ) : (
+              /* Legacy single-icon mode or no icons */
+              <>
+                <ProfileProp name="icons">
+                  <ProfileProp name="iconId">
+                    <IconPicker
+                      value={shape.iconId}
+                      onChange={(iconId: string | undefined) => {
+                        selectedShapes.forEach((s) => {
+                          if (isRectangle(s) || isEllipse(s)) {
+                            updateShape(s.id, { iconId: iconId || '' });
+                          }
+                        });
+                      }}
+                    />
+                  </ProfileProp>
+                </ProfileProp>
                 {shape.iconId && (
                   <>
                     {/* Migrate to multi-icon button */}
@@ -2283,110 +2369,120 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                     </button>
 
                     {/* Display Mode Selector */}
-                    <div className="compact-select-row">
-                      <label className="compact-select-label">Mode</label>
-                      <select
-                        value={shape.iconDisplayMode || 'inside'}
-                        onChange={(e) => {
-                          const val = e.target.value as IconDisplayMode;
+                    <ProfileProp name="iconDisplayMode">
+                      <div className="compact-select-row">
+                        <label className="compact-select-label">Mode</label>
+                        <select
+                          value={shape.iconDisplayMode || 'inside'}
+                          onChange={(e) => {
+                            const val = e.target.value as IconDisplayMode;
+                            selectedShapes.forEach((s) => {
+                              if (isRectangle(s) || isEllipse(s)) {
+                                updateShape(s.id, { iconDisplayMode: val });
+                              }
+                            });
+                          }}
+                          className="compact-select"
+                        >
+                          <option value="inside">Inside</option>
+                          <option value="badge">Badge</option>
+                          <option value="icon-only">Icon Only</option>
+                        </select>
+                      </div>
+                    </ProfileProp>
+
+                    <ProfileProp name="iconSize">
+                      <CompactNumberInput
+                        label="Size"
+                        value={shape.iconSize || 24}
+                        onChange={(val) => {
                           selectedShapes.forEach((s) => {
                             if (isRectangle(s) || isEllipse(s)) {
-                              updateShape(s.id, { iconDisplayMode: val });
+                              updateShape(s.id, { iconSize: val });
                             }
                           });
                         }}
-                        className="compact-select"
-                      >
-                        <option value="inside">Inside</option>
-                        <option value="badge">Badge</option>
-                        <option value="icon-only">Icon Only</option>
-                      </select>
-                    </div>
-
-                    <CompactNumberInput
-                      label="Size"
-                      value={shape.iconSize || 24}
-                      onChange={(val) => {
-                        selectedShapes.forEach((s) => {
-                          if (isRectangle(s) || isEllipse(s)) {
-                            updateShape(s.id, { iconSize: val });
-                          }
-                        });
-                      }}
-                      min={12}
-                      max={64}
-                      suffix="px"
-                    />
+                        min={12}
+                        max={64}
+                        suffix="px"
+                      />
+                    </ProfileProp>
 
                     {/* Hide padding/position for icon-only mode */}
                     {shape.iconDisplayMode !== 'icon-only' && (
                       <>
-                        <CompactNumberInput
-                          label="Padding"
-                          value={shape.iconPadding || 8}
-                          onChange={(val) => {
-                            selectedShapes.forEach((s) => {
-                              if (isRectangle(s) || isEllipse(s)) {
-                                updateShape(s.id, { iconPadding: val });
-                              }
-                            });
-                          }}
-                          min={0}
-                          max={32}
-                          suffix="px"
-                        />
-                        <div className="compact-select-row">
-                          <label className="compact-select-label">Position</label>
-                          <select
-                            value={shape.iconPosition || 'top-left'}
-                            onChange={(e) => {
-                              const val = e.target.value as IconPosition;
+                        <ProfileProp name="iconPadding">
+                          <CompactNumberInput
+                            label="Padding"
+                            value={shape.iconPadding || 8}
+                            onChange={(val) => {
                               selectedShapes.forEach((s) => {
                                 if (isRectangle(s) || isEllipse(s)) {
-                                  updateShape(s.id, { iconPosition: val });
+                                  updateShape(s.id, { iconPadding: val });
                                 }
                               });
                             }}
-                            className="compact-select"
-                          >
-                            <optgroup label="Corners">
-                              <option value="top-left">Top Left</option>
-                              <option value="top-right">Top Right</option>
-                              <option value="bottom-left">Bottom Left</option>
-                              <option value="bottom-right">Bottom Right</option>
-                            </optgroup>
-                            <optgroup label="Edges">
-                              <option value="top">Top Center</option>
-                              <option value="bottom">Bottom Center</option>
-                              <option value="left">Left Center</option>
-                              <option value="right">Right Center</option>
-                            </optgroup>
-                            <optgroup label="Other">
-                              <option value="center">Center</option>
-                            </optgroup>
-                            <optgroup label="Outside">
-                              <option value="top-left-outer">Top Left (Outside)</option>
-                              <option value="top-right-outer">Top Right (Outside)</option>
-                              <option value="bottom-left-outer">Bottom Left (Outside)</option>
-                              <option value="bottom-right-outer">Bottom Right (Outside)</option>
-                            </optgroup>
-                          </select>
-                        </div>
+                            min={0}
+                            max={32}
+                            suffix="px"
+                          />
+                        </ProfileProp>
+                        <ProfileProp name="iconPosition">
+                          <div className="compact-select-row">
+                            <label className="compact-select-label">Position</label>
+                            <select
+                              value={shape.iconPosition || 'top-left'}
+                              onChange={(e) => {
+                                const val = e.target.value as IconPosition;
+                                selectedShapes.forEach((s) => {
+                                  if (isRectangle(s) || isEllipse(s)) {
+                                    updateShape(s.id, { iconPosition: val });
+                                  }
+                                });
+                              }}
+                              className="compact-select"
+                            >
+                              <optgroup label="Corners">
+                                <option value="top-left">Top Left</option>
+                                <option value="top-right">Top Right</option>
+                                <option value="bottom-left">Bottom Left</option>
+                                <option value="bottom-right">Bottom Right</option>
+                              </optgroup>
+                              <optgroup label="Edges">
+                                <option value="top">Top Center</option>
+                                <option value="bottom">Bottom Center</option>
+                                <option value="left">Left Center</option>
+                                <option value="right">Right Center</option>
+                              </optgroup>
+                              <optgroup label="Other">
+                                <option value="center">Center</option>
+                              </optgroup>
+                              <optgroup label="Outside">
+                                <option value="top-left-outer">Top Left (Outside)</option>
+                                <option value="top-right-outer">Top Right (Outside)</option>
+                                <option value="bottom-left-outer">Bottom Left (Outside)</option>
+                                <option value="bottom-right-outer">Bottom Right (Outside)</option>
+                              </optgroup>
+                            </select>
+                          </div>
+                        </ProfileProp>
                       </>
                     )}
 
                     <div className="icon-color-row">
-                      <CompactColorInput
-                        label="Color"
-                        value={shape.iconColor || shape.stroke || '#333333'}
-                        onChange={(color) => {
-                          selectedShapes.forEach((s) => {
-                            if (isRectangle(s) || isEllipse(s)) {
-                              updateShape(s.id, { iconColor: color });
-                            }
-                          });
-                        }}
-                      />
+                      <ProfileProp name="iconColor">
+                        <CompactColorInput
+                          label="Color"
+                          value={shape.iconColor || shape.stroke || '#333333'}
+                          onChange={(color) => {
+                            selectedShapes.forEach((s) => {
+                              if (isRectangle(s) || isEllipse(s)) {
+                                updateShape(s.id, { iconColor: color });
+                              }
+                            });
+                          }}
+                        />
+                      </ProfileProp>
                       {shape.iconColor && (
                         <button
                           className="icon-color-reset"
@@ -2406,105 +2502,107 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
 
                     {/* Badge Options (when mode = 'badge') */}
                     {shape.iconDisplayMode === 'badge' && (
-                      <div className="badge-options">
-                        <div className="badge-options-header">Badge Options</div>
-                        <div className="compact-select-row">
-                          <label className="compact-select-label">Shape</label>
-                          <select
-                            value={shape.iconBadge?.shape || 'circle'}
-                            onChange={(e) => {
-                              const badgeShape = e.target.value as IconBadgeShape;
-                              selectedShapes.forEach((s) => {
-                                if (isRectangle(s) || isEllipse(s)) {
-                                  const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                                  updateShape(s.id, {
-                                    iconBadge: { ...currentBadge, shape: badgeShape },
-                                  });
-                                }
-                              });
-                            }}
-                            className="compact-select"
-                          >
-                            <option value="circle">Circle</option>
-                            <option value="rounded-rect">Rounded</option>
-                            <option value="square">Square</option>
-                          </select>
-                        </div>
-                        <CompactColorInput
-                          label="Background"
-                          value={shape.iconBadge?.backgroundColor || '#ffffff'}
-                          onChange={(color) => {
-                            selectedShapes.forEach((s) => {
-                              if (isRectangle(s) || isEllipse(s)) {
-                                const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                                updateShape(s.id, {
-                                  iconBadge: { ...currentBadge, backgroundColor: color },
-                                });
-                              }
-                            });
-                          }}
-                        />
-                        <CompactColorInput
-                          label="Border"
-                          value={shape.iconBadge?.borderColor || ''}
-                          onChange={(color) => {
-                            selectedShapes.forEach((s) => {
-                              if (isRectangle(s) || isEllipse(s)) {
-                                const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                                const updatedBadge = {
-                                  ...currentBadge,
-                                  borderWidth: color ? (currentBadge.borderWidth || 1) : 0,
-                                };
-                                if (color) {
-                                  updatedBadge.borderColor = color;
-                                } else {
-                                  delete updatedBadge.borderColor;
-                                }
-                                updateShape(s.id, { iconBadge: updatedBadge });
-                              }
-                            });
-                          }}
-                        />
-                        {shape.iconBadge?.borderColor && (
-                          <CompactNumberInput
-                            label="Border Width"
-                            value={shape.iconBadge?.borderWidth || 1}
-                            onChange={(val) => {
-                              selectedShapes.forEach((s) => {
-                                if (isRectangle(s) || isEllipse(s)) {
-                                  const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
-                                  updateShape(s.id, {
-                                    iconBadge: { ...currentBadge, borderWidth: val },
-                                  });
-                                }
-                              });
-                            }}
-                            min={0}
-                            max={4}
-                            suffix="px"
-                          />
-                        )}
-                        <div className="compact-checkbox-row">
-                          <label className="compact-checkbox-label">
-                            <input
-                              type="checkbox"
-                              checked={shape.iconBadge?.shadow || false}
+                      <ProfileProp name="iconBadge" tall>
+                        <div className="badge-options">
+                          <div className="badge-options-header">Badge Options</div>
+                          <div className="compact-select-row">
+                            <label className="compact-select-label">Shape</label>
+                            <select
+                              value={shape.iconBadge?.shape || 'circle'}
                               onChange={(e) => {
-                                const shadow = e.target.checked;
+                                const badgeShape = e.target.value as IconBadgeShape;
                                 selectedShapes.forEach((s) => {
                                   if (isRectangle(s) || isEllipse(s)) {
                                     const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
                                     updateShape(s.id, {
-                                      iconBadge: { ...currentBadge, shadow },
+                                      iconBadge: { ...currentBadge, shape: badgeShape },
                                     });
                                   }
                                 });
                               }}
+                              className="compact-select"
+                            >
+                              <option value="circle">Circle</option>
+                              <option value="rounded-rect">Rounded</option>
+                              <option value="square">Square</option>
+                            </select>
+                          </div>
+                          <CompactColorInput
+                            label="Background"
+                            value={shape.iconBadge?.backgroundColor || '#ffffff'}
+                            onChange={(color) => {
+                              selectedShapes.forEach((s) => {
+                                if (isRectangle(s) || isEllipse(s)) {
+                                  const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                                  updateShape(s.id, {
+                                    iconBadge: { ...currentBadge, backgroundColor: color },
+                                  });
+                                }
+                              });
+                            }}
+                          />
+                          <CompactColorInput
+                            label="Border"
+                            value={shape.iconBadge?.borderColor || ''}
+                            onChange={(color) => {
+                              selectedShapes.forEach((s) => {
+                                if (isRectangle(s) || isEllipse(s)) {
+                                  const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                                  const updatedBadge = {
+                                    ...currentBadge,
+                                    borderWidth: color ? (currentBadge.borderWidth || 1) : 0,
+                                  };
+                                  if (color) {
+                                    updatedBadge.borderColor = color;
+                                  } else {
+                                    delete updatedBadge.borderColor;
+                                  }
+                                  updateShape(s.id, { iconBadge: updatedBadge });
+                                }
+                              });
+                            }}
+                          />
+                          {shape.iconBadge?.borderColor && (
+                            <CompactNumberInput
+                              label="Border Width"
+                              value={shape.iconBadge?.borderWidth || 1}
+                              onChange={(val) => {
+                                selectedShapes.forEach((s) => {
+                                  if (isRectangle(s) || isEllipse(s)) {
+                                    const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                                    updateShape(s.id, {
+                                      iconBadge: { ...currentBadge, borderWidth: val },
+                                    });
+                                  }
+                                });
+                              }}
+                              min={0}
+                              max={4}
+                              suffix="px"
                             />
-                            Shadow
-                          </label>
+                          )}
+                          <div className="compact-checkbox-row">
+                            <label className="compact-checkbox-label">
+                              <input
+                                type="checkbox"
+                                checked={shape.iconBadge?.shadow || false}
+                                onChange={(e) => {
+                                  const shadow = e.target.checked;
+                                  selectedShapes.forEach((s) => {
+                                    if (isRectangle(s) || isEllipse(s)) {
+                                      const currentBadge = s.iconBadge || { ...DEFAULT_BADGE_CONFIG };
+                                      updateShape(s.id, {
+                                        iconBadge: { ...currentBadge, shadow },
+                                      });
+                                    }
+                                  });
+                                }}
+                              />
+                              Shadow
+                            </label>
+                          </div>
                         </div>
-                      </div>
+                      </ProfileProp>
                     )}
                   </>
                 )}
@@ -2527,18 +2625,20 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               className="property-textarea"
               rows={3}
             />
-            <CompactNumberInput
-              label="Font Size"
-              value={shape.fontSize}
-              onChange={(val) => {
-                selectedShapes.forEach((s) => {
-                  if (isText(s)) updateShape(s.id, { fontSize: val });
-                });
-              }}
-              min={8}
-              max={200}
-              suffix="px"
-            />
+            <ProfileProp name="fontSize">
+              <CompactNumberInput
+                label="Font Size"
+                value={shape.fontSize}
+                onChange={(val) => {
+                  selectedShapes.forEach((s) => {
+                    if (isText(s)) updateShape(s.id, { fontSize: val });
+                  });
+                }}
+                min={8}
+                max={200}
+                suffix="px"
+              />
+            </ProfileProp>
             <div className="align-row">
               <label className="align-label">Align</label>
               <div className="align-buttons">
@@ -2724,24 +2824,26 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
                 }}
               />
             </div>
-            <div className="compact-select-row">
-              <label className="compact-select-label">Line Style</label>
-              <select
-                value={shape.lineStyle || 'solid'}
-                onChange={(e) => {
-                  const val = e.target.value as LineStyle;
-                  selectedShapes.forEach((s) => {
-                    if (isConnector(s)) {
-                      updateShape(s.id, { lineStyle: val });
-                    }
-                  });
-                }}
-                className="compact-select"
-              >
-                <option value="solid">Solid</option>
-                <option value="dashed">Dashed</option>
-              </select>
-            </div>
+            <ProfileProp name="lineStyle">
+              <div className="compact-select-row">
+                <label className="compact-select-label">Line Style</label>
+                <select
+                  value={shape.lineStyle || 'solid'}
+                  onChange={(e) => {
+                    const val = e.target.value as LineStyle;
+                    selectedShapes.forEach((s) => {
+                      if (isConnector(s)) {
+                        updateShape(s.id, { lineStyle: val });
+                      }
+                    });
+                  }}
+                  className="compact-select"
+                >
+                  <option value="solid">Solid</option>
+                  <option value="dashed">Dashed</option>
+                </select>
+              </div>
+            </ProfileProp>
             {/*
               Per-endpoint arrowhead style. Hidden when the connector type uses
               its own endpoint markers (ERD cardinality / UML markers) — those
@@ -2749,54 +2851,58 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
             */}
             {(!shape.connectorType || shape.connectorType === 'default') && (
               <>
-                <div className="compact-select-row">
-                  <label className="compact-select-label">Start Arrow</label>
-                  <select
-                    value={resolveArrowStyle(shape, 'start')}
-                    onChange={(e) => {
-                      const val = e.target.value as ArrowStyle;
-                      selectedShapes.forEach((s) => {
-                        if (isConnector(s)) {
-                          updateShape(s.id, {
-                            startArrowStyle: val,
-                            // Mirror to legacy boolean so older code paths
-                            // and downstream consumers stay in sync.
-                            startArrow: val !== 'none',
-                          });
-                        }
-                      });
-                    }}
-                    className="compact-select"
-                  >
-                    <option value="none">None</option>
-                    <option value="triangle">Triangle</option>
-                    <option value="open">Open</option>
-                    <option value="diamond">Diamond</option>
-                  </select>
-                </div>
-                <div className="compact-select-row">
-                  <label className="compact-select-label">End Arrow</label>
-                  <select
-                    value={resolveArrowStyle(shape, 'end')}
-                    onChange={(e) => {
-                      const val = e.target.value as ArrowStyle;
-                      selectedShapes.forEach((s) => {
-                        if (isConnector(s)) {
-                          updateShape(s.id, {
-                            endArrowStyle: val,
-                            endArrow: val !== 'none',
-                          });
-                        }
-                      });
-                    }}
-                    className="compact-select"
-                  >
-                    <option value="none">None</option>
-                    <option value="triangle">Triangle</option>
-                    <option value="open">Open</option>
-                    <option value="diamond">Diamond</option>
-                  </select>
-                </div>
+                <ProfileProp name="startArrow">
+                  <div className="compact-select-row">
+                    <label className="compact-select-label">Start Arrow</label>
+                    <select
+                      value={resolveArrowStyle(shape, 'start')}
+                      onChange={(e) => {
+                        const val = e.target.value as ArrowStyle;
+                        selectedShapes.forEach((s) => {
+                          if (isConnector(s)) {
+                            updateShape(s.id, {
+                              startArrowStyle: val,
+                              // Mirror to legacy boolean so older code paths
+                              // and downstream consumers stay in sync.
+                              startArrow: val !== 'none',
+                            });
+                          }
+                        });
+                      }}
+                      className="compact-select"
+                    >
+                      <option value="none">None</option>
+                      <option value="triangle">Triangle</option>
+                      <option value="open">Open</option>
+                      <option value="diamond">Diamond</option>
+                    </select>
+                  </div>
+                </ProfileProp>
+                <ProfileProp name="endArrow">
+                  <div className="compact-select-row">
+                    <label className="compact-select-label">End Arrow</label>
+                    <select
+                      value={resolveArrowStyle(shape, 'end')}
+                      onChange={(e) => {
+                        const val = e.target.value as ArrowStyle;
+                        selectedShapes.forEach((s) => {
+                          if (isConnector(s)) {
+                            updateShape(s.id, {
+                              endArrowStyle: val,
+                              endArrow: val !== 'none',
+                            });
+                          }
+                        });
+                      }}
+                      className="compact-select"
+                    >
+                      <option value="none">None</option>
+                      <option value="triangle">Triangle</option>
+                      <option value="open">Open</option>
+                      <option value="diamond">Diamond</option>
+                    </select>
+                  </div>
+                </ProfileProp>
               </>
             )}
           </PropertySection>
@@ -3022,31 +3128,35 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
               className="property-text-input"
               placeholder="Enter label..."
             />
-            <CompactNumberInput
-              label="Font Size"
-              value={shape.labelFontSize || 12}
-              onChange={(val) => {
-                selectedShapes.forEach((s) => {
-                  if (isConnector(s)) {
-                    updateShape(s.id, { labelFontSize: val });
-                  }
-                });
-              }}
-              min={8}
-              max={32}
-            />
-            <CompactColorInput
-              label="Color"
-              value={shape.labelColor || shape.stroke || '#000000'}
-              onChange={(color) => {
-                selectedShapes.forEach((s) => {
-                  if (isConnector(s)) {
-                    updateShape(s.id, { labelColor: color });
-                  }
-                });
-              }}
-              showAuto
-            />
+            <ProfileProp name="labelFontSize">
+              <CompactNumberInput
+                label="Font Size"
+                value={shape.labelFontSize || 12}
+                onChange={(val) => {
+                  selectedShapes.forEach((s) => {
+                    if (isConnector(s)) {
+                      updateShape(s.id, { labelFontSize: val });
+                    }
+                  });
+                }}
+                min={8}
+                max={32}
+              />
+            </ProfileProp>
+            <ProfileProp name="labelColor">
+              <CompactColorInput
+                label="Color"
+                value={shape.labelColor || shape.stroke || '#000000'}
+                onChange={(color) => {
+                  selectedShapes.forEach((s) => {
+                    if (isConnector(s)) {
+                      updateShape(s.id, { labelColor: color });
+                    }
+                  });
+                }}
+                showAuto
+              />
+            </ProfileProp>
             <CompactColorInput
               label="Background"
               value={shape.labelBackground || ''}
@@ -3140,9 +3250,14 @@ export function PropertyPanel({ className }: PropertyPanelProps = {}) {
           <FileShapeProperties shape={shape} updateShape={updateShape} />
         )}
       </div>
-
-      {/* Style Profiles */}
-      <StyleProfilePanel />
     </div>
+  );
+}
+
+export function PropertyPanel(props: PropertyPanelProps = {}) {
+  return (
+    <ProfileDeparturesProvider>
+      <PropertyPanelBody {...props} />
+    </ProfileDeparturesProvider>
   );
 }

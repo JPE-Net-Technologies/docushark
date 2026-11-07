@@ -142,7 +142,7 @@ Zustand stores are split by responsibility:
 
 **Core stores** (`/src/store/`):
 - **DocumentStore**: Shape data, connections, groups — the single source of truth for document content
-- **SessionStore**: Selection, camera state, active tool, cursor — ephemeral UI state
+- **SessionStore**: Selection, camera state, active tool, cursor — ephemeral UI state. The engine moves its own camera (wheel, Pan tool, keys) and tells the store once per drawn frame (`Engine.syncCameraToStore` via the Renderer's frame-start hook), so UI that reads the camera keeps up; don't sync it anywhere else
 - **HistoryStore**: Undo/redo with complete document snapshots
 - **PageStore**: Multi-page document structure and ordering
 - **PersistenceStore**: Document save/load, auto-save, localStorage management
@@ -193,6 +193,13 @@ the flatten writes **every** page's shape surface back to its `pages[id]` object
 (not just the hydrated `activePageId`), so a live page-switch mid-session no
 longer risks dropping the other pages' edits.
 
+**One connection can't hold up the others (DSK-232):** the relay never waits on
+a client while holding the shared client map, and drops a connection that stops
+reading. Until it authenticates, a connection may send only `AUTH` and
+`HEARTBEAT`, for at most 30 seconds. State requests (`SyncStep1`) draw from a
+per-workspace bucket of their own, sized by the read quota, and stop while a
+connection has a backlog.
+
 **Offline-first architecture**:
 - **OfflineQueue**: Queues save/delete operations when disconnected, processes on reconnect
 - **SyncStateManager**: Coordinates queue, storage, and connection state with auto-retry
@@ -231,6 +238,8 @@ Shape library tiers: basic shapes (Rectangle, Ellipse, Line, Text, Connector, Gr
 - **State mutations**: All document mutations through Immer. Never mutate state directly. DocumentStore is the single source of truth.
 - **Canvas rendering**: React handles UI chrome only. Canvas rendering uses requestAnimationFrame in Engine core. Apply camera transform once per frame. Implement viewport culling.
 - **Hit testing**: Use SpatialIndex (RBush) for candidates, then precise hit test. Respects z-order (`shapeOrder` array). Rebuild spatial index when shapes change.
+- **Top-level order**: `shapeOrder` holds only what's drawn at the top level; a group's children are drawn through its `childIds`. An order from outside the store (a shared document, a snapshot) goes through `resolveDrawOrder`, which draws every shape exactly once. Don't compare an incoming order with the current one: undoing a group legitimately adds to it.
+- **Incoming shapes**: a shape from the Y.Doc replaces the store's copy (`replaceShape`), never merges. It is one whole value there, so a field it has lost is simply absent, and a merge would keep that field and write it back with the next edit.
 - **Input handling**: InputHandler normalizes mouse/touch/pen. Handle pointer capture on down, release on up. Prevent default on wheel events.
 
 ## MCP (Model Context Protocol) Integration
@@ -326,13 +335,18 @@ The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
 
 | Mode | Document | Canvas | Properties | Persona |
 |------|----------|--------|------------|---------|
-| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on selection) | Personal — writing |
+| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on request) | Personal — writing |
 | `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Personal — diagramming |
 | `technician` | left, split | split | fly-out (auto-collapse) | Researcher / mid-power |
 | `power` | left, split | split | docked, pinned | Power-User |
 
 Switch via the **layout selector** chip in the toolbar, `Cmd+Shift+1..4`, or
 the command palette ("Switch to … layout"). Zen is a backlog item (Linear).
+
+A selection shows the **selection bar** on the canvas (`src/ui/selectionBar/`);
+its More opens Properties in the fly-out layouts, which then follows the
+selection until closed (`sessionStore.propertiesRequested`). With the bar off in
+Settings, every selection opens the fly-out instead.
 
 In **Relaxed** the document editor is the *primary* region (a centered reading
 column), not a sidebar. A `Write · Split · Diagram` segmented control

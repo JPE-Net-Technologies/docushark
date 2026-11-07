@@ -32,5 +32,5 @@ export function applyDefaultStyleProfile<T extends Shape>(shape: T): T {
   // The gated per-shape apply means a profile hands each shape only the fields
   // its own facets own — a rectangle default won't smear swimlane chrome onto
   // a connector.
-  return { ...shape, ...getProfileUpdates(profile, shape) } as T;
+  return { ...shape, ...getProfileUpdates(profile, shape), styleProfileId: profile.id } as T;
 }

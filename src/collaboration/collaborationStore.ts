@@ -17,6 +17,7 @@
 
 import { create } from 'zustand';
 import { IndexeddbPersistence } from 'y-indexeddb';
+import type { Doc } from 'yjs';
 import { YjsDocument } from './YjsDocument';
 import { hasOpenDocumentIdSource, readOpenDocumentId } from './openDocumentSource';
 import type { ProsePageMeta, CanvasPageMeta } from './YjsDocument';
@@ -359,6 +360,19 @@ function syncTarget(boundDocId: string | undefined): YjsDocument | null {
     );
   }
   return null;
+}
+
+/**
+ * Whether an editor bound to `doc` still speaks for the open document (DSK-230):
+ * `doc` is the session's Y.Doc, and the session's document is the one open.
+ *
+ * The reverse of `syncTarget`, for CRDT→store writes. A prose editor mirrors its
+ * fragment by page id, and most documents share `rt-page-1`. One whose session has
+ * ended can still report an update, which would replace the text of whichever
+ * document is open by then.
+ */
+export function isOpenSessionDoc(doc: Doc): boolean {
+  return yjsDoc?.getDoc() === doc && syncTarget(useCollaborationStore.getState().config?.documentId) !== null;
 }
 
 /**

@@ -11,6 +11,7 @@
  */
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { create } from 'zustand';
+import { countWordsBetween } from './proseStats';
 
 /** The longest suggested name; longer text is cut at a word boundary. */
 export const SUGGESTED_NAME_MAX = 60;
@@ -48,8 +49,7 @@ export function leadingHeadingName(doc: PMNode): string | null {
 
 /** Words of text in the document, to tell a real start from a stray keystroke. */
 export function wordCount(doc: PMNode): number {
-  // Blocks separated, or the last word of one paragraph runs into the first of the next.
-  return doc.textBetween(0, doc.content.size, ' ', ' ').split(/\s+/).filter(Boolean).length;
+  return countWordsBetween(doc, 0, doc.content.size);
 }
 
 // --- What the title surfaces read --------------------------------------------

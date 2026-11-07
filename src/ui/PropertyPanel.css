@@ -17,13 +17,18 @@
 .property-panel.property-panel--mobile {
   min-width: 0;
   max-width: none;
-  width: 100%;
+  /* !important over the panel's inline width, which left the sheet half empty. */
+  width: 100% !important;
   /* Fill the sheet body's height so the panel's own `flex: 1` content region
      expands (and scrolls) instead of collapsing to its intrinsic height. */
   height: 100%;
   border: none;
 }
 .property-panel.property-panel--mobile .property-panel-resize-handle {
+  display: none;
+}
+/* The sheet's own title says what's selected, in a short sheet. */
+.property-panel.property-panel--mobile .property-panel-header {
   display: none;
 }
 
@@ -188,22 +193,6 @@
 
 .property-panel-content::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted, var(--text-secondary));
-}
-
-/* Type Badge */
-.property-type-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1) 10px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-primary, var(--color-primary));
-  background: var(--color-primary-light, rgba(31, 51, 84, 0.1));
-  border-radius: var(--radius-xl);
-  text-transform: capitalize;
-  margin-bottom: var(--space-3);
-  letter-spacing: 0.02em;
 }
 
 /* Hint Text */
@@ -714,7 +703,7 @@
 
 .rotation-unit-toggle button.active {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 /* Legacy styles for backwards compatibility */
@@ -876,10 +865,6 @@
 
 [data-theme="dark"] .property-panel-header {
   background-color: var(--bg-secondary);
-}
-
-[data-theme="dark"] .property-type-badge {
-  background: var(--color-primary-light, rgba(31, 51, 84, 0.15));
 }
 
 [data-theme="dark"] .compact-number-input,

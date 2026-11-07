@@ -40,7 +40,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 ## Edit and Style
 
 - **Double-click** a shape to edit its text
-- **Click** a shape to select it, then use the **Property Panel** on the right to change colors, borders, and fonts
+- **Click** a shape to select it, then use the bar above it to change its colors, or **More** for the **Property Panel** and everything else
 - **Shift+Click** to select multiple shapes
 - Press `Delete` to remove selected shapes
 
@@ -50,7 +50,7 @@ Hold **Shift** while drawing to constrain proportions — you'll get a perfect s
 |--------|-----|
 | Pan | Middle-click + drag, or hold Space + drag |
 | Zoom | Scroll wheel (zooms toward your cursor), or `E` / `Q` |
-| Reset zoom / fit | Use the **%** and **Fit** buttons in the status bar |
+| Reset zoom / fit | Click the zoom **%** or **Fit** in the canvas's bottom-right corner |
 | WASD navigation | `W`/`A`/`S`/`D` keys pan like a game |
 
 ## Save and Export

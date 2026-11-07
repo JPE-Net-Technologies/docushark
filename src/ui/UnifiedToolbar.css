@@ -129,18 +129,21 @@
 }
 
 /* Mobile preview (JP-332): the app bar goes icon-only regardless of the exact
-   width (the gate can hold through the medium band) — Documents + Settings drop
-   their labels — and the bar honors the horizontal safe-area insets. */
+   width (the gate can hold through the medium band) — Documents, Tools and
+   Settings drop their labels — and the bar honors the horizontal safe-area insets. */
 .app[data-mobile='true'] .unified-toolbar {
   padding-left: max(var(--space-3), var(--safe-area-left));
   padding-right: max(var(--space-3), var(--safe-area-right));
 }
 .app[data-mobile='true'] .toolbar-documents-btn span,
+.app[data-mobile='true'] .toolbar-tools-btn span,
 .app[data-mobile='true'] .toolbar-settings-btn span {
   display: none;
 }
 .app[data-mobile='true'] .toolbar-documents-btn,
+.app[data-mobile='true'] .toolbar-tools-btn,
 .app[data-mobile='true'] .toolbar-settings-btn {
+  flex: 0 0 auto;
   width: 32px;
   height: 32px;
   padding: 0;
@@ -227,34 +230,6 @@
 }
 
 /* Tool Tooltip */
-.tool-button-tooltip {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-top: var(--space-1-5);
-  padding: var(--space-1) var(--space-2);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-  z-index: 1000;
-  pointer-events: none;
-  box-shadow: var(--shadow-md);
-  display: flex;
-  align-items: center;
-  gap: var(--space-1-5);
-}
-
-.tool-button-tooltip-shortcut {
-  padding: 1px var(--space-1);
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-semibold);
-}
-
 /* File Menu */
 .file-menu-button {
   position: relative;
@@ -710,11 +685,6 @@
 
 [data-theme="dark"] .tool-button.active {
   background: var(--color-primary-light);
-}
-
-[data-theme="dark"] .tool-button-tooltip {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
 }
 
 [data-theme="dark"] .file-menu-trigger:hover,

@@ -354,6 +354,40 @@ function getOutcode(p: Vec2, box: Box): number {
 }
 
 /**
+ * Clip a segment a→b against an axis-aligned box (Liang–Barsky). Returns the
+ * parameter range `[tEnter, tExit]` (within [0,1]) over which the segment lies
+ * inside the box, or null if it never enters. Breaks a connector line behind
+ * its label, and finds where a line crosses a shape's bounds.
+ */
+export function segmentBoxOverlap(a: Vec2, b: Vec2, box: Box): [number, number] | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, a.x - box.minX],
+    [dx, box.maxX - a.x],
+    [-dy, a.y - box.minY],
+    [dy, box.maxY - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null; // parallel to this edge and fully outside it
+    } else {
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return null;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return null;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return t0 <= t1 ? [t0, t1] : null;
+}
+
+/**
  * Calculate the bounding box of a rotated rectangle.
  * @param centerX Center X coordinate
  * @param centerY Center Y coordinate

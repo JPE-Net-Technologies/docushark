@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  resolveDrawOrder,
   wouldCreateCycle,
   isDescendantOf,
   getAncestorGroups,
@@ -283,5 +284,44 @@ describe('GroupHierarchy', () => {
       testShapes['new-shape'] = createShape('new-shape');
       expect(wouldExceedMaxDepth('new-shape', 'level-0', testShapes)).toBe(true);
     });
+  });
+});
+
+describe('resolveDrawOrder', () => {
+  const shapes = (...list: Shape[]) => Object.fromEntries(list.map((shape) => [shape.id, shape]));
+  const group = (id: string, childIds: string[]) => ({ ...createShape(id, 'group'), childIds }) as GroupShape;
+  const [a, b, c] = ['a', 'b', 'c'].map((id) => createShape(id));
+
+  it('takes the order as it is when it accounts for every shape', () => {
+    expect(resolveDrawOrder(shapes(a!, b!, c!), ['c', 'a', 'b'])).toEqual({ order: ['c', 'a', 'b'], leftOut: [] });
+  });
+
+  it('drops ids with no shape, and keeps the first of a doubled id', () => {
+    expect(resolveDrawOrder(shapes(a!, b!), ['b', 'ghost', 'a', 'b']).order).toEqual(['b', 'a']);
+  });
+
+  it("drops a group's children from the order, at any depth", () => {
+    const list = shapes(a!, b!, c!, group('inner', ['a']), group('outer', ['inner', 'b']));
+    expect(resolveDrawOrder(list, ['a', 'inner', 'b', 'outer', 'c'])).toEqual({ order: ['outer', 'c'], leftOut: [] });
+  });
+
+  it('does not count a group\'s children as left out', () => {
+    expect(resolveDrawOrder(shapes(a!, b!, group('g', ['a', 'b'])), ['g']).leftOut).toEqual([]);
+  });
+
+  it('adds what the order leaves out on top, in the current order', () => {
+    expect(resolveDrawOrder(shapes(a!, b!, c!), ['b'], ['c', 'a', 'b'])).toEqual({ order: ['b', 'c', 'a'], leftOut: ['c', 'a'] });
+  });
+
+  it('finds what is in neither the order nor the current order', () => {
+    expect(resolveDrawOrder(shapes(a!, b!, c!), ['b'], ['b']).order).toEqual(['b', 'a', 'c']);
+  });
+
+  it('ignores ids in the current order that have no shape', () => {
+    expect(resolveDrawOrder(shapes(a!), [], ['ghost', 'a'])).toEqual({ order: ['a'], leftOut: ['a'] });
+  });
+
+  it('frees the children of a group that has gone', () => {
+    expect(resolveDrawOrder(shapes(a!, b!), ['a', 'b']).order).toEqual(['a', 'b']);
   });
 });

@@ -1,0 +1,158 @@
+/* The canvas selection bar (DSK-225). Under the Properties fly-out (z-index 5), like
+   the zoom controls, so an open panel covers it instead of having it float on top. */
+.selection-bar {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-md);
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.selection-bar-profile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.selection-bar-profile:hover,
+.selection-bar-more:hover,
+.selection-bar-menu-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.selection-bar-profile[aria-pressed='true'],
+.selection-bar-menu-item[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.selection-bar-profile:focus-visible,
+.selection-bar-more:focus-visible,
+.selection-bar-menu-item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.selection-bar-swatch {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 4px;
+}
+
+.selection-bar-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--border-color);
+}
+
+.selection-bar-slot {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 0 2px;
+}
+
+/* The swatch-only colour inputs collapse to just their button. */
+.selection-bar .compact-color-input--swatch-only,
+.selection-bar .compact-color-input--swatch-only .compact-color-controls {
+  flex: 0 0 auto;
+  gap: 0;
+}
+
+/* The stroke reads as a ring, as it does on the canvas. */
+.selection-bar-slot--stroke .compact-color-swatch::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 2px;
+  background: var(--bg-primary);
+}
+
+/* The text colour reads as a letter over a line of that colour. */
+.selection-bar-slot--text .compact-color-swatch::after {
+  content: 'A';
+  position: absolute;
+  inset: 0 0 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-primary);
+}
+
+/* Keep the "A" (auto) and "/" (none) badges of the stroke above its cut-out. */
+.selection-bar-slot--stroke .compact-color-swatch > span {
+  position: relative;
+  z-index: 1;
+}
+
+.selection-bar-more {
+  height: 28px;
+  padding: 0 8px;
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.selection-bar-more[aria-pressed='true'] {
+  color: var(--color-primary);
+}
+
+/* Solid, not the popover's glass: it hangs over the coloured shape you're choosing
+   a profile for, and that colour would tint the names. */
+.popover.selection-bar-menu {
+  background: var(--bg-primary);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.selection-bar-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-height: 320px;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.selection-bar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}

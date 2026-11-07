@@ -2,6 +2,7 @@ import { useCallback, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { BORDER_DASH_PATTERNS } from '../shapes/GroupStyles';
 import './BorderStylePicker.css';
+import { useKeepOnScreen } from './components/useKeepOnScreen';
 
 type BorderStyle = keyof typeof BORDER_DASH_PATTERNS;
 
@@ -46,6 +47,7 @@ export function BorderStylePicker({ value, onChange }: BorderStylePickerProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  useKeepOnScreen(dropdownRef);
 
   const currentStyle = getDashStyleKey(value);
 

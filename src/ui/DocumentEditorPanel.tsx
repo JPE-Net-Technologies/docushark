@@ -14,8 +14,11 @@ import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
 import { resetEditorHistory } from '../tiptap/resetEditorHistory';
 import { useDocumentNaming } from './useDocumentNaming';
+import { useProseStats } from './useProseStats';
 import { DocumentEditorToolbar } from './DocumentEditorToolbar';
 import { MobileProseToolbar } from './mobile/MobileProseToolbar';
+import { ProseSelectionBubble } from './ProseSelectionBubble';
+import { SlashUiHost } from './SlashUiHost';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { useKeyboardInset } from './mobile/useKeyboardInset';
@@ -88,8 +91,6 @@ export interface DocumentEditorPanelProps {
   isFullscreen?: boolean;
   /** Toggle full-screen mode */
   onToggleFullscreen?: () => void;
-  /** Open the layout customization settings (overflow menu item) */
-  onCustomizeLayout?: () => void;
   /**
    * How the editor presents itself for the active layout. `reading` is the
    * generous centered column used when the editor is the primary region
@@ -102,7 +103,6 @@ export function DocumentEditorPanel({
   onCollapse,
   isFullscreen,
   onToggleFullscreen,
-  onCustomizeLayout,
   presentation = 'docked',
 }: DocumentEditorPanelProps) {
   const { mobileActive } = useMobileAdaptation();
@@ -210,6 +210,7 @@ export function DocumentEditorPanel({
   const [editor, setEditor] = useState<Editor | null>(null);
   // Name a new document from its first heading, or prompt once (DSK-209).
   useDocumentNaming(editor);
+  useProseStats(editor);
   const editorRef = useRef<Editor | null>(null);
 
   // The actual scroll container is `.tiptap-editor` (overflow-y: auto). Tiptap's
@@ -469,8 +470,10 @@ export function DocumentEditorPanel({
       // flipped to the target page but its content hasn't been swapped into
       // the editor yet — saving here would write the old page's content
       // into the new page's slot).
+      // And never into another document's page with the same id (DSK-230).
       const pageId = lastActivePageRef.current;
-      if (editorRef.current && pageId && !isLoadingRef.current) {
+      const sameDocument = lastDocIdRef.current === usePersistenceStore.getState().currentDocumentId;
+      if (editorRef.current && pageId && !isLoadingRef.current && sameDocument) {
         const content = editorRef.current.getHTML();
         updatePageContent(pageId, content);
         const el = getScrollEl(editorRef.current);
@@ -519,11 +522,13 @@ export function DocumentEditorPanel({
   // "Hide editor" only makes sense in the docked sidebar presentation; in the
   // primary reading column the focus switch governs prose vs canvas instead.
   const canHideEditor = !!onCollapse && !isFullscreen && presentation === 'docked';
-  const hasMenu = !!onToggleFullscreen || canHideEditor || !!onCustomizeLayout;
 
   // The overflow ("⋮") menu lives in the page-tab row (there's no separate panel
-  // header) so it doesn't cost a dead row of vertical space above the editor.
-  const overflowMenu = hasMenu ? (
+  // header) so it doesn't cost a dead row of vertical space above the editor. It
+  // holds only what isn't elsewhere (DSK-200): full screen has its own button
+  // beside it, and "Customize layout…" is on the layout chip, so the menu now
+  // appears only where the editor can be hidden.
+  const overflowMenu = canHideEditor ? (
     <div className="document-editor-panel-actions" ref={menuRef}>
       <button
         className="document-editor-panel-collapse"
@@ -537,46 +542,22 @@ export function DocumentEditorPanel({
       </button>
       {menuOpen && (
         <div className="document-editor-panel-menu" role="menu">
-          {onToggleFullscreen && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onToggleFullscreen();
-              }}
-            >
-              {isFullscreen ? 'Exit full-screen' : 'Full screen'}
-            </button>
-          )}
-          {canHideEditor && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onCollapse?.();
-              }}
-            >
-              Hide editor
-            </button>
-          )}
-          {onCustomizeLayout && (
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                onCustomizeLayout();
-              }}
-            >
-              Customize layout…
-            </button>
-          )}
+          <button
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onCollapse?.();
+            }}
+          >
+            Hide editor
+          </button>
         </div>
       )}
     </div>
   ) : null;
 
-  // Dedicated full-screen toggle in the tab row, alongside the ⋮ menu (the menu
-  // keeps a fallback entry). Direct button so full-screen isn't buried.
+  // Dedicated full-screen toggle in the tab row, alongside the ⋮ menu. Direct
+  // button so full-screen isn't buried.
   const fullscreenButton = onToggleFullscreen ? (
     <button
       className="document-editor-panel-collapse"
@@ -607,12 +588,17 @@ export function DocumentEditorPanel({
         // affects the reading column, so it needs no global side effect and stays
         // trivially testable.
         data-reading-width={readingWidth}
+        // F6 moves focus between the top bar, the text and the canvas (DSK-214).
+        data-focus-region="prose"
         style={mobileActive && keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
       >
         <RichTextTabBar trailing={trailing} />
         {/* Desktop ribbon sits at the top; on mobile it's replaced by the
             bottom MobileProseToolbar rendered after the content (JP-332). */}
         {!mobileActive && <DocumentEditorToolbar />}
+        {!mobileActive && <ProseSelectionBubble />}
+        {/* In every layout: a phone has no ribbon, and "/" still needs its pickers. */}
+        <SlashUiHost />
         <div className="document-editor-panel-content">
           {/* Never blank (JP-328): a prose render crash degrades to the page's
               read-only HTML projection, not an empty panel; auto-resets on

@@ -37,8 +37,10 @@ import {
   MousePointer2,
   Network,
   PanelLeft,
+  Percent,
   Redo2,
   Save,
+  Scan,
   ScanSearch,
   Search,
   Spline,
@@ -54,9 +56,11 @@ import {
   Waypoints,
   ZoomIn,
   ZoomOut,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 import { useSessionStore, deleteSelected, getSelectedShapes } from '../store/sessionStore';
+import { useSettingsStore } from '../store/settingsStore';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore, pushHistory } from '../store/historyStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
@@ -78,10 +82,12 @@ import {
   canAutoLayoutSelection,
 } from './selectionLayout';
 import type { ShortcutCategory } from './KeyboardShortcuts';
+import { zoomTo100, zoomToFit } from './canvasZoom';
 import { LAYOUT_LABELS, LAYOUT_PRESETS } from '../ui/layout/modes';
 import { LAYOUT_MODES, type LayoutMode } from '../ui/layout/types';
 import { parseCombo, eventMatchesAny, formatCombo, type KeyScope } from './keybindings';
 import { navigateActivePage } from './pageNavigation';
+import { cycleFocusRegion, focusRegion, isRegionShown } from '../ui/layout/focusRegions';
 
 /**
  * A place a command can be offered to the user.
@@ -90,7 +96,7 @@ import { navigateActivePage } from './pageNavigation';
  * binding is already answered by `keys`, and a second way to say it would drift
  * from the first.
  */
-export type ActionSurface = 'palette' | 'tools';
+export type ActionSurface = 'palette' | 'tools' | 'phoneTools' | 'canvasMenu';
 
 /**
  * Extra commands contributed by feature areas, keyed by source id.
@@ -195,7 +201,9 @@ export interface Command {
   /**
    * Where this command is offered. Defaults to the palette only, which is what
    * every command did before surfaces existed — opting into `'tools'` is what
-   * puts a command in the Tools grid.
+   * puts a command in the Tools grid, `'phoneTools'` in that grid on a phone
+   * only, for what a desktop has its own button for (DSK-222), and
+   * `'canvasMenu'` in the menu a right-click on empty canvas opens (DSK-213).
    */
   surfaces?: readonly ActionSurface[];
 }
@@ -281,6 +289,9 @@ export function createIconShapeAtCenter(iconId: string): void {
 // ---------------------------------------------------------------------------
 // All commands
 // ---------------------------------------------------------------------------
+/** Adding a shape to a canvas nobody can see only looks like nothing happened. */
+const canvasOnScreen = () => isRegionShown('canvas');
+
 function buildCommands(): Command[] {
   return [
     // --- Tools (activate draw mode) --- dispatched by ToolManager (scope 'reserved').
@@ -293,11 +304,11 @@ function buildCommands(): Command[] {
     { id: 'tool.pan', icon: Hand, label: 'Pan (Hand) tool', category: 'Tools', keys: 'H', scope: 'canvas', reserved: true, execute: () => useSessionStore.getState().setActiveTool('pan') },
 
     // --- Add shape (instant create at viewport center) ---
-    { id: 'add.rectangle', icon: SquarePlus, label: 'Add rectangle', category: 'Editing', execute: () => createShapeAtCenter('rectangle') },
-    { id: 'add.ellipse', icon: CirclePlus, label: 'Add ellipse', category: 'Editing', execute: () => createShapeAtCenter('ellipse') },
-    { id: 'add.text', icon: TypeOutline, label: 'Add text', category: 'Editing', execute: () => createShapeAtCenter('text') },
-    { id: 'add.line', icon: Minus, label: 'Add line', category: 'Editing', execute: () => createShapeAtCenter('line') },
-    { id: 'add.connector', icon: Waypoints, label: 'Add connector', category: 'Editing', execute: () => createShapeAtCenter('connector') },
+    { id: 'add.rectangle', icon: SquarePlus, label: 'Add rectangle', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('rectangle') },
+    { id: 'add.ellipse', icon: CirclePlus, label: 'Add ellipse', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('ellipse') },
+    { id: 'add.text', icon: TypeOutline, label: 'Add text', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('text') },
+    { id: 'add.line', icon: Minus, label: 'Add line', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('line') },
+    { id: 'add.connector', icon: Waypoints, label: 'Add connector', category: 'Editing', canExecute: canvasOnScreen, execute: () => createShapeAtCenter('connector') },
 
     // --- Import ---
     {
@@ -382,6 +393,7 @@ function buildCommands(): Command[] {
     // --- Editing (canvas scope — active when the canvas owns focus) ---
     {
       id: 'edit.undo', icon: Undo2, label: 'Undo', category: 'Editing', keys: 'Mod+Z', scope: 'canvas',
+      surfaces: ['palette', 'canvasMenu'],
       execute: () => { if (useHistoryStore.getState().canUndo()) useHistoryStore.getState().undo(); },
       // JP-370: undo/redo aren't selection-gated, so the read-only clear-selection
       // trick doesn't cover them — block them on a view-only doc.
@@ -389,10 +401,11 @@ function buildCommands(): Command[] {
     },
     {
       id: 'edit.redo', icon: Redo2, label: 'Redo', category: 'Editing', keys: 'Mod+Shift+Z | Mod+Y', scope: 'canvas',
+      surfaces: ['palette', 'canvasMenu'],
       execute: () => { if (useHistoryStore.getState().canRedo()) useHistoryStore.getState().redo(); },
       canExecute: () => !isActiveDocReadOnly() && useHistoryStore.getState().canRedo(),
     },
-    { id: 'edit.selectAll', icon: BoxSelect, label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', execute: () => useSessionStore.getState().selectAll() },
+    { id: 'edit.selectAll', icon: BoxSelect, label: 'Select all', category: 'Editing', keys: 'Mod+A', scope: 'canvas', surfaces: ['palette', 'canvasMenu'], execute: () => useSessionStore.getState().selectAll() },
     {
       id: 'edit.delete', icon: Trash2, label: 'Delete selected', category: 'Editing', keys: 'Delete | Backspace', scope: 'canvas',
       execute: () => { pushHistory('Delete shapes'); deleteSelected(); },
@@ -431,6 +444,38 @@ function buildCommands(): Command[] {
     // --- View ---
     { id: 'view.zoomIn', icon: ZoomIn, label: 'Zoom in', category: 'Navigation', keys: 'E', scope: 'canvas', reserved: true, execute: () => {} },
     { id: 'view.zoomOut', icon: ZoomOut, label: 'Zoom out', category: 'Navigation', keys: 'Q', scope: 'canvas', reserved: true, execute: () => {} },
+    // Clickable zoom (DSK-211): the canvas's zoom pill runs the same functions.
+    { id: 'view.zoomToFit', icon: Scan, label: 'Zoom to fit', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomToFit },
+    { id: 'view.zoomTo100', icon: Percent, label: 'Zoom to 100%', category: 'Navigation', surfaces: ['palette', 'canvasMenu'], execute: zoomTo100 },
+
+    // With the selection bar on, a selection no longer opens Properties (DSK-225).
+    {
+      id: 'view.properties', icon: SlidersHorizontal, label: 'Show properties', category: 'Navigation', surfaces: ['palette'],
+      canExecute: () => useSettingsStore.getState().showSelectionBar && useSessionStore.getState().selectedIds.size > 0,
+      execute: () => useSessionStore.getState().setPropertiesRequested(true),
+    },
+
+    // Moving focus between the regions (DSK-214). F6 reaches the page in the
+    // desktop app and an installed app; in a browser tab the browser keeps it,
+    // so the two palette commands reach the surfaces too.
+    {
+      id: 'view.nextRegion', label: 'Move focus to the next region', category: 'Navigation', keys: 'F6', scope: 'global', whileTyping: true,
+      execute: () => cycleFocusRegion(1),
+    },
+    {
+      id: 'view.previousRegion', label: 'Move focus to the previous region', category: 'Navigation', keys: 'Shift+F6', scope: 'global', whileTyping: true,
+      execute: () => cycleFocusRegion(-1),
+    },
+    {
+      id: 'view.focusCanvas', label: 'Move focus to the canvas', category: 'Navigation',
+      execute: () => { focusRegion('canvas'); },
+      canExecute: () => isRegionShown('canvas'),
+    },
+    {
+      id: 'view.focusProse', label: 'Move focus to the text', category: 'Navigation',
+      execute: () => { focusRegion('prose'); },
+      canExecute: () => isRegionShown('prose'),
+    },
 
     // --- Clipboard + grouping (canvas scope). Copy/paste are engine-coupled
     // (clipboard + spatial index) so they bridge to the engine via an event;
@@ -491,6 +536,7 @@ function buildCommands(): Command[] {
     },
     {
       id: 'view.docs', icon: BookOpen, label: 'Open documentation', category: 'View', keys: 'F1', scope: 'global', whileTyping: true,
+      surfaces: ['palette', 'phoneTools'],
       execute: () => { void opener.openDocs(); },
     },
 
@@ -571,16 +617,26 @@ export function isOnSurface(c: Command, surface: ActionSurface): boolean {
  * how the toolbar and the palette came to describe the same four actions with
  * different labels and two different paths into the PDF dialog.
  */
-export function getToolsActions(): Command[] {
+export function getToolsActions(phone = false): Command[] {
   return getAllCommands().filter(
     (c) =>
       !c.reserved &&
       // The tile anatomy opens with a chip, so an action with neither a glyph
       // nor a mark cannot render — drop it rather than leave a hole.
       (c.icon || c.iconNode) &&
-      isOnSurface(c, 'tools') &&
+      (isOnSurface(c, 'tools') || (phone && isOnSurface(c, 'phoneTools'))) &&
       (!c.canExecute || c.canExecute()),
   );
+}
+
+/**
+ * Commands for the menu a right-click on empty canvas opens (DSK-213), in
+ * catalogue order. The menu shows each one's label and shortcut and greys out
+ * those that can't run now (`canExecute`), so it stays in step with the
+ * palette and the keyboard.
+ */
+export function getCanvasMenuCommands(): Command[] {
+  return getAllCommands().filter((c) => !c.reserved && isOnSurface(c, 'canvasMenu'));
 }
 
 /** Commands the user can run from the palette (executable, non-reserved). */

@@ -1,0 +1,75 @@
+/* A panel row that differs from the selection's style profile (DSK-224). The mark
+   and the reset sit in the section's side padding, so a value changing doesn't move
+   the row it's in. */
+.profile-prop {
+  position: relative;
+}
+
+.profile-prop--departed::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.profile-prop-reset {
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  width: 12px;
+  height: 20px;
+  margin-top: -10px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* More to aim at than there's room to draw: the side padding, and a finger. */
+.profile-prop-reset::after {
+  content: '';
+  position: absolute;
+  inset: -6px -8px -6px -2px;
+}
+
+.profile-prop-reset:hover,
+.profile-prop-reset:focus-visible {
+  color: var(--color-primary);
+}
+
+.profile-prop-reset:focus-visible {
+  outline: 1px solid var(--color-primary);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+/* A row of several lines keeps its mark with the first. */
+.profile-prop--tall::before {
+  top: 14px;
+}
+
+.profile-prop--tall > .profile-prop-reset {
+  top: 14px;
+}
+
+/* A collapsed section stays mounted, so its header can say it holds a change. */
+.property-section-container.collapsed:has(.profile-prop--departed) .property-section-title::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--color-primary);
+  border-radius: 50%;
+}

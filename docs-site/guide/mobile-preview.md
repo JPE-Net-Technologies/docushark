@@ -29,6 +29,12 @@ On a touch screen nothing waits for a pointer to hover. Each document's **⋯** 
 
 With mobile preview on, menus open as sheets from the bottom of the screen, with room for a finger on every choice. Tap outside a sheet, or swipe it down, to close it.
 
+## The top bar
+
+The bar at the top of the editor is icons only on a phone: **Documents**, the document's name, **Write** and **Diagram**, the layout, **Tools** and **Settings**.
+
+**Tools** opens a sheet with what **Tools** holds on a computer: importing a diagram, exporting to PDF, version history, the whiteboard and any connected integrations. It also has the documentation, which a computer keeps on its own button, and the command palette, for searching every other action.
+
 ## Writing on a phone
 
 With mobile preview on, a writing bar sits at the bottom of a prose page, above the keyboard. Swipe it sideways for more:
@@ -41,12 +47,20 @@ With mobile preview on, a writing bar sits at the bottom of a prose page, above 
 
 **Format**, at the end of the bar, opens every other formatting control, including the table tools while you're in a table. The document's name is at the top of the screen: tap it to rename the document or see whether it's saved. Tap anywhere on the page below your text to carry on writing at the end.
 
+Type `/` for the same insert menu as on a computer. Tables, code and equations go straight in, and images, files, galleries, citations and fields open their pickers.
+
 Pressing and holding text selects it as it does in any other app, with your phone's own handles and copy-and-paste bar; DocuShark opens no menu over it. Instead, the bar changes with what you're on:
 
 - **A word underlined as misspelled:** put the cursor in it and the bar offers corrections and **Add to dictionary**. Tap **×** to get the formatting controls back.
 - **An image:** tap it, or press and hold it, to select it. The bar offers **Replace image…** and **Remove image**, and in a gallery, buttons to move the image left or right.
 
 A page mirrored from another tool, such as Notion, is read-only. Its bar says so and when it last synced, and offers **Refresh**, **Open** in the source, and **Detach**.
+
+## Diagrams on a phone
+
+Tap a shape to select it, and drag it to move it. A bar at the bottom offers **Properties** and **Delete**.
+
+**Properties** rises over the lower part of the screen, with the shape in view above it, so you can see each change as you make it. Tap another shape and it follows. **Done** puts it away and keeps the shape selected. Tap an empty part of the canvas to deselect.
 
 ## What to expect
 

@@ -1,38 +1,38 @@
-/* Minimap styles */
+/* Minimap styles. Stacked above the canvas's zoom pill (CanvasZoomPill.css):
+   the pill's 36px plus an 8px gap; 52px on touch. Layered with the pill, under
+   the Properties fly-out. */
 .minimap-container {
   position: absolute;
-  bottom: 16px;
+  bottom: 60px;
   right: 16px;
-  z-index: 100;
+  z-index: 4;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: var(--shadow-lg);
   border: 1px solid var(--border-color);
   background: var(--bg-primary);
-  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
-.minimap-container:hover {
-  box-shadow: var(--shadow-lg);
-}
-
+/* The canvas is transparent, so the container's background shows through. It
+   takes touches whole: a drag moves the box instead of scrolling the page. */
 .minimap-canvas {
   display: block;
-  cursor: crosshair;
-  background: var(--bg-primary);
+  cursor: pointer;
+  touch-action: none;
 }
 
-/* Dark mode */
+/* The container clips, so the ring sits just inside the edge. */
+.minimap-canvas:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+  .minimap-container {
+    bottom: 76px;
+  }
+}
+
 :root[data-theme='dark'] .minimap-container {
-  border-color: var(--border-color);
-  background: var(--bg-secondary);
-  box-shadow: var(--shadow-lg);
-}
-
-:root[data-theme='dark'] .minimap-container:hover {
-  box-shadow: var(--shadow-lg);
-}
-
-:root[data-theme='dark'] .minimap-canvas {
   background: var(--bg-secondary);
 }

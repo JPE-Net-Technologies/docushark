@@ -7,6 +7,7 @@ import { PropertyPanel } from './PropertyPanel';
 import { LayerPanel } from './LayerPanel';
 import { NavigatorPanel } from './NavigatorPanel';
 import { useActivePanelState, useActiveLayoutMode, useLayoutActions } from './layout/useLayout';
+import { noteSurface } from './layout/useActiveSurface';
 import {
   isCanvasHidden,
   isFlyoutLayout,
@@ -17,8 +18,9 @@ import { useBreakpoint } from './layout/useBreakpoint';
 import { useMobileAdaptation } from './layout/useMobileAdaptation';
 import { COMPACT_WIDTH_QUERY, useMediaQuery } from './layout/useMediaQuery';
 import { MobilePreviewGate } from './mobile/MobilePreviewGate';
-import { MobilePropertySheet } from './mobile/MobilePropertySheet';
+import { MobileSelection } from './mobile/MobileSelection';
 import { FlyoutPanel } from './layout/FlyoutPanel';
+import { usePropertiesOnSelection } from './selectionBar/usePropertiesOnSelection';
 import { PanelChromeWrapper } from './layout/PanelChromeWrapper';
 import { DockedPanel } from './layout/DockedPanel';
 import { DocumentToggleRail } from './layout/DocumentToggleRail';
@@ -83,6 +85,7 @@ import { useCollaborationSync } from '../collaboration';
 import { getSyncStateManager } from '../collaboration/SyncStateManager';
 import type { ImportContext } from '../services/FileImportService';
 import { isGuestSession } from '../guest/guestSession';
+import { TooltipLayer } from './TooltipLayer';
 
 // Lazy-load the rich-text editor panel so the tiptap stack (+ katex via
 // LatexExtension, + nspell via SpellcheckService) is split out of the main
@@ -166,11 +169,13 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   // Suppressed in `write` focus — the canvas is hidden there, so a lingering
   // selection must not pop the Properties overlay over the prose.
   const selectionCount = useSessionStore((s) => s.selectedIds.size);
+  const { followsSelection: propertiesFollowSelection, onDismiss: onDismissProperties } = usePropertiesOnSelection();
   const relaxedTransientProps =
     activeMode === 'relaxed' &&
     relaxedFocus !== 'write' &&
     !isPropertiesVisible &&
-    selectionCount > 0;
+    selectionCount > 0 &&
+    propertiesFollowSelection;
   const renderProperties = isPropertiesVisible || relaxedTransientProps;
 
   const { band } = useBreakpoint();
@@ -479,7 +484,11 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   }, [initializeDefault, authCallbackConsumed]);
 
   return (
-    <div className="app" data-mobile={mobileActive ? 'true' : undefined}>
+    <div
+      className="app"
+      data-mobile={mobileActive ? 'true' : undefined}
+      data-selection={selectionCount > 0 ? 'true' : undefined}
+    >
       <MobilePreviewGate />
       <ConnectionStatusBanner />
         {/* Custom-chrome title bar stays in the document browser — it carries the
@@ -494,7 +503,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             onOpenDocuments={handleOpenDocuments}
           />
         )}
-        <main className="app-main">
+        <main className="app-main" onPointerDownCapture={noteSurface} onFocusCapture={noteSurface}>
           {/* Document on left. In Relaxed the editor is the primary reading
               column (not a fixed sidebar); the focus switch in the toolbar
               decides whether the canvas shows alongside it. Hidden — not
@@ -511,7 +520,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     <DocumentEditorPanel
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
-                      onCustomizeLayout={handleOpenLayoutSettings}
                       // Centered reading column whenever prose is the primary
                       // region — write AND split. Keyed on the region's role,
                       // not on `regions.split` (a pane-count boolean): the
@@ -533,7 +541,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                         onCollapse={handleCollapseEditor}
                         isFullscreen={isEditorFullscreen}
                         onToggleFullscreen={handleToggleFullscreen}
-                        onCustomizeLayout={handleOpenLayoutSettings}
                       />
                     </Suspense>
                   </ErrorBoundary>
@@ -565,8 +572,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
             </PanelChromeWrapper>
           )}
 
-          {/* Properties on left (suppressed on mobile — the full-screen
-              MobilePropertySheet below takes over). */}
+          {/* Properties on left (suppressed on mobile — MobilePropertySheet,
+              through MobileSelection below, takes over). */}
           {!mobileActive && renderProperties && propertiesPanelState.dock === 'left' && (
             <PanelChromeWrapper panelId="properties">
               <ErrorBoundary sectionName="Properties">
@@ -575,7 +582,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     panelId="properties"
                     label="Properties"
                     icon={<span style={{ fontSize: 12, fontWeight: 700 }}>P</span>}
-                    expandOnSelection
+                    expandOnSelection={propertiesFollowSelection}
+                    onDismiss={onDismissProperties}
                     side="left"
                     showRail={!relaxedTransientProps}
                   >
@@ -593,6 +601,7 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
               split focus the explicit width is user-draggable. */}
           <div
             className={canvasWrapperClass}
+            data-focus-region="canvas"
             // An explicit (dragged) width wins; when null the responsive
             // `.canvas-area-wrapper--secondary` CSS clamp owns the ~50/50 split.
             style={
@@ -633,7 +642,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                     panelId="properties"
                     label="Properties"
                     icon={<span style={{ fontSize: 12, fontWeight: 700 }}>P</span>}
-                    expandOnSelection
+                    expandOnSelection={propertiesFollowSelection}
+                    onDismiss={onDismissProperties}
                     side="right"
                     showRail={!relaxedTransientProps}
                   >
@@ -679,7 +689,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
                       onCollapse={handleCollapseEditor}
                       isFullscreen={isEditorFullscreen}
                       onToggleFullscreen={handleToggleFullscreen}
-                      onCustomizeLayout={handleOpenLayoutSettings}
                     />
                   </Suspense>
                 </ErrorBoundary>
@@ -715,14 +724,15 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
           initialTab={settingsInitialTab}
         />
 
-        {/* Mobile: properties become a selection-driven full-screen sheet
-            (JP-332) instead of a docked panel that would eat the small screen. */}
-        {appView === 'editor' && mobileActive && selectionCount > 0 && (
-          <MobilePropertySheet onClose={() => useSessionStore.getState().clearSelection()} />
-        )}
+        {/* Mobile: a selection brings a small bar, and properties a sheet when
+            asked for (DSK-223), instead of a docked panel that would eat the
+            small screen. */}
+        {appView === 'editor' && <MobileSelection />}
 
         {/* Command Palette (Cmd/Ctrl+K) */}
         <CommandPalette isOpen={isPaletteOpen} onClose={() => setIsPaletteOpen(false)} />
+        {/* Tooltips for every control that carries tip() (DSK-217). */}
+        <TooltipLayer />
 
         {/* Shape Search (Ctrl+F) */}
         <ShapeSearchPanel isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />

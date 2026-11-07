@@ -5,14 +5,15 @@
  * The local-only `TiptapEditor` and the relay `CollaborativeProseEditor` differ
  * only in their essential axes (extensions: history vs Collaboration; content
  * source: `richTextStore` vs the Y.XmlFragment; the `onUpdate` target). Every
- * other per-instance behavior — the right-click formatting menu, the spellcheck
- * popover, the custom-dictionary loader, inline-link handling, and `blob://`
+ * other per-instance behavior — the right-click menu (with a misspelled word's
+ * fixes and a link's actions), the custom-dictionary loader, inline-link
+ * handling, and `blob://`
  * image resolution — is identical, and used to be copied into both. That
  * duplication is the "two editors drift apart" seam that caused the collab-prose
  * data-loss bugs, so it lives here once and both editors call it.
  *
  * Returns the `onContextMenu` handler to spread on the editor container plus the
- * `overlay` node (the menu + popover portals) to render inside it.
+ * `overlay` node (the menu and link dialog portals) to render inside it.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -22,10 +23,10 @@ import { useRichTextStore } from '../store/richTextStore';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { rebuildSpellcheck } from '../tiptap/SpellcheckExtension';
 import { SpellcheckService } from '../services/SpellcheckService';
-import { SpellcheckPopover } from './SpellcheckPopover';
 import { DocumentEditorContextMenu } from './DocumentEditorContextMenu';
+import { InsertLinkDialog } from './InsertLinkDialog';
 import { useResolveBlobImages } from './useProseBlobImages';
-import { useProseLinkClicks } from './useProseLinkClicks';
+import { followProseLink, useProseLinkClicks } from './useProseLinkClicks';
 import { readMobileActive } from './layout/useMobileAdaptation';
 
 /** Select the image whose node view holds `dom` (a long-press on a phone). */
@@ -38,13 +39,10 @@ interface ContextMenuState {
   isOpen: boolean;
   x: number;
   y: number;
-}
-
-interface SpellPopoverState {
-  word: string;
-  range: { from: number; to: number };
-  x: number;
-  y: number;
+  /** The misspelled word that was right-clicked, if any (DSK-213). */
+  misspelling?: { word: string; range: { from: number; to: number } };
+  /** The link that was right-clicked, if any: its href and a position inside it. */
+  link?: { href: string; pos: number };
 }
 
 export interface ProseEditorChromeOptions {
@@ -60,7 +58,7 @@ export interface ProseEditorChromeOptions {
 export interface ProseEditorChrome {
   /** Spread onto the editor container `div`. */
   onContextMenu: (e: React.MouseEvent) => void;
-  /** Render inside the editor container (context menu + spellcheck popover). */
+  /** Render inside the editor container (context menu + link dialog). */
   overlay: React.ReactNode;
 }
 
@@ -77,7 +75,7 @@ export function useProseEditorChrome(
     x: 0,
     y: 0,
   });
-  const [spellPopover, setSpellPopover] = useState<SpellPopoverState | null>(null);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
 
   // Live editability, mirrored into state so the effects below re-run when a
   // permission flip lands mid-session (JP-370 `setEditable` — which emits
@@ -96,17 +94,18 @@ export function useProseEditorChrome(
     };
   }, [editor]);
 
-  // Right-click: show the spellcheck popover when over a misspelled word,
-  // otherwise the formatting context menu. Read-only surfaces get NEITHER —
-  // both menus lead to programmatic writes (`insertContent`, formatting
-  // chains) that `editable: false` does not block, so the whole handler
-  // returns early. No `preventDefault`: the native menu still offers copy.
+  // Right-click opens the context menu. Over a misspelled word its fixes head
+  // the menu, and over a link its actions do (DSK-213; the word's fixes used
+  // to open a separate popover). Read-only surfaces get no menu — it leads to
+  // programmatic writes (`insertContent`, formatting chains) that
+  // `editable: false` does not block, so the whole handler returns early. No
+  // `preventDefault`: the native menu still offers copy.
   //
   // On a phone (DSK-202) a long-press fires this event too, and a long-press is
   // the system's selection gesture: a menu at the finger covered the selection
   // handles and, with the keyboard up, ran under the bar. The phone's bar
   // offers the spelling fixes and image actions instead, so the phone layout
-  // opens neither menu. On text the system keeps its handles and its own
+  // opens no menu. On text the system keeps its handles and its own
   // copy-and-paste bar; on an image, the browser's image menu gives way to
   // selecting the image, which brings its actions into the bar.
   const onContextMenu = useCallback(
@@ -121,17 +120,21 @@ export function useProseEditorChrome(
         }
         return;
       }
+      e.preventDefault();
+      const menu: ContextMenuState = { isOpen: true, x: e.clientX, y: e.clientY };
+      // Read from what was right-clicked, not the selection: the caret move a
+      // right-click makes reaches the editor only after this handler runs.
       const errorSpan = target?.closest('.spellcheck-error') as HTMLElement | null;
       if (errorSpan) {
-        e.preventDefault();
         const word = errorSpan.textContent || '';
-        const pos = editor.view.posAtDOM(errorSpan, 0);
-        const range = { from: pos, to: pos + word.length };
-        setSpellPopover({ word, range, x: e.clientX, y: e.clientY });
-        return;
+        const from = editor.view.posAtDOM(errorSpan, 0);
+        menu.misspelling = { word, range: { from, to: from + word.length } };
       }
-      e.preventDefault();
-      setContextMenu({ isOpen: true, x: e.clientX, y: e.clientY });
+      const anchor = target?.closest('a[href]') as HTMLAnchorElement | null;
+      if (anchor && editor.view.dom.contains(anchor)) {
+        menu.link = { href: anchor.getAttribute('href') ?? '', pos: editor.view.posAtDOM(anchor, 0) };
+      }
+      setContextMenu(menu);
     },
     [editor],
   );
@@ -218,17 +221,14 @@ export function useProseEditorChrome(
           y={contextMenu.y}
           onClose={closeContextMenu}
           editor={editor}
+          misspelling={contextMenu.misspelling}
+          link={contextMenu.link}
+          onEditLink={() => setLinkDialogOpen(true)}
+          onOpenLink={(href) => followProseLink(href, { headingAnchors })}
         />
       )}
-      {spellPopover && editor && (
-        <SpellcheckPopover
-          editor={editor}
-          word={spellPopover.word}
-          range={spellPopover.range}
-          x={spellPopover.x}
-          y={spellPopover.y}
-          onClose={() => setSpellPopover(null)}
-        />
+      {linkDialogOpen && editor && (
+        <InsertLinkDialog editor={editor} onClose={() => setLinkDialogOpen(false)} />
       )}
     </>
   );

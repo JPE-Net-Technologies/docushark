@@ -4,6 +4,7 @@ import {
   RectangleShape,
   EllipseShape,
   LineShape,
+  Shape,
   TextShape,
 } from '../Shape';
 import {
@@ -134,6 +135,19 @@ describe('Transform Utilities', () => {
       expect(translated.y).toBe(20);
       expect(translated.x2).toBe(110);
       expect(translated.y2).toBe(70);
+    });
+
+    it("translates a connector's second endpoint and waypoints too", () => {
+      const connector = {
+        ...createTestLine({ x: 0, y: 0, x2: 100, y2: 0 }),
+        type: 'connector',
+        waypoints: [{ x: 50, y: 50 }],
+      } as unknown as Shape & { x2: number; y2: number; waypoints: Array<{ x: number; y: number }> };
+      const translated = translateShape(connector, new Vec2(10, 20));
+
+      expect([translated.x, translated.y, translated.x2, translated.y2]).toEqual([10, 20, 110, 20]);
+      expect(translated.waypoints).toEqual([{ x: 60, y: 70 }]);
+      expect(connector.waypoints).toEqual([{ x: 50, y: 50 }]); // not mutated
     });
 
     it('does not mutate original shape', () => {

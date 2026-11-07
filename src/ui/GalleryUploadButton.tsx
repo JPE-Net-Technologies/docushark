@@ -12,12 +12,17 @@ import { assertUploadable } from '../storage/uploadLimits';
 import { processImageForUpload } from '../utils/imageUtils';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import type { GalleryImage } from '../tiptap/GalleryExtension';
+import { tip } from './TooltipLayer';
 
 export interface GalleryUploadButtonProps {
   className?: string;
+  /** One sentence under the name in its tooltip (DSK-217). */
+  description?: string | undefined;
+  /** This instance opens for the matching "/" command (SlashUiHost's, DSK-219). */
+  slashTarget?: boolean;
 }
 
-export function GalleryUploadButton({ className }: GalleryUploadButtonProps) {
+export function GalleryUploadButton({ className, description, slashTarget = false }: GalleryUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const editor = useTiptapEditor();
@@ -51,7 +56,12 @@ export function GalleryUploadButton({ className }: GalleryUploadButtonProps) {
   };
 
   // Let the `/gallery` slash command open the same multi-file picker.
-  useEffect(() => registerSlashUiHandler('gallery', () => inputRef.current?.click()), []);
+  // Only the slash host's instance answers "/" (DSK-219); the ribbon's button
+  // keeps its own input for its own clicks.
+  useEffect(
+    () => (slashTarget ? registerSlashUiHandler('gallery', () => inputRef.current?.click()) : undefined),
+    [slashTarget],
+  );
 
   return (
     <>
@@ -60,7 +70,7 @@ export function GalleryUploadButton({ className }: GalleryUploadButtonProps) {
         className={`toolbar-button ${className ?? ''}`}
         onClick={() => inputRef.current?.click()}
         disabled={isUploading}
-        title="Insert image gallery"
+        {...tip('Insert image gallery', undefined, description)}
         aria-label="Insert image gallery"
       >
         {isUploading ? (

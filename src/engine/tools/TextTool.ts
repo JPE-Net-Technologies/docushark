@@ -1,7 +1,7 @@
 import { BaseTool, ToolContext } from './Tool';
 import { NormalizedPointerEvent } from '../InputHandler';
 import { ToolType } from '../../store/sessionStore';
-import { TextShape, DEFAULT_TEXT } from '../../shapes/Shape';
+import { shapeRegistry } from '../../shapes/ShapeRegistry';
 import { nanoid } from 'nanoid';
 
 /**
@@ -30,28 +30,10 @@ export class TextTool extends BaseTool {
     // Push history before creating shape
     ctx.pushHistory('Create text');
 
-    // Create the shape at click position
+    // Create the shape at click position, from the text handler's defaults
+    // (the canvas menu's "Add text here" makes the same one, DSK-213).
     const id = nanoid();
-    const shape: TextShape = {
-      id,
-      type: 'text',
-      x: event.worldPoint.x,
-      y: event.worldPoint.y,
-      text: 'Text',
-      fontSize: DEFAULT_TEXT.fontSize,
-      fontFamily: DEFAULT_TEXT.fontFamily,
-      textAlign: DEFAULT_TEXT.textAlign,
-      verticalAlign: DEFAULT_TEXT.verticalAlign,
-      width: DEFAULT_TEXT.width,
-      height: DEFAULT_TEXT.height,
-      rotation: DEFAULT_TEXT.rotation,
-      opacity: DEFAULT_TEXT.opacity,
-      locked: DEFAULT_TEXT.locked,
-      visible: DEFAULT_TEXT.visible,
-      fill: 'auto',
-      stroke: DEFAULT_TEXT.stroke,
-      strokeWidth: DEFAULT_TEXT.strokeWidth,
-    };
+    const shape = shapeRegistry.getHandler('text').create(event.worldPoint, id);
 
     // Add to document
     ctx.addShape(shape);

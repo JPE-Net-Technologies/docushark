@@ -23,7 +23,7 @@
  * Dismissal is always the caller's `onClose`.
  */
 
-import { ReactNode, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { ReactNode, useEffect, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, X } from 'lucide-react';
 import './MobileSheet.css';
@@ -43,6 +43,10 @@ export interface MobileSheetProps {
   subtitle?: string | undefined;
   /** Shows a back control before the title (an action sheet's second page). */
   onBack?: (() => void) | undefined;
+  /** `full` only: false when the sheet leaves the screen around it usable. */
+  modal?: boolean;
+  /** `full` only: where the sheet sits, when not over the whole viewport. */
+  style?: CSSProperties | undefined;
 }
 
 /**
@@ -62,6 +66,8 @@ export function MobileSheet({
   placement = 'full',
   subtitle,
   onBack,
+  modal = true,
+  style,
 }: MobileSheetProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -83,8 +89,9 @@ export function MobileSheet({
     <div
       className={`mobile-sheet${className ? ` ${className}` : ''}`}
       role="dialog"
-      aria-modal="true"
+      aria-modal={modal}
       aria-label={title}
+      style={style}
     >
       <header className="mobile-sheet-header">
         <span className="mobile-sheet-title">{title}</span>

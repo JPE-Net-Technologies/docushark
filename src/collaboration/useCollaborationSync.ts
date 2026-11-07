@@ -30,6 +30,7 @@ import { useCollaborationStore } from './collaborationStore';
 import { healOrphanedProseFragments, synthesizeProsePageMeta } from './proseInvariant';
 import { pageMirrorEquals } from '../types/PageMirror';
 import type { YjsDocument, CanvasPageMeta } from './YjsDocument';
+import { isGroup } from '../shapes/Shape';
 
 /**
  * Adopt the relay's authoritative prose page LIST into `richTextPagesStore`
@@ -129,14 +130,23 @@ export function useCollaborationSync(): void {
           store.addShapes(added);
         }
 
-        // Update existing shapes
+        // Update existing shapes: whole, not merged. A field this one has lost (an
+        // undo, or a colleague clearing it) would otherwise stay here, and go back
+        // into the document with the next edit (DSK-228).
         for (const shape of updated) {
-          store.updateShape(shape.id, shape);
+          store.replaceShape(shape);
         }
 
         // Remove deleted shapes
         if (removed.length > 0) {
           store.deleteShapes(removed);
+        }
+
+        // What's at the top level may have changed. One transaction, an undo
+        // above all, can deliver the order before these shapes, when it named
+        // ones the store didn't have yet: read it again now they're here (DSK-221).
+        if (added.length > 0 || removed.length > 0 || updated.some(isGroup)) {
+          store.reorderShapes(yjsDoc.getShapeOrder());
         }
       });
     });

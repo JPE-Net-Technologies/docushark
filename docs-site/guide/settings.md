@@ -35,7 +35,8 @@ They're first-class surfaces now, not settings tabs — you'll find them on
 | Default style profile | Dropdown | Style profile applied to new shapes |
 | Static properties | On/Off | Show read-only properties (like ID) in the Property Panel |
 | Hide default style profiles | On/Off | Show only your custom profiles in the Property Panel |
-| Minimap | On/Off | Minimap overlay for navigating large canvases (experimental) |
+| Selection bar | On/Off | Selecting a shape shows its style and colours beside it, with **More** for the Property Panel. Off, selecting a shape opens the panel. |
+| Minimap | On/Off | An overview for getting around large canvases; also the map button in the zoom controls |
 | Auto-focus on layer click | On/Off | Pan the camera to a shape when you click it in the Layers panel |
 
 **Reset settings** returns everything on this tab to its shipped value.
@@ -64,6 +65,7 @@ Color slots warn inline when a choice falls below a readable contrast ratio.
 | Caret style | Bar / Block | The text cursor shape |
 | Smooth writing | On/Off | Glide the caret between positions. Off automatically when motion is reduced |
 | Rounded tables | On/Off | Off gives square, grid-style tables |
+| Formatting on selection | On/Off | Selecting text shows bold, italic, highlight, link and more beside it |
 | Caret color | Color | Defaults to the theme text color |
 | Spellcheck | Custom / System / Off | Custom uses DocuShark's dictionary and "Add to dictionary"; System uses your browser or OS checker. Only one runs at a time |
 

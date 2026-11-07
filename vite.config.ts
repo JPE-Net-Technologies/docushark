@@ -148,5 +148,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // Tiptap's bubble menu (reached through @tiptap/react) imports tippy.js's
+    // default export; left to Node, it gets tippy's CommonJS build, whose
+    // default is the whole exports object ("tippy is not a function"). Run the
+    // chain through Vite, as the app does.
+    server: { deps: { inline: ['@tiptap/react', '@tiptap/extension-bubble-menu', 'tippy.js'] } },
   },
 });

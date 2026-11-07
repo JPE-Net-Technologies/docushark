@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ColorPicker, type ColorSpecial } from './color/ColorPicker';
 import { parseColorInput } from '../utils/color';
 import './CompactColorInput.css';
+import { useKeepOnScreen } from './components/useKeepOnScreen';
 
 /**
  * Props for the CompactColorInput component.
@@ -64,6 +65,8 @@ export function CompactColorInput({
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useKeepOnScreen(dropdownRef);
 
   // Calculate dropdown position
   const updateDropdownPosition = useCallback(() => {
@@ -94,8 +97,21 @@ export function CompactColorInput({
       }
     };
 
+    // One press closes the top layer, so it stops here: a panel around this listens
+    // on the window, and would close as well.
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setIsOpen(false);
+      triggerRef.current?.querySelector('button')?.focus();
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [isOpen]);
 
   // Update position on scroll/resize
@@ -179,6 +195,7 @@ export function CompactColorInput({
 
   const dropdownContent = isOpen && dropdownPosition && (
     <div
+      ref={dropdownRef}
       className="compact-color-palette-dropdown compact-color-palette-portal"
       // Logically part of whatever panel opened us, even though we render in a
       // portal on document.body — keeps an unpinned FlyoutPanel from collapsing

@@ -2,15 +2,19 @@
  * DocumentEditorContextMenu - Context menu for the rich text editor.
  *
  * Provides options for:
+ * - Spelling: on a misspelled word, its suggestions and Add to dictionary head
+ *   the menu (DSK-213; this replaced a separate spelling popover)
+ * - Links: on a link, Open, Edit and Remove act on that link (DSK-213)
  * - Text formatting (bold, italic, underline, strikethrough, code)
  * - Lists (bullet, numbered, task)
  * - Headings (H1-H6, paragraph)
- * - Block elements (blockquote, horizontal rule)
+ * - Insert: what "/" inserts, from the slash registry (DSK-213)
+ * - Block quote
  * - Table operations (when in table)
  * - Inserting embedded groups from the canvas
  */
 
-import { useEffect, useCallback, useState, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
+import { Fragment, useEffect, useCallback, useState, useRef, useMemo, useLayoutEffect, type CSSProperties } from 'react';
 import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import { clampToViewport, placeFlyout } from './contextMenuUtils';
@@ -32,7 +36,6 @@ import {
   ListOrdered,
   ListTodo,
   TextQuote,
-  Minus,
   Table,
   Shapes,
   Bold,
@@ -66,6 +69,11 @@ import {
   ClipboardType,
   FileText,
   Hash,
+  BookPlus,
+  ExternalLink,
+  Link,
+  Unlink,
+  SquarePlus,
 } from 'lucide-react';
 import { useDocumentStore } from '../store/documentStore';
 import { isGroup, type GroupShape } from '../shapes/Shape';
@@ -75,7 +83,13 @@ import { replaceSelectedImageWithFile, selectedImage } from './proseImageActions
 import { copySelection, pasteFromClipboard, type CopyFormat } from '../tiptap/clipboard/proseCopy';
 import { useNotificationStore } from '../store/notificationStore';
 import * as cmd from './editorCommands';
+import { SpellcheckService } from '../services/SpellcheckService';
+import { addToDictionary, replaceMisspelling } from './proseSpelling';
+import { INSERT_COMMANDS, INSERT_GROUPS } from '../tiptap/slashCommands';
 import './DocumentEditorContextMenu.css';
+
+/** Suggestions offered for a misspelled word, best first. */
+const MAX_SUGGESTIONS = 5;
 
 export interface DocumentEditorContextMenuProps {
   /** X position in viewport */
@@ -86,6 +100,14 @@ export interface DocumentEditorContextMenuProps {
   onClose: () => void;
   /** Tiptap editor instance */
   editor: Editor | null;
+  /** The misspelled word that was right-clicked: its fixes head the menu. */
+  misspelling?: { word: string; range: { from: number; to: number } } | undefined;
+  /** The link that was right-clicked: its href, and a position inside it. */
+  link?: { href: string; pos: number } | undefined;
+  /** Opens the link dialog on the (already selected) link. */
+  onEditLink?: (() => void) | undefined;
+  /** Follows a link the way a click on it does. */
+  onOpenLink?: ((href: string) => void) | undefined;
 }
 
 /** Heading-level glyphs, indexed by `level - 1`. */
@@ -124,6 +146,10 @@ export function DocumentEditorContextMenu({
   y,
   onClose,
   editor,
+  misspelling,
+  link,
+  onEditLink,
+  onOpenLink,
 }: DocumentEditorContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
@@ -131,7 +157,7 @@ export function DocumentEditorContextMenu({
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [activeSubmenu, setActiveSubmenu] = useState<'copyAs' | 'format' | 'heading' | 'list' | 'table' | 'group' | null>(null);
+  const [activeSubmenu, setActiveSubmenu] = useState<'copyAs' | 'format' | 'heading' | 'list' | 'insert' | 'table' | 'group' | null>(null);
   // JP-421: self-aligning submenu placement (viewport coords + height cap), and
   // how far the root menu slides left to make room for the open submenu.
   const [submenuPlacement, setSubmenuPlacement] = useState({ x: 0, y: 0, maxHeight: 0 });
@@ -151,6 +177,12 @@ export function DocumentEditorContextMenu({
   // Image selection (a NodeSelection on an image) → image actions. If the image
   // is inside a gallery, also offer reordering. Shared with the phone bar.
   const imageMenu = useMemo(() => (editor ? selectedImage(editor.state) : null), [editor]);
+
+  // A misspelled word's fixes (DSK-213), through the helpers the phone bar uses.
+  const suggestions = useMemo(
+    () => (misspelling ? SpellcheckService.suggest(misspelling.word).slice(0, MAX_SUGGESTIONS) : []),
+    [misspelling],
+  );
 
   // Clipboard (DSK-208). This menu replaces the browser's, so it carries Cut,
   // Copy and Paste, plus the formats the keyboard can't choose.
@@ -368,6 +400,85 @@ export function DocumentEditorContextMenu({
           top: rootPos.y,
         }}
       >
+        {/* Spelling (DSK-213): the word's fixes first, as a spellchecker's menu does. */}
+        {misspelling && editor && (
+          <>
+            {suggestions.length === 0 ? (
+              <div className="doc-editor-context-menu-item disabled">
+                <span className="doc-editor-context-menu-icon" />
+                <span className="doc-editor-context-menu-label">No suggestions</span>
+              </div>
+            ) : (
+              suggestions.map((suggestion) => (
+                <div
+                  key={suggestion}
+                  className="doc-editor-context-menu-item doc-editor-context-menu-suggestion"
+                  onClick={() => {
+                    replaceMisspelling(editor, misspelling.range, suggestion);
+                    onClose();
+                  }}
+                >
+                  <span className="doc-editor-context-menu-icon" />
+                  <span className="doc-editor-context-menu-label">{suggestion}</span>
+                </div>
+              ))
+            )}
+            <div
+              className="doc-editor-context-menu-item"
+              onClick={() => {
+                addToDictionary(editor, misspelling.word);
+                onClose();
+              }}
+            >
+              <span className="doc-editor-context-menu-icon"><Icon icon={BookPlus} /></span>
+              <span className="doc-editor-context-menu-label">Add to dictionary</span>
+            </div>
+            <div className="doc-editor-context-menu-divider" />
+          </>
+        )}
+
+        {/* The link that was right-clicked (DSK-213). */}
+        {link && editor && (
+          <>
+            {onOpenLink && (
+              <div
+                className="doc-editor-context-menu-item"
+                onClick={() => {
+                  onOpenLink(link.href);
+                  onClose();
+                }}
+              >
+                <span className="doc-editor-context-menu-icon"><Icon icon={ExternalLink} /></span>
+                <span className="doc-editor-context-menu-label">Open link</span>
+              </div>
+            )}
+            {onEditLink && (
+              <div
+                className="doc-editor-context-menu-item"
+                onClick={() => {
+                  cmd.selectLinkAt(editor, link.pos);
+                  onClose();
+                  onEditLink();
+                }}
+              >
+                <span className="doc-editor-context-menu-icon"><Icon icon={Link} /></span>
+                <span className="doc-editor-context-menu-label">Edit link…</span>
+              </div>
+            )}
+            <div
+              className="doc-editor-context-menu-item"
+              onClick={() => {
+                cmd.removeLinkAt(editor, link.pos);
+                onClose();
+              }}
+            >
+              <span className="doc-editor-context-menu-icon"><Icon icon={Unlink} /></span>
+              <span className="doc-editor-context-menu-label">Remove link</span>
+            </div>
+            <div className="doc-editor-context-menu-divider" />
+          </>
+        )}
+
         {/* Image actions (when an image node is selected) */}
         {/* Clipboard (DSK-208) */}
         <div
@@ -499,6 +610,17 @@ export function DocumentEditorContextMenu({
           <SubmenuArrow />
         </div>
 
+        {/* Insert submenu: what "/" inserts (DSK-213) */}
+        <div
+          className="doc-editor-context-menu-item has-submenu"
+          onMouseEnter={(e) => handleSubmenuEnter('insert', e)}
+          onMouseLeave={handleMenuItemLeave}
+        >
+          <span className="doc-editor-context-menu-icon"><Icon icon={SquarePlus} /></span>
+          <span className="doc-editor-context-menu-label">Insert</span>
+          <SubmenuArrow />
+        </div>
+
         <div className="doc-editor-context-menu-divider" />
 
         {/* Block quote */}
@@ -511,18 +633,6 @@ export function DocumentEditorContextMenu({
         >
           <span className="doc-editor-context-menu-icon"><Icon icon={TextQuote} /></span>
           <span className="doc-editor-context-menu-label">Block Quote</span>
-        </div>
-
-        {/* Horizontal rule */}
-        <div
-          className="doc-editor-context-menu-item"
-          onClick={() => {
-            if (editor) cmd.insertHorizontalRule(editor);
-            onClose();
-          }}
-        >
-          <span className="doc-editor-context-menu-icon"><Icon icon={Minus} /></span>
-          <span className="doc-editor-context-menu-label">Horizontal Rule</span>
         </div>
 
         {/* Table submenu - only when in table */}
@@ -575,6 +685,35 @@ export function DocumentEditorContextMenu({
             <span className="doc-editor-context-menu-icon"><Icon icon={Hash} /></span>
             <span className="doc-editor-context-menu-label">Markdown</span>
           </div>
+        </div>
+      )}
+
+      {activeSubmenu === 'insert' && (
+        <div
+          ref={submenuRef}
+          className="doc-editor-context-submenu"
+          style={submenuStyle}
+          onMouseEnter={handleSubmenuHover}
+          onMouseLeave={handleSubmenuLeave}
+        >
+          {INSERT_GROUPS.map((group, index) => (
+            <Fragment key={group}>
+              {index > 0 && <div className="doc-editor-context-menu-divider" />}
+              {INSERT_COMMANDS.filter((command) => command.group === group).map((command) => (
+                <div
+                  key={command.id}
+                  className="doc-editor-context-menu-item"
+                  onClick={() => {
+                    if (editor) command.run(editor);
+                    onClose();
+                  }}
+                >
+                  <span className="doc-editor-context-menu-icon"><Icon icon={command.icon} /></span>
+                  <span className="doc-editor-context-menu-label">{command.title}</span>
+                </div>
+              ))}
+            </Fragment>
+          ))}
         </div>
       )}
 

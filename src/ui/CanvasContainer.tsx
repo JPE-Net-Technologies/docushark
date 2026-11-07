@@ -8,6 +8,8 @@ import { SaveToLibraryDialog } from './SaveToLibraryDialog';
 import { CollaborativeCursors } from './CollaborativeCursors';
 import { SelectionHighlight } from './SelectionHighlight';
 import { Minimap } from './Minimap';
+import { CanvasZoomPill } from './CanvasZoomPill';
+import { CanvasSelectionBar } from './selectionBar/CanvasSelectionBar';
 import { useDocumentStore } from '../store/documentStore';
 import { useHistoryStore } from '../store/historyStore';
 import { useThemeStore } from '../store/themeStore';
@@ -17,6 +19,7 @@ import { useSettingsStore } from '../store/settingsStore';
 import { useCollaborationStore } from '../collaboration/collaborationStore';
 import { shapeRegistry } from '../shapes/ShapeRegistry';
 import { Vec2 } from '../math/Vec2';
+import { registerCanvasFocus } from './layout/focusRegions';
 import { nanoid } from 'nanoid';
 import type { ImportContext } from '../services/FileImportService';
 import { importFiles } from '../services/FileImportService';
@@ -68,6 +71,8 @@ export function CanvasContainer({
   // Refs for DOM elements and engine
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // How the canvas takes keyboard focus, for the toolbar and F6 (DSK-214).
+  useEffect(() => registerCanvasFocus(() => canvasRef.current?.focus({ preventScroll: true })), []);
   const engineRef = useRef<Engine | null>(null);
   // JP-370: the active doc is view-only for this user → canvas read-only.
   const isReadOnly = useActiveDocReadOnly();
@@ -83,7 +88,9 @@ export function CanvasContainer({
   const [isFocused, setIsFocused] = useState(false);
 
   // Context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  // Where the menu opens on screen, and the world point under it, for the
+  // actions that work there ("Paste here", "Add text here", DSK-213).
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; world: { x: number; y: number } } | null>(null);
 
   // Export dialog state
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -482,7 +489,13 @@ export function CanvasContainer({
    */
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
+    const canvas = canvasRef.current;
+    const engine = engineRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    const world = engine && rect
+      ? engine.camera.screenToWorld(new Vec2(e.clientX - rect.left, e.clientY - rect.top))
+      : { x: 0, y: 0 };
+    setContextMenu({ x: e.clientX, y: e.clientY, world: { x: world.x, y: world.y } });
   }, []);
 
   const handleCloseContextMenu = useCallback(() => {
@@ -605,11 +618,14 @@ export function CanvasContainer({
       <SelectionHighlight width={dimensions.width} height={dimensions.height} />
       <CollaborativeCursors width={dimensions.width} height={dimensions.height} />
       <Minimap canvasWidth={dimensions.width} canvasHeight={dimensions.height} />
+      <CanvasZoomPill />
+      <CanvasSelectionBar canvasWidth={dimensions.width} canvasHeight={dimensions.height} />
       <TextEditor camera={camera} />
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          world={contextMenu.world}
           onClose={handleCloseContextMenu}
           onExport={handleExportSelection}
           onSaveToLibrary={handleSaveToLibrary}

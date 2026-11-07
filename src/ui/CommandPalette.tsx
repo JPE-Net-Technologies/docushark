@@ -139,8 +139,8 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       setSelectedIndex(0);
       // Focus the search input after render — but NOT on touch, where it would
       // pop the on-screen keyboard and shove the layout up. On touch the palette
-      // opens straight to the tappable command list (it doubles as the mobile
-      // action menu); tapping the field still focuses it to type.
+      // opens straight to the tappable command list; tapping the field still
+      // focuses it to type.
       if (!device.isTouch()) {
         requestAnimationFrame(() => inputRef.current?.focus());
       }
@@ -160,6 +160,17 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       ?.querySelector<HTMLElement>(`[data-result-index="${selectedIndex}"]`)
       ?.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex, results]);
+
+  // On touch the search field isn't focused (above), so a hardware keyboard's
+  // Escape lands outside the palette and its own handler never hears it.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
 
   const run = useCallback(
     (result: PaletteResult) => {

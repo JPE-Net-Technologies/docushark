@@ -6,7 +6,7 @@ import { Box } from '../math/Box';
 import { calculateConnectorWaypoints } from '../engine/OrthogonalRouter';
 import { chooseConnectorAnchors, updateConnectorEndpoints } from '../shapes/Connector';
 import { SpatialIndex } from '../engine/SpatialIndex';
-import { wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
+import { resolveDrawOrder, wouldCreateCycle, wouldExceedMaxDepth, findParentGroup } from '../shapes/GroupHierarchy';
 import { computeAutoLayout, type AutoLayoutOptions } from '../shapes/autoLayout';
 import { runWithProvenance } from './writeProvenance';
 
@@ -29,10 +29,22 @@ export interface DocumentActions {
   // CRUD operations
   addShape: (shape: Shape) => void;
   updateShape: (id: string, updates: Partial<Shape>) => void;
+  /**
+   * Put the whole of a shape in place, as the Y.Doc holds it (DSK-228). Unlike
+   * `updateShape` this can take a field away: there a shape is one value, so a field
+   * it has lost is simply not in it.
+   */
+  replaceShape: (shape: Shape) => void;
   deleteShape: (id: string) => void;
 
   // Batch operations
   addShapes: (shapes: Shape[]) => void;
+  /**
+   * Add pasted shapes (DSK-218): every one goes into `shapes`, but only
+   * `topLevelIds` into `shapeOrder`; the rest are children of pasted groups and
+   * render through them, as grouped shapes do.
+   */
+  addPastedShapes: (shapes: Shape[], topLevelIds: string[]) => void;
   updateShapes: (updates: Array<{ id: string; updates: Partial<Shape> }>) => void;
   deleteShapes: (ids: string[]) => void;
 
@@ -122,7 +134,7 @@ export interface SnapshotIntegrity {
   ok: boolean;
   /** ids present in shapeOrder but missing from shapes (orphaned references) */
   droppedFromOrder: string[];
-  /** ids present in shapes but never referenced by shapeOrder */
+  /** ids drawn by neither shapeOrder nor a group, added back to the order (DSK-221) */
   unorderedShapes: string[];
   /** Wall-clock time of the last load, for debugging */
   at: number;
@@ -233,6 +245,16 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
       });
     },
 
+    replaceShape: (shape: Shape) => {
+      set((state) => {
+        if (!state.shapes[shape.id]) {
+          console.warn(`Shape with id ${shape.id} not found`);
+          return;
+        }
+        state.shapes[shape.id] = shape;
+      });
+    },
+
     deleteShape: (id: string) => {
       set((state) => {
         if (!state.shapes[id]) {
@@ -254,6 +276,17 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
             state.shapes[shape.id] = shape;
             state.shapeOrder.push(shape.id);
           }
+        }
+      });
+    },
+
+    addPastedShapes: (shapes: Shape[], topLevelIds: string[]) => {
+      set((state) => {
+        for (const shape of shapes) {
+          if (!state.shapes[shape.id]) state.shapes[shape.id] = shape;
+        }
+        for (const id of topLevelIds) {
+          if (state.shapes[id] && !state.shapeOrder.includes(id)) state.shapeOrder.push(id);
         }
       });
     },
@@ -358,23 +391,18 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
     },
 
     reorderShapes: (newOrder: string[]) => {
+      // This is the incremental CRDT order funnel (onOrderChange → reorderShapes):
+      // a `shapeOrder` doubled by a dual-origin merge (JP-330) must not double the
+      // rendered z-order. It can't require a permutation of the current order
+      // either: undoing a group brings its children back, and loading a page
+      // whose shapes were all added takes the children out (DSK-221).
+      const { shapes, shapeOrder } = get();
+      const { order } = resolveDrawOrder(shapes, newOrder, shapeOrder);
+      if (order.length === shapeOrder.length && order.every((id, index) => id === shapeOrder[index])) {
+        return;
+      }
       set((state) => {
-        // Keep-first dedupe + drop ids with no shape. This is the incremental
-        // CRDT order funnel (onOrderChange → reorderShapes); a `shapeOrder`
-        // doubled by a dual-origin merge (JP-330) must not double the rendered
-        // z-order. Comparing against the DISTINCT current ordered ids (not the
-        // raw length) also self-heals an already-doubled current order.
-        const seen = new Set<string>();
-        const validOrder = newOrder.filter((id) => {
-          if (!state.shapes[id] || seen.has(id)) return false;
-          seen.add(id);
-          return true;
-        });
-        // Only update when it accounts for every distinct shape currently
-        // ordered (a true permutation), so a partial order is still rejected.
-        if (validOrder.length === new Set(state.shapeOrder).size) {
-          state.shapeOrder = validOrder;
-        }
+        state.shapeOrder = order;
       });
     },
 
@@ -391,35 +419,25 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
     loadSnapshot: (snapshot: DocumentSnapshot) => {
       // Compute integrity *before* mutating state so we can log loud, accurate
       // diagnostics if the snapshot is malformed (e.g. cross-page contamination).
-      // Only the shapeOrder→missing-shape direction is a corruption signal;
-      // shapes present but absent from shapeOrder is normal (group children
-      // are tracked via the parent group's childIds, not shapeOrder).
+      // The shapeOrder→missing-shape direction is a corruption signal. A shape
+      // absent from shapeOrder is normal only as a group's child (tracked via the
+      // parent's childIds); any other would never be drawn (DSK-221).
       const incomingShapes = snapshot.shapes ?? {};
       const incomingOrder = snapshot.shapeOrder ?? [];
       const droppedFromOrder = incomingOrder.filter((id) => !incomingShapes[id]);
-      const unorderedShapes: string[] = [];
       // JP-330: collapse a doubled shapeOrder (a valid id appearing more than
       // once — the dual-origin-merge corruption) keep-first, dropping orphans.
       // `cleanOrder` is what we load so the rendered z-order is canonical and a
       // persisted doubled doc self-heals on its next save.
-      const seenIds = new Set<string>();
-      const cleanOrder: string[] = [];
-      let duplicatesDropped = 0;
-      for (const id of incomingOrder) {
-        if (!incomingShapes[id]) continue; // orphan — counted in droppedFromOrder
-        if (seenIds.has(id)) {
-          duplicatesDropped++;
-          continue;
-        }
-        seenIds.add(id);
-        cleanOrder.push(id);
-      }
+      const { order: cleanOrder, leftOut: unorderedShapes } = resolveDrawOrder(incomingShapes, incomingOrder);
+      const validIds = incomingOrder.filter((id) => incomingShapes[id]);
+      const duplicatesDropped = validIds.length - new Set(validIds).size;
       // `ok` (which gates the persistence layer's save-refusal) keys off orphans
-      // only; duplicates are repaired in place here, so a save of the cleaned
-      // state should still be allowed.
+      // only; the rest is repaired in place here, so a save of the cleaned state
+      // should still be allowed.
       const ok = droppedFromOrder.length === 0;
 
-      if (!ok || duplicatesDropped > 0) {
+      if (!ok || duplicatesDropped > 0 || unorderedShapes.length > 0) {
         // eslint-disable-next-line no-console
         console.error(
           '[documentStore] loadSnapshot integrity issue — possible page corruption.',
@@ -452,7 +470,7 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
 
           // Load snapshot data
           state.shapes = JSON.parse(JSON.stringify(incomingShapes));
-          // Orphan-dropped + dedupe-keep-first (JP-330) order computed above.
+          // The repaired order computed above (JP-330, DSK-221).
           state.shapeOrder = cleanOrder;
         });
       });
@@ -548,9 +566,9 @@ export const useDocumentStore = create<DocumentState & DocumentActions>()(
         // Remove child IDs from shapeOrder (they will render via the group)
         state.shapeOrder = state.shapeOrder.filter((id) => !validIds.includes(id));
 
-        // Insert group at the highest child's former position
-        // Since we removed items, we need to recalculate the position
-        const insertIndex = Math.min(highestIndex, state.shapeOrder.length);
+        // Insert group at the highest child's former position, counting out the
+        // other children: all of them were below it, and have just been removed.
+        const insertIndex = highestIndex - (validIds.length - 1);
         state.shapeOrder.splice(insertIndex, 0, groupId);
       });
     },

@@ -169,7 +169,7 @@
 .version-conflict-dialog__btn--primary {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .version-conflict-dialog__btn--primary:hover {

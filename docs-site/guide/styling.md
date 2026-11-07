@@ -26,7 +26,17 @@ Every shape has styling properties you can adjust in the Property Panel:
 | **Opacity** | Overall shape transparency |
 | **Text** | Font, size, color, alignment |
 
-Select a shape and tweak these in the Property Panel on the right side of the screen.
+Select a shape and the **selection bar** appears above it, with the colours you change most. For everything else, press **More** to open the Property Panel.
+
+## The Selection Bar
+
+The bar stays with your selection as you move around the canvas, and steps aside while you drag, resize or edit text.
+
+- **Style profiles:** the ones you used last. Rest on one to preview it, press it to apply it, or press the arrow for the full list.
+- **Colours:** fill, stroke and text colour, for whichever of these the selection has.
+- **More:** opens the Property Panel, which then stays open as you select other shapes until you close it. In a layout with the panel always showing, the bar has no **More**.
+
+Don't want it? Turn off **Selection bar** in **Settings → General**, and selecting a shape opens the Property Panel instead. On a phone, a selection has a bar of its own.
 
 ## Style Profiles — your branding kit
 
@@ -35,16 +45,24 @@ Think of a style profile less as a "saved preset" and more as a **branding kit**
 ### Saving a Style Profile
 
 1. Style a shape exactly how you want it (fill, stroke, font, shadow, etc.)
-2. Right-click the shape → **Save Style**
+2. In the Property Panel, open **Style** and press **+**
 3. Give your profile a name — something like your team or product name works well, since this is the kit you'll reuse everywhere
 
 ### Applying a Style Profile
 
 1. Select one or more shapes
-2. Open the **Style** dropdown in the Property Panel
-3. Choose a saved profile — all the styling applies instantly
+2. Open **Style**, at the top of the Property Panel. It names the selection's profile, or says **Custom**, or **Mixed** when the shapes differ
+3. Rest the pointer on a profile to preview it on the canvas, and choose one to apply it
+
+Type to search, and press `Enter` to apply the first match. The arrow keys move between profiles too.
 
 Because a profile can remember per-shape-type styling, applying the same kit across a mixed selection (rectangles, connectors, text) gives you one cohesive look in a single click, instead of restyling each shape type separately.
+
+### Seeing What's Changed
+
+A shape remembers the profile you applied. Change something afterwards and the **Style** row counts it, as in "Default Blue · 2 changes", and each changed property gets a dot. A collapsed section shows the dot on its header. Press the arrow at the end of a changed row to put that property back, or the one beside **Style** to reset them all. In a narrow panel, the count moves onto that button.
+
+Editing a profile doesn't restyle the shapes that use it. They show the difference as changes, and a reset picks up the new values.
 
 ### Managing Profiles
 

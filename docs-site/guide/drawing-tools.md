@@ -5,7 +5,7 @@ description: DocuShark's drawing tools — select, rectangle, ellipse, line, tex
 
 # Drawing Tools
 
-DocuShark gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts.
+DocuShark gives you a set of drawing tools for creating and manipulating shapes. Switch between them using the toolbar or keyboard shortcuts. Rest the pointer on a toolbar button for its name and shortcut.
 
 ## Select Tool (`V`)
 
@@ -108,6 +108,17 @@ Control which shapes appear in front of others:
 | Paste | `Ctrl+V` |
 
 Pasted shapes are offset by 20px from the original to avoid stacking directly on top.
+
+## Right-Click on the Canvas
+
+Right-click a shape for what you can do with it (group, arrange, export and
+more). Right-click empty canvas for what you can do there:
+
+- **Paste here** puts what you copied where you clicked.
+- **Add text here** and **Add shape here** (rectangle, ellipse or diamond)
+  create it at that spot, styled as the tool would.
+- **Undo**, **Redo**, **Select all**, **Zoom to fit** and **Zoom to 100%**, with
+  their shortcuts.
 
 ## Shape Text
 

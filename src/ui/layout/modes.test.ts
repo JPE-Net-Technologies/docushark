@@ -4,7 +4,9 @@ import {
   isCanvasHidden,
   primaryRegion,
   propertiesDockedVisible,
+  resolveActiveSurface,
   resolveRegions,
+  surfacesOnScreen,
 } from './modes';
 import { LAYOUT_MODES } from './types';
 import type { PanelState } from './types';
@@ -106,5 +108,39 @@ describe('propertiesDockedVisible (JP-410)', () => {
     expect(propertiesDockedVisible('designer', { dock: 'right', visible: true, order: 0 })).toBe(true);
     expect(propertiesDockedVisible('technician', { dock: 'right', visible: false, order: 0 })).toBe(false);
     expect(propertiesDockedVisible('power', { dock: 'right', visible: true, order: 0, pinned: true })).toBe(true);
+  });
+});
+
+describe('surfacesOnScreen (DSK-211)', () => {
+  it('shows only prose in Relaxed write focus, at every band', () => {
+    for (const band of ['wide', 'medium', 'narrow'] as const) {
+      expect(surfacesOnScreen('relaxed', 'write', band, true)).toEqual({ prose: true, canvas: false });
+    }
+  });
+
+  it('shows only the canvas in Relaxed diagram focus, which collapses the prose panel', () => {
+    expect(surfacesOnScreen('relaxed', 'diagram', 'wide', true)).toEqual({ prose: false, canvas: true });
+  });
+
+  it('shows both in a Relaxed split, and only prose once a narrow viewport collapses it', () => {
+    expect(surfacesOnScreen('relaxed', 'split', 'wide', true)).toEqual({ prose: true, canvas: true });
+    expect(surfacesOnScreen('relaxed', 'split', 'narrow', true)).toEqual({ prose: true, canvas: false });
+  });
+
+  it('follows the document panel in the other layouts, where the canvas always shows', () => {
+    expect(surfacesOnScreen('power', 'write', 'wide', true)).toEqual({ prose: true, canvas: true });
+    expect(surfacesOnScreen('designer', 'write', 'wide', false)).toEqual({ prose: false, canvas: true });
+  });
+});
+
+describe('resolveActiveSurface (DSK-211)', () => {
+  it('names the only surface on screen, whatever was worked in last', () => {
+    expect(resolveActiveSurface({ prose: true, canvas: false }, 'canvas', 'canvas')).toBe('prose');
+    expect(resolveActiveSurface({ prose: false, canvas: true }, 'prose', 'prose')).toBe('canvas');
+  });
+
+  it('follows the surface last worked in when both are on screen, else the primary region', () => {
+    expect(resolveActiveSurface({ prose: true, canvas: true }, 'canvas', 'prose')).toBe('canvas');
+    expect(resolveActiveSurface({ prose: true, canvas: true }, null, 'prose')).toBe('prose');
   });
 });

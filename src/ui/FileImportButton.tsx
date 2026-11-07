@@ -3,6 +3,7 @@ import { Paperclip } from 'lucide-react';
 import { Icon } from './icons';
 import { importFiles, ImportContext } from '../services/FileImportService';
 import './FileImportButton.css';
+import { tip } from './TooltipLayer';
 
 interface FileImportButtonProps {
   getImportContext: () => ImportContext | null;
@@ -37,18 +38,14 @@ export function FileImportButton({ getImportContext }: FileImportButtonProps) {
     }
   }, [getImportContext]);
 
-  const [showTooltip, setShowTooltip] = useState(false);
-
   return (
     <div className="tool-button-wrapper">
       <button
         className={`tool-button file-import-btn ${isImporting ? 'importing' : ''}`}
         onClick={handleClick}
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
         disabled={isImporting}
         aria-label="Embed files"
-        title=""
+        {...tip('Embed files', undefined, 'Add files to the canvas, each as a card you can open.')}
       >
         <span className="tool-button-icon">
           {isImporting ? (
@@ -63,11 +60,6 @@ export function FileImportButton({ getImportContext }: FileImportButtonProps) {
           )}
         </span>
       </button>
-      {showTooltip && !isImporting && (
-        <div className="tool-button-tooltip">
-          Embed File
-        </div>
-      )}
       <input
         ref={inputRef}
         type="file"

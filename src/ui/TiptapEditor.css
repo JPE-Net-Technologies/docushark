@@ -153,74 +153,6 @@
   text-decoration-skip-ink: none;
 }
 
-.spellcheck-popover {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: var(--shadow-lg);
-  min-width: 180px;
-  font-size: 13px;
-  padding: 6px 0;
-}
-
-.spellcheck-popover-header {
-  padding: 4px 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-.spellcheck-popover-empty {
-  padding: 4px 12px;
-  color: var(--text-secondary);
-}
-
-.spellcheck-popover-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.spellcheck-popover-list button {
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 4px 12px;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-}
-
-.spellcheck-popover-list button:hover {
-  background: var(--bg-secondary);
-}
-
-.spellcheck-popover-divider {
-  height: 1px;
-  background: var(--border-color);
-  margin: 4px 0;
-}
-
-.spellcheck-popover-add {
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 6px 12px;
-  cursor: pointer;
-  font: inherit;
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
-.spellcheck-popover-add:hover {
-  background: var(--bg-secondary);
-}
-
 .tiptap-editor .ProseMirror a.tiptap-link,
 .tiptap-editor .ProseMirror a {
   color: var(--color-primary);
@@ -361,7 +293,7 @@
 .tiptap-editor .ProseMirror table {
   border-collapse: separate;
   border-spacing: 0;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--table-border);
   border-radius: 8px;
   width: 100%;
   table-layout: fixed;
@@ -407,8 +339,8 @@
 
 .tiptap-editor .ProseMirror table th,
 .tiptap-editor .ProseMirror table td {
-  border-right: 1px solid var(--border-color);
-  border-bottom: 1px solid var(--border-color);
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
   padding: 0.5rem 0.75rem;
   vertical-align: top;
   min-width: 50px;
@@ -433,11 +365,12 @@
 }
 :root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table th,
 :root[data-rounded-tables="false"] .tiptap-editor .ProseMirror table td {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--table-border);
 }
 
+/* The header row takes the sunken tint (raised, in dark), so it reads as one. */
 .tiptap-editor .ProseMirror table th {
-  background-color: var(--bg-secondary);
+  background-color: var(--bg-tertiary);
   font-weight: 600;
   text-align: left;
 }

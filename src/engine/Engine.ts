@@ -16,7 +16,9 @@ import { ConnectorTool } from './tools/ConnectorTool';
 import { LibraryShapeTool } from './tools/LibraryShapeTool';
 import { CustomShapeTool } from './tools/CustomShapeTool';
 import { Vec2 } from '../math/Vec2';
-import { Shape, isConnector, ConnectorShape } from '../shapes/Shape';
+import { Shape, isConnector, isGroup, ConnectorShape } from '../shapes/Shape';
+import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { translateShape } from '../shapes/utils/transforms';
 import { updateConnectorEndpoints } from '../shapes/Connector';
 import { calculateConnectorWaypoints } from './OrthogonalRouter';
 import { collectChangedShapes, isConnectorAffected } from './connectorReroute';
@@ -39,6 +41,48 @@ import '../shapes/FileShape';
 
 // Clipboard for copy/paste (module-level to persist across operations)
 let clipboard: Shape[] = [];
+
+/** How far a paste lands from the shapes it copies, so it shows as new. */
+const PASTE_OFFSET = 20;
+
+/** Whether the canvas has copied shapes to paste. */
+export function hasCanvasClipboard(): boolean {
+  return clipboard.length > 0;
+}
+
+/**
+ * Paste the canvas clipboard centred on `at`, a world point (the canvas
+ * menu's "Paste here", DSK-213): the `edit.paste` event, with a place to land.
+ */
+export function requestPasteAt(at: { x: number; y: number }): void {
+  window.dispatchEvent(new CustomEvent('docushark:paste-shapes', { detail: { at } }));
+}
+
+/**
+ * A pasted copy, with its references pointed at the other copies (DSK-218): a
+ * group's children are their copies, and a connector stays attached only to
+ * shapes that were copied with it; an end attached to anything else comes
+ * loose where it was, rather than stretch back to the original.
+ */
+function retargetCopy(shape: Shape, newIds: Map<string, string>): Shape {
+  const copy = { ...shape, id: newIds.get(shape.id)! } as Shape;
+  if (isGroup(copy)) {
+    copy.childIds = copy.childIds.map((id) => newIds.get(id)).filter((id): id is string => id !== undefined);
+  }
+  if (isConnector(copy)) {
+    copy.startShapeId = copy.startShapeId ? newIds.get(copy.startShapeId) ?? null : null;
+    copy.endShapeId = copy.endShapeId ? newIds.get(copy.endShapeId) ?? null : null;
+  }
+  return copy;
+}
+
+/** How far to move `shapes` so the centre of their bounds lands on `at`. */
+function offsetToCentre(shapes: Shape[], at: { x: number; y: number }): Vec2 {
+  const bounds = shapes
+    .map((shape) => shapeRegistry.getHandler(shape.type).getBounds(shape))
+    .reduce((all, box) => all.union(box));
+  return new Vec2(at.x - (bounds.minX + bounds.maxX) / 2, at.y - (bounds.minY + bounds.maxY) / 2);
+}
 
 /**
  * Configuration options for the Engine.
@@ -181,7 +225,7 @@ export class Engine {
   // Clipboard shortcuts are registry commands (canvas scope) that bridge to the
   // engine via these events — they need the engine clipboard + spatial index.
   private boundCopy: () => void;
-  private boundPaste: () => void;
+  private boundPaste: (event: Event) => void;
 
   constructor(canvas: HTMLCanvasElement, options?: EngineOptions) {
     this.canvas = canvas;
@@ -220,13 +264,16 @@ export class Engine {
 
     // Subscribe to stores
     this.subscribeToStores();
+    // Every drawn frame tells the session store where the camera is.
+    this.renderer.setFrameStartCallback(() => this.syncCameraToStore());
 
     // Set initial tool
     this.toolManager.setActiveTool(this.options.initialTool);
 
     // Clipboard commands (registry, canvas scope) bridge to the engine here.
     this.boundCopy = () => this.copySelection();
-    this.boundPaste = () => this.pasteClipboard();
+    this.boundPaste = (event) =>
+      this.pasteClipboard((event as CustomEvent<{ at?: { x: number; y: number } } | null>).detail?.at);
     window.addEventListener('docushark:copy-shapes', this.boundCopy);
     window.addEventListener('docushark:paste-shapes', this.boundPaste);
 
@@ -341,17 +388,19 @@ export class Engine {
   }
 
   /**
-   * Force a render on the next animation frame.
-   * Also syncs engine camera position back to sessionStore.
+   * Force a render on the next animation frame. (The frame tells the session
+   * store where the camera is; see `syncCameraToStore`.)
    */
   requestRender(): void {
-    this.syncCameraToStore();
     this.renderer.requestRender();
   }
 
   /**
-   * Sync the engine camera position back to the session store
-   * so that UI code can read the current viewport center.
+   * Tell the session store where the engine's camera is, at the start of every
+   * drawn frame (DSK-212). The wheel, the Pan tool, the keys and an import's
+   * zoom to fit all move the engine's camera directly; syncing per frame keeps
+   * the store (and the zoom pill, the minimap and collaborators' cursors, which
+   * read it) in step with what's on screen, however the camera moved.
    */
   private syncCameraToStore(): void {
     const store = useSessionStore.getState();
@@ -531,18 +580,25 @@ export class Engine {
         }
       }
 
-      // Sync camera changes from sessionStore to Engine camera
+      // Sync camera changes from sessionStore to Engine camera. Only a change
+      // to the store's camera counts: an unrelated change mustn't push a camera
+      // the store hasn't caught up with yet. And the store echoing the engine
+      // (syncCameraToStore) needs nothing here; setting the camera would also
+      // reset an eased zoom's target mid-ease.
+      const storeCamera = state.camera;
       if (
-        state.camera.x !== previousCamera.x ||
-        state.camera.y !== previousCamera.y ||
-        state.camera.zoom !== previousCamera.zoom
+        storeCamera.x !== previousCamera.x ||
+        storeCamera.y !== previousCamera.y ||
+        storeCamera.zoom !== previousCamera.zoom
       ) {
-        previousCamera = state.camera;
-        this.camera.setState({
-          x: state.camera.x,
-          y: state.camera.y,
-          zoom: state.camera.zoom,
-        });
+        previousCamera = storeCamera;
+        if (
+          storeCamera.x !== this.camera.x ||
+          storeCamera.y !== this.camera.y ||
+          storeCamera.zoom !== this.camera.zoom
+        ) {
+          this.camera.setState({ x: storeCamera.x, y: storeCamera.y, zoom: storeCamera.zoom });
+        }
       }
 
       // Update renderer with selection
@@ -1036,35 +1092,46 @@ export class Engine {
     const selectedIds = useSessionStore.getState().getSelectedIds();
     if (selectedIds.length === 0) return;
     const shapes = useDocumentStore.getState().shapes;
-    clipboard = selectedIds.map((id) => ({ ...shapes[id]! }));
+    // A group comes with everything in it (DSK-218): copied alone, its paste
+    // pointed at the original children, which then drew twice.
+    const ids: string[] = [];
+    const take = (id: string) => {
+      const shape = shapes[id];
+      if (!shape || ids.includes(id)) return;
+      ids.push(id);
+      if (isGroup(shape)) shape.childIds.forEach(take);
+    };
+    selectedIds.forEach(take);
+    clipboard = ids.map((id) => ({ ...shapes[id]! }));
   }
 
   /**
-   * Paste the engine clipboard (offset), select the new shapes, and feed the
-   * spatial index. Invoked by the `edit.paste` registry command via the
-   * `docushark:paste-shapes` event.
+   * Paste the engine clipboard, select the new shapes, and feed the spatial
+   * index. Invoked by the `edit.paste` registry command via the
+   * `docushark:paste-shapes` event: a little offset from the copies, or centred
+   * on the event's point (`requestPasteAt`, the canvas menu's "Paste here").
+   * Lines and connectors move whole: their second endpoint and waypoints too.
    */
-  private pasteClipboard(): void {
+  private pasteClipboard(at?: { x: number; y: number }): void {
     // JP-370: paste needs no selection, so the clear-selection read-only trick
     // doesn't cover it — guard explicitly (the registry command is also gated).
     if (this.isReadOnly) return;
     if (clipboard.length === 0) return;
     pushHistory('Paste shapes');
 
-    const newIds: string[] = [];
-    const offset = 20; // Offset pasted shapes slightly
+    const delta = at ? offsetToCentre(clipboard, at) : new Vec2(PASTE_OFFSET, PASTE_OFFSET);
+    const newIds = new Map(clipboard.map((shape) => [shape.id, nanoid()]));
+    const copies = clipboard.map((shape) => retargetCopy(translateShape(shape, delta), newIds));
+    // Children of copied groups render through their group, as grouped shapes do.
+    const nested = new Set(clipboard.flatMap((shape) => (isGroup(shape) ? shape.childIds : [])));
+    const topLevel = clipboard.filter((shape) => !nested.has(shape.id)).map((shape) => newIds.get(shape.id)!);
 
-    for (const shape of clipboard) {
-      const newId = nanoid();
-      const newShape: Shape = { ...shape, id: newId, x: shape.x + offset, y: shape.y + offset };
-      useDocumentStore.getState().addShape(newShape);
-      this.spatialIndex.insert(newShape);
-      newIds.push(newId);
-    }
+    useDocumentStore.getState().addPastedShapes(copies, topLevel);
+    for (const copy of copies) this.spatialIndex.insert(copy);
 
-    useSessionStore.getState().select(newIds);
-    // Update clipboard with new positions for subsequent pastes.
-    clipboard = clipboard.map((s) => ({ ...s, x: s.x + offset, y: s.y + offset }));
+    useSessionStore.getState().select(topLevel);
+    // The next paste lands a little offset from these.
+    clipboard = clipboard.map((shape) => translateShape(shape, delta));
     this.renderer.requestRender();
   }
 

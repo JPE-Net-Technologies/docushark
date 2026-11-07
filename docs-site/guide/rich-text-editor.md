@@ -19,11 +19,52 @@ The Document Editor appears on the left side of the canvas and provides a full-f
 
 The editor is built on [Tiptap](https://tiptap.dev/) (ProseMirror) and supports rich formatting, tables, math equations, citations, fields, and embedded diagrams.
 
+### The Ribbon
+
+The ribbon above the text keeps everything in one row. Rest the pointer on a
+button, or tab to it, for its name and shortcut; the less familiar ones, such as
+fields, callouts and citations, also say what they do.
+
+- **Undo** and **Redo** come first, as they do on the canvas toolbar.
+- **Home** holds text styles, formatting, colours, lists and alignment.
+- **Insert** holds everything you can add, the same set as the `/` menu: inline
+  code and code blocks, dividers, callouts, tables, equations, images, files,
+  galleries, fields, citations and the bibliography.
+- **Table** and **Image** appear while your cursor is in a table or an image is
+  selected, and go again when it leaves. They never switch the ribbon over by
+  themselves; you choose them.
+- **Find** sits at the end (`Ctrl+F`).
+
+In a narrow panel, such as Split, the controls that don't fit move under a
+**More tools** (…) button at the end of the row. Rest the pointer on it, or
+click it to keep them open, and they drop down beneath the row; tabbing onto
+one of them opens them too. Escape or a click back in your page puts them away.
+
+### Formatting on Selection
+
+Select some text and a small bar appears beside it with bold, italic,
+underline, strikethrough, headings 1 and 2, highlight, link and clear
+formatting. Turn it off in **Settings → Appearance → Formatting on selection**.
+
 ### Slash Commands
 
 Type `/` at the start of a line to open a quick menu of blocks and actions —
 headings, lists, tables, code, math, and more — so you can insert content without
 reaching for the toolbar.
+
+### Right-Click Menu
+
+Right-click in your text for the actions that fit where you clicked:
+
+- **On a misspelled word**, its suggested spellings come first, then **Add to
+  dictionary**.
+- **On a link**, **Open link**, **Edit link…** and **Remove link** act on that
+  link.
+- **Insert** offers everything the `/` menu inserts, from code blocks and tables
+  to images, citations and fields.
+
+The menu also holds the clipboard actions (see [Copy and Paste](#copy-and-paste))
+and the formatting, heading and list choices.
 
 ## Text Formatting
 
@@ -110,9 +151,12 @@ Prefix any shape label with `=` to render it as LaTeX. For example, a rectangle 
 
 Embed images in your documentation:
 
-1. Click the image button in toolbar
-2. Upload a file
-3. Image is embedded in the document
+1. On the **Insert** tab, click the image button (or type `/image`)
+2. Choose a file
+3. The image is embedded in the document
+
+With an image selected, the **Image** tab offers **Replace image**,
+**Remove image** and, in a gallery, moving the image left or right.
 
 You can also paste an image: a screenshot or a copied picture is saved into the document where your cursor is.
 
@@ -128,7 +172,9 @@ Create tables for structured data:
 
 ### Insert Table
 
-Click **Table** in the toolbar to insert a 3×3 table with header row.
+On the **Insert** tab, click **Insert table** (or type `/table`) to insert a
+3×3 table with a header row. While your cursor is in a table, the **Table** tab
+appears with its row, column and cell tools.
 
 ### Table Editing
 
@@ -153,7 +199,7 @@ Click **Table** in the toolbar to insert a 3×3 table with header row.
 Embed snapshots of diagram groups directly in your rich text document:
 
 1. Right-click in the document editor
-2. Select **Insert Embedded Group**
+2. Select **Insert Group**
 3. Choose a group from your diagram
 4. The group renders as an image preview in the document
 

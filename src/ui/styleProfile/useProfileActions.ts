@@ -18,6 +18,7 @@ import {
   getProfileUpdates,
   getApplicablePropertyNames,
   mergeProfileProperties,
+  shapeMatchesProfile,
   type StyleProfile,
   type ExtractStyleOptions,
 } from '../../store/styleProfileStore';
@@ -61,8 +62,9 @@ export function useProfileActions(selectedShapes: Shape[]) {
       clearStylePreview();
       push('Apply style profile');
       for (const shape of selectedShapes) {
-        updateShape(shape.id, getProfileUpdates(profile, shape));
+        updateShape(shape.id, { ...getProfileUpdates(profile, shape), styleProfileId: profile.id } as Partial<Shape>);
       }
+      useStyleProfileStore.getState().noteProfileUsed(profile.id);
     },
     [selectedShapes, push, updateShape, clearStylePreview]
   );
@@ -82,12 +84,30 @@ export function useProfileActions(selectedShapes: Shape[]) {
 
   const endPreview = useCallback(() => clearStylePreview(), [clearStylePreview]);
 
+  /** A selection saved into a profile now goes with it (DSK-224): the shapes that look like it. */
+  const linkToSaved = useCallback(
+    (profile: StyleProfile | undefined) => {
+      if (!profile) return;
+      const { shapes } = useDocumentStore.getState();
+      const matching = selectedShapes
+        .map((shape) => shapes[shape.id])
+        .filter(
+          (shape): shape is Shape =>
+            shape !== undefined && shape.styleProfileId !== profile.id && shapeMatchesProfile(profile, shape),
+        );
+      if (matching.length === 0) return;
+      push('Link to style profile');
+      for (const shape of matching) updateShape(shape.id, { styleProfileId: profile.id } as Partial<Shape>);
+    },
+    [selectedShapes, push, updateShape]
+  );
+
   const saveNewProfile = useCallback(
     (name: string) => {
       if (!firstShape || !name.trim()) return;
-      addProfile(name.trim(), extractStyleFromShape(firstShape, extractOptions));
+      linkToSaved(addProfile(name.trim(), extractStyleFromShape(firstShape, extractOptions)));
     },
-    [firstShape, addProfile, extractOptions]
+    [firstShape, addProfile, extractOptions, linkToSaved]
   );
 
   /**
@@ -108,9 +128,10 @@ export function useProfileActions(selectedShapes: Shape[]) {
       updateProfile(profileId, {
         properties: existing ? mergeProfileProperties(existing.properties, extracted) : extracted,
       });
+      linkToSaved(getProfile(profileId));
       pushIfSynced(profileId);
     },
-    [firstShape, getProfile, updateProfile, extractOptions, pushIfSynced]
+    [firstShape, getProfile, updateProfile, extractOptions, pushIfSynced, linkToSaved]
   );
 
   /** Reset = replace the profile from this shape (counterpart to Update/merge). */
@@ -125,9 +146,10 @@ export function useProfileActions(selectedShapes: Shape[]) {
       });
       if (!ok) return;
       updateProfile(profile.id, { properties: extractStyleFromShape(firstShape, extractOptions) });
+      linkToSaved(getProfile(profile.id));
       pushIfSynced(profile.id);
     },
-    [firstShape, updateProfile, extractOptions, pushIfSynced]
+    [firstShape, getProfile, updateProfile, extractOptions, pushIfSynced, linkToSaved]
   );
 
   const duplicateProfile = useCallback(

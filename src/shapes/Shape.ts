@@ -182,6 +182,12 @@ export interface BaseShape {
   stroke: string | null;
   /** Stroke width in world units */
   strokeWidth: number;
+  /**
+   * The style profile last applied to this shape (DSK-224), so the panel can show
+   * what's changed since. Optional, and only a hint: profiles live outside the
+   * document, so this client may not have it, and it never affects drawing.
+   */
+  styleProfileId?: string;
 }
 
 /**

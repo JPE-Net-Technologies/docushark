@@ -14,12 +14,17 @@ import { useTiptapEditor } from './TiptapEditorContext';
 import { uploadProseFile } from './proseFileUpload';
 import { registerSlashUiHandler } from '../tiptap/slashCommands';
 import { useNotificationStore } from '../store/notificationStore';
+import { tip } from './TooltipLayer';
 
 export interface FileUploadButtonProps {
   className?: string;
+  /** One sentence under the name in its tooltip (DSK-217). */
+  description?: string | undefined;
+  /** This instance opens for the matching "/" command (SlashUiHost's, DSK-219). */
+  slashTarget?: boolean;
 }
 
-export function FileUploadButton({ className }: FileUploadButtonProps) {
+export function FileUploadButton({ className, description, slashTarget = false }: FileUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const editor = useTiptapEditor();
@@ -47,7 +52,12 @@ export function FileUploadButton({ className }: FileUploadButtonProps) {
 
   // `/file` opens this same picker — the upload flow lives here, not in the
   // editor. No-op headless: nothing is registered.
-  useEffect(() => registerSlashUiHandler('file', () => inputRef.current?.click()), []);
+  // Only the slash host's instance answers "/" (DSK-219); the ribbon's button
+  // keeps its own input for its own clicks.
+  useEffect(
+    () => (slashTarget ? registerSlashUiHandler('file', () => inputRef.current?.click()) : undefined),
+    [slashTarget],
+  );
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -61,7 +71,7 @@ export function FileUploadButton({ className }: FileUploadButtonProps) {
         className={`toolbar-button ${className ?? ''}`}
         onClick={handleClick}
         disabled={isUploading}
-        title="Attach file"
+        {...tip('Attach file', undefined, description)}
         aria-label="Attach file"
       >
         {isUploading ? (

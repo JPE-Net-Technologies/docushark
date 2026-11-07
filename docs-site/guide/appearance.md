@@ -58,7 +58,8 @@ Tune the text cursor in the writing editor:
 
 Pick how spellcheck works while you write:
 
-- **Custom** — DocuShark's own dictionary, with **Add to dictionary**.
+- **Custom** — DocuShark's own dictionary. Right-click a misspelled word for
+  suggestions and **Add to dictionary**.
 - **System** — your browser or OS spellchecker.
 - **Off** — no spellchecking.
 
@@ -66,6 +67,11 @@ Pick how spellcheck works while you write:
 
 Toggle **rounded tables** on for softer corners in the writing editor, or off for
 a square, grid-style look.
+
+## Formatting on selection
+
+Selecting text in the writing editor shows a small formatting bar beside it.
+Turn **Formatting on selection** off if you'd rather use only the ribbon.
 
 ## Motion
 

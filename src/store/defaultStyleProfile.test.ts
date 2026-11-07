@@ -61,6 +61,11 @@ describe('applyDefaultStyleProfile', () => {
     expect(styled.strokeWidth).toBe(3);
   });
 
+  it('links the new shape to the profile (DSK-224)', () => {
+    useSettingsStore.setState({ defaultStyleProfileId: 'p-neon' });
+    expect(applyDefaultStyleProfile(rect()).styleProfileId).toBe('p-neon');
+  });
+
   it('degrades to tool defaults when the configured profile was deleted', () => {
     // A dangling id is entirely reachable: delete a profile that is set as the
     // default and the setting keeps pointing at it. It must not throw, and it
