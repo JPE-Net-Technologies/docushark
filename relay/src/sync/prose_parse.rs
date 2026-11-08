@@ -1013,6 +1013,13 @@ fn citation_node(attrs: &[(String, String)]) -> PmNode {
     if let Some(label) = get_attr(attrs, "data-label").filter(|s| !s.is_empty()) {
         a.push(("label".to_string(), label.to_string()));
     }
+    // A cluster and a linked passage from a newer editor (DSK-235): kept as the
+    // JSON text they arrive as, so a rewrite doesn't strip them.
+    for (html, attr) in [("data-items", "items"), ("data-passage", "passage")] {
+        if let Some(value) = get_attr(attrs, html).filter(|s| !s.is_empty()) {
+            a.push((attr.to_string(), value.to_string()));
+        }
+    }
     PmNode { node_type: "citationInline".to_string(), attrs: a, children: vec![] }
 }
 

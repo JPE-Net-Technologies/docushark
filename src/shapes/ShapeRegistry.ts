@@ -2,6 +2,7 @@ import { Vec2 } from '../math/Vec2';
 import { Box } from '../math/Box';
 import { Shape, Handle, Anchor } from './Shape';
 import type { ShapeMetadata, ShapeLibraryCategory } from './ShapeMetadata';
+import { unknownShapeHandler } from './UnknownShape';
 
 /**
  * Handler interface for shape operations.
@@ -161,16 +162,16 @@ export class ShapeRegistry {
   /**
    * Get the handler for a shape type.
    *
+   * A type this build doesn't know, written by a newer version, gets the
+   * stand-in from `UnknownShape.ts`: it measures, outlines and hit-tests the
+   * shape so nothing around it fails, and refuses to create one (DSK-235).
+   * Use `hasHandler` to ask whether a type is known.
+   *
    * @param type - The shape type to get the handler for
-   * @returns The shape handler
-   * @throws Error if no handler is registered for the type
+   * @returns The shape handler, or the unknown-shape stand-in
    */
   getHandler(type: string): ShapeHandler {
-    const handler = this.handlers.get(type);
-    if (!handler) {
-      throw new Error(`No handler registered for shape type: ${type}`);
-    }
-    return handler;
+    return this.handlers.get(type) ?? unknownShapeHandler;
   }
 
   /**

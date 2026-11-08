@@ -73,10 +73,8 @@ pub fn collect_citations(html: &str) -> Vec<(String, String)> {
         for c in &node.children {
             if let PmChild::Node(n) = c {
                 if n.node_type == "citationInline" {
-                    if let Some((_, ref_id)) = n.attrs.iter().find(|(k, _)| k == "refId") {
-                        if !ref_id.is_empty() {
-                            out.push((ref_id.clone(), here.to_string()));
-                        }
+                    for ref_id in cited_ref_ids(&n.attrs) {
+                        out.push((ref_id, here.to_string()));
                     }
                 }
                 walk(n, here, out);
@@ -90,6 +88,33 @@ pub fn collect_citations(html: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Every reference one inline citation cites, in order and once each: its
+/// `refId`, then each item of a cluster written by a newer editor (`items`, a
+/// JSON array of `{ "refId": … }`, DSK-239). Malformed `items` is ignored rather
+/// than trusted. Mirrors `citedRefIdsOf` in `src/tiptap/CitationExtension.ts`;
+/// counting cluster items here is what stops a delete of a reference that is
+/// cited only inside a cluster (DSK-235).
+fn cited_ref_ids(attrs: &[(String, String)]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    let mut add = |id: &str| {
+        if !id.is_empty() && !ids.iter().any(|seen| seen == id) {
+            ids.push(id.to_string());
+        }
+    };
+    if let Some((_, ref_id)) = attrs.iter().find(|(k, _)| k == "refId") {
+        add(ref_id);
+    }
+    if let Some((_, items)) = attrs.iter().find(|(k, _)| k == "items") {
+        if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(items) {
+            for item in &list {
+                if let Some(id) = item.get("refId").and_then(|v| v.as_str()) {
+                    add(id);
+                }
+            }
+        }
+    }
+    ids
+}
 
 /// Fill-only-if-absent: assign `mint()` to every id-bearing block whose id is
 /// missing, empty, collides with `taken` (ids already on the page outside this
@@ -184,6 +209,25 @@ mod tests {
             n += 1;
             format!("blk-test-{n:04}")
         }
+    }
+
+    #[test]
+    fn a_cluster_cites_each_of_its_references_once() {
+        // A newer editor's cluster repeats its first reference as `refId`. Every
+        // reference in it counts as cited, once per citation, so a delete of
+        // one cited only inside the cluster is refused (DSK-235).
+        let html = "<p id=\"blk-a\">see <span data-citation data-ref-id=\"knuth1997\" data-label=\"[1, 2]\" \
+             data-items=\"[{&quot;refId&quot;:&quot;knuth1997&quot;},{&quot;refId&quot;:&quot;lamport1994&quot;}]\">[1, 2]</span> \
+             and <span data-citation data-ref-id=\"knuth1997\" data-items=\"not json\">[1]</span></p>";
+        let cited = collect_citations(html);
+        assert_eq!(
+            cited,
+            vec![
+                ("knuth1997".to_string(), "blk-a".to_string()),
+                ("lamport1994".to_string(), "blk-a".to_string()),
+                ("knuth1997".to_string(), "blk-a".to_string()),
+            ]
+        );
     }
 
     #[test]

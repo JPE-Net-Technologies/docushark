@@ -94,6 +94,23 @@ export const CitationInline = Node.create<CitationOptions>({
         parseHTML: (el: HTMLElement) => el.getAttribute('data-label') ?? '',
         renderHTML: (attrs) => (attrs['label'] ? { 'data-label': String(attrs['label']) } : {}),
       },
+      // Written by newer builds, kept here so this one carries them intact
+      // (DSK-235): undeclared, y-prosemirror would strip them for everyone the
+      // next time this build rewrote the node (a label write-back, an edit, a
+      // new block type around it). Both are JSON text. `items` is a
+      // citation cluster (DSK-239): `[{ refId, locator?, prefix?, suffix?,
+      // suppressAuthor? }, ...]`, with `refId` repeating the first item.
+      // `passage` is the source passage a citation rests on (DSK-241).
+      items: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-items'),
+        renderHTML: (attrs) => (attrs['items'] ? { 'data-items': String(attrs['items']) } : {}),
+      },
+      passage: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-passage'),
+        renderHTML: (attrs) => (attrs['passage'] ? { 'data-passage': String(attrs['passage']) } : {}),
+      },
     };
   },
 
@@ -128,6 +145,7 @@ export const CitationInline = Node.create<CitationOptions>({
 
       let refId = node.attrs['refId'] as string;
       let locator = node.attrs['locator'] as string | null;
+      let items = node.attrs['items'] as string | null;
       let renderToken = 0;
       let lastItem: CSLItem | undefined;
       let lastStyle: CitationStyle | undefined;
@@ -159,6 +177,16 @@ export const CitationInline = Node.create<CitationOptions>({
         const style = state.activeStyle;
         lastItem = item;
         lastStyle = style;
+
+        // A cluster from a newer build: this one can't format it, and
+        // formatting `refId` alone would overwrite the cluster's cached label
+        // with one reference's (DSK-235). Show the cached label as it is.
+        if (items) {
+          renderToken++;
+          dom.removeAttribute('title');
+          if (!dom.textContent) dom.textContent = (node.attrs['label'] as string) || '[…]';
+          return;
+        }
 
         if (!item) {
           // Missing refs show no hover card, so the native title is the only
@@ -230,9 +258,12 @@ export const CitationInline = Node.create<CitationOptions>({
           if (updatedNode.type.name !== this.name) return false;
           const newRefId = updatedNode.attrs['refId'] as string;
           const newLocator = updatedNode.attrs['locator'] as string | null;
-          if (newRefId !== refId || newLocator !== locator) {
+          const newItems = updatedNode.attrs['items'] as string | null;
+          if (newRefId !== refId || newLocator !== locator || newItems !== items) {
             refId = newRefId;
             locator = newLocator;
+            items = newItems;
+            if (items) dom.textContent = (updatedNode.attrs['label'] as string) || '[…]';
             applyAttrs();
             render();
           }
@@ -262,13 +293,40 @@ export const CitationInline = Node.create<CitationOptions>({
   },
 });
 
+/**
+ * Every refId one inline citation cites, in order and once each: its `refId`,
+ * then each item of a cluster written by a newer build (`items`, DSK-239).
+ * Malformed `items` is ignored rather than trusted. The relay's
+ * `collect_citations` (`relay/src/sync/prose_ids.rs`) applies the same rule.
+ */
+export function citedRefIdsOf(attrs: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const add = (id: unknown) => {
+    if (typeof id === 'string' && id && !ids.includes(id)) ids.push(id);
+  };
+  add(attrs['refId']);
+  const items = attrs['items'];
+  if (typeof items === 'string' && items) {
+    try {
+      const parsed: unknown = JSON.parse(items);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === 'object') add((item as Record<string, unknown>)['refId']);
+        }
+      }
+    } catch {
+      /* not JSON: count only refId */
+    }
+  }
+  return ids;
+}
+
 /** Collect the set of refIds actually cited (via inline citations) in `doc`. */
 function collectCitedRefIds(doc: PMNode): Set<string> {
   const cited = new Set<string>();
   doc.descendants((node) => {
     if (node.type.name === 'citationInline') {
-      const id = node.attrs['refId'] as string;
-      if (id) cited.add(id);
+      for (const id of citedRefIdsOf(node.attrs)) cited.add(id);
     }
   });
   return cited;
