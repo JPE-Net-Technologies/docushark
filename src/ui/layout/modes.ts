@@ -197,7 +197,7 @@ export const LAYOUT_LABELS: Record<LayoutMode, string> = {
 /** One-line description shown alongside the layout in the selector dropdown. */
 export const LAYOUT_DESCRIPTIONS: Record<LayoutMode, string> = {
   relaxed: 'Writing-first. Canvas one tap away.',
-  designer: 'Diagram-first. Document one tap away.',
+  designer: 'Canvas-first. Document one tap away.',
   technician: 'Balanced split. Panels fly out on demand.',
   power: 'Everything visible. Tightest density.',
 };

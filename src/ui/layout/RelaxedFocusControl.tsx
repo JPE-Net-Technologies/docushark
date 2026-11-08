@@ -37,7 +37,7 @@ export function RelaxedFocusControl() {
     ...(allowSplit
       ? [{ id: 'split' as const, label: 'Split', icon: <Icon icon={Columns2} size={14} /> }]
       : []),
-    { id: 'diagram', label: 'Diagram', icon: <Icon icon={Workflow} size={14} /> },
+    { id: 'diagram', label: 'Canvas', icon: <Icon icon={Workflow} size={14} /> },
   ];
 
   // When Split is unavailable, a lingering 'split' focus reads as document-primary
