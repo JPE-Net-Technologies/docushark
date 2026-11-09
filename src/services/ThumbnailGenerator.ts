@@ -121,54 +121,55 @@ async function generatePdfThumbnail(blob: Blob): Promise<ThumbnailResult | null>
 
     const arrayBuffer = await blob.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    const pdf = await loadingTask.promise;
-    const pageCount = pdf.numPages;
+    try {
+      const pdf = await loadingTask.promise;
+      const pageCount = pdf.numPages;
 
-    // Render first page
-    const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 1 });
+      // Render first page
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1 });
 
-    // Scale to fit max thumbnail dimensions
-    const scale = Math.min(
-      MAX_THUMBNAIL_WIDTH / viewport.width,
-      MAX_THUMBNAIL_HEIGHT / viewport.height,
-      1,
-    );
-    const scaledViewport = page.getViewport({ scale });
+      // Scale to fit max thumbnail dimensions
+      const scale = Math.min(
+        MAX_THUMBNAIL_WIDTH / viewport.width,
+        MAX_THUMBNAIL_HEIGHT / viewport.height,
+        1,
+      );
+      const scaledViewport = page.getViewport({ scale });
 
-    const canvas = new OffscreenCanvas(
-      Math.round(scaledViewport.width),
-      Math.round(scaledViewport.height),
-    );
-    const ctx = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
-    if (!ctx) {
-      pdf.destroy();
-      return null;
+      const canvas = new OffscreenCanvas(
+        Math.round(scaledViewport.width),
+        Math.round(scaledViewport.height),
+      );
+      const ctx = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D | null;
+      if (!ctx) return null;
+
+      await page.render({
+        canvas: null,
+        canvasContext: ctx as unknown as CanvasRenderingContext2D,
+        viewport: scaledViewport,
+      }).promise;
+
+      const thumbnailBlob = await canvas.convertToBlob({
+        type: 'image/jpeg',
+        quality: THUMBNAIL_QUALITY,
+      });
+
+      const thumbnail = await blobToDataUrl(thumbnailBlob);
+
+      return {
+        thumbnail,
+        pageCount,
+        dimensions: {
+          width: Math.round(viewport.width),
+          height: Math.round(viewport.height),
+        },
+      };
+    } finally {
+      // Tears down the document and its worker task on every path. pdf.js 6
+      // removed PDFDocumentProxy.destroy(); the loading task owns both.
+      await loadingTask.destroy().catch(() => undefined);
     }
-
-    await page.render({
-      canvas: null,
-      canvasContext: ctx as unknown as CanvasRenderingContext2D,
-      viewport: scaledViewport,
-    }).promise;
-
-    pdf.destroy();
-
-    const thumbnailBlob = await canvas.convertToBlob({
-      type: 'image/jpeg',
-      quality: THUMBNAIL_QUALITY,
-    });
-
-    const thumbnail = await blobToDataUrl(thumbnailBlob);
-
-    return {
-      thumbnail,
-      pageCount,
-      dimensions: {
-        width: Math.round(viewport.width),
-        height: Math.round(viewport.height),
-      },
-    };
   } catch (error) {
     console.warn('Failed to generate PDF thumbnail:', error);
     return null;

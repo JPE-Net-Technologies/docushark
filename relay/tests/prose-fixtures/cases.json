@@ -32,6 +32,25 @@
       ]
     },
     {
+      "name": "citation_with_cluster_and_passage_from_a_newer_editor",
+      "why": "items (a citation cluster, DSK-239) and passage (the source passage a citation rests on, DSK-241) are written by newer editors. An older editor and the relay must carry both through untouched: dropping either strips the cluster or the linked passage for everyone on the next rewrite (DSK-235).",
+      "html": "<p>see <span data-citation data-ref-id=\"knuth1997\" data-label=\"[1, 2]\" data-items=\"[{&quot;refId&quot;:&quot;knuth1997&quot;,&quot;locator&quot;:&quot;p. 42&quot;},{&quot;refId&quot;:&quot;lamport1994&quot;}]\" data-passage=\"{&quot;page&quot;:3,&quot;quote&quot;:&quot;premature optimization&quot;}\">[1, 2]</span> here</p>",
+      "nodes": [
+        {
+          "type": "paragraph"
+        },
+        {
+          "type": "citationInline",
+          "attrs": {
+            "refId": "knuth1997",
+            "label": "[1, 2]",
+            "items": "[{\"refId\":\"knuth1997\",\"locator\":\"p. 42\"},{\"refId\":\"lamport1994\"}]",
+            "passage": "{\"page\":3,\"quote\":\"premature optimization\"}"
+          }
+        }
+      ]
+    },
+    {
       "name": "bibliography_with_escaped_entries_and_scope",
       "why": "bibliography is a CUSTOM_PROSE_NODES entry whose payload is HTML inside an attribute. It is the case where escaping and round-tripping interact: an under-escaped `bibHtml` would re-parse as markup, and JP-432 already lost `scope=all` once, silently reverting a reader's show-all-references bibliography to cited-only.",
       "html": "<div data-bibliography data-bib-html=\"&lt;div class=&quot;csl-entry&quot;&gt;Knuth, D.&lt;/div&gt;\" data-scope=\"all\"></div>",

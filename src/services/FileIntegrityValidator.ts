@@ -72,21 +72,23 @@ async function validatePdf(blob: Blob): Promise<ValidationResult> {
 
     const arrayBuffer = await blob.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    try {
+      // Attempt to load the PDF
+      const pdf = await loadingTask.promise;
 
-    // Attempt to load the PDF
-    const pdf = await loadingTask.promise;
+      // Basic sanity check - must have at least one page
+      if (pdf.numPages < 1) {
+        return { valid: false, error: 'PDF has no pages' };
+      }
 
-    // Basic sanity check - must have at least one page
-    if (pdf.numPages < 1) {
-      pdf.destroy();
-      return { valid: false, error: 'PDF has no pages' };
+      // Try to get the first page to verify structure
+      await pdf.getPage(1);
+      return { valid: true };
+    } finally {
+      // Tears down the document and its worker task on every path, a corrupt
+      // file included. pdf.js 6 removed PDFDocumentProxy.destroy().
+      await loadingTask.destroy().catch(() => undefined);
     }
-
-    // Try to get the first page to verify structure
-    await pdf.getPage(1);
-
-    pdf.destroy();
-    return { valid: true };
   } catch (error) {
     return {
       valid: false,

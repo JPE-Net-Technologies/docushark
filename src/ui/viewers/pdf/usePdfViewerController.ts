@@ -257,7 +257,7 @@ export function usePdfViewerController(
     setFindNotFound(false);
     setViewRestored(false);
 
-    const loadingTask = pdfjsLib.getDocument(blobUrl);
+    const loadingTask = pdfjsLib.getDocument({ url: blobUrl });
 
     loadingTask.promise
       .then((doc) => {

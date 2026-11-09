@@ -39,7 +39,7 @@ export async function exportPdfPageAsPngFile(
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
 
-      // pdf.js v5 requires explicit `canvas: null` when passing canvasContext.
+      // Since v5, pdf.js requires an explicit `canvas: null` when passing canvasContext.
       await page.render({
         canvas: null,
         canvasContext: ctx as unknown as CanvasRenderingContext2D,

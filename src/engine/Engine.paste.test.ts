@@ -133,6 +133,23 @@ describe('pasted shapes point at each other, not the originals (DSK-218)', () =>
     expect([newLink!.x2, newLink!.y2]).toEqual([270, 20]); // the old end, moved with the paste
   });
 
+  it('a shape of a type this build does not know pastes at the point, its fields intact (DSK-235)', () => {
+    // As a newer version might write it: geometry this build can't read, kept
+    // relative to the centre so moving the centre moves the whole shape.
+    const stroke = {
+      id: 'stroke', type: 'pen-stroke-from-the-future', x: 40, y: 40, width: 60, height: 20,
+      rotation: 0, opacity: 1, locked: false, visible: true, fill: null, stroke: '#000000', strokeWidth: 2,
+      points: [[-30, -10, 0.5], [30, 10, 0.7]],
+    } as unknown as Shape;
+    useDocumentStore.setState({ shapes: { stroke }, shapeOrder: ['stroke'] });
+    useSessionStore.getState().select(['stroke']);
+    window.dispatchEvent(new CustomEvent('docushark:copy-shapes'));
+    expect(() => requestPasteAt({ x: 1000, y: 500 })).not.toThrow();
+    const [copy] = pasted() as unknown as (typeof stroke & { points: number[][] })[];
+    expect(copy).toMatchObject({ type: 'pen-stroke-from-the-future', x: 1000, y: 500, width: 60, height: 20 });
+    expect(copy!.points).toEqual([[-30, -10, 0.5], [30, 10, 0.7]]);
+  });
+
   it('a copied group brings its children, which render only through the new group', () => {
     const { after, shapeOrder, byType } = copyAndPaste([a, b, group], ['g'], ['g']);
     const [newGroup] = byType('group') as GroupShape[];
