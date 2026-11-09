@@ -1,7 +1,7 @@
 /**
  * RelaxedFocusControl — the writing-first focus switch.
  *
- * A segmented Write / Split / Diagram control shown in the toolbar only while
+ * A segmented Write / Split / Canvas control shown in the toolbar only while
  * the Relaxed layout is active. It's the convenient, all-skill-levels way to
  * move between the expanded prose editor and the canvas (the design driver for
  * the prose-first rework), and the seed of the single-pane switcher a future
@@ -37,7 +37,7 @@ export function RelaxedFocusControl() {
     ...(allowSplit
       ? [{ id: 'split' as const, label: 'Split', icon: <Icon icon={Columns2} size={14} /> }]
       : []),
-    { id: 'diagram', label: 'Diagram', icon: <Icon icon={Workflow} size={14} /> },
+    { id: 'diagram', label: 'Canvas', icon: <Icon icon={Workflow} size={14} /> },
   ];
 
   // When Split is unavailable, a lingering 'split' focus reads as document-primary
