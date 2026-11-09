@@ -236,7 +236,8 @@ export const CitationInline = Node.create<CitationOptions>({
         hoverTimer = window.setTimeout(() => {
           const state = useReferenceStore.getState();
           const item = state.getReference(refId);
-          if (item) showCitationCard(dom, item, state.activeStyle);
+          // A cluster's card would describe only its first reference.
+          if (item && citedRefIdsOf({ refId, items }).length < 2) showCitationCard(dom, item, state.activeStyle);
         }, 220);
       };
       const onLeave = () => {
@@ -263,9 +264,15 @@ export const CitationInline = Node.create<CitationOptions>({
             refId = newRefId;
             locator = newLocator;
             items = newItems;
-            if (items) dom.textContent = (updatedNode.attrs['label'] as string) || '[…]';
             applyAttrs();
             render();
+          }
+          // A cluster shows the label the newer build wrote. That build
+          // re-labels it without touching `items` (another style, renumbering),
+          // so follow the label on every update, not only when `items` changes.
+          if (items) {
+            const label = (updatedNode.attrs['label'] as string) || '[…]';
+            if (dom.textContent !== label) dom.textContent = label;
           }
           return true;
         },
