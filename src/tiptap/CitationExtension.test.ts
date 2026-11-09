@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { CitationInline, Bibliography } from './CitationExtension';
+import { CitationInline, Bibliography, citedRefIdsOf } from './CitationExtension';
 import { useReferenceStore } from '../store/referenceStore';
 import type { CSLItem } from '../types/Citation';
 
@@ -415,6 +415,147 @@ describe('citation projection — getHTML self-contained (JP-89 slice 5.5)', () 
       if (n.type.name === 'citationInline') hasCitation = true;
     });
     expect(hasCitation).toBe(false);
+
+    editor.destroy();
+    element.remove();
+  });
+});
+
+describe('a citation written by a newer build (DSK-235)', () => {
+  const lamport: CSLItem = {
+    id: 'lamport1994',
+    type: 'book',
+    title: 'A Document Preparation System',
+    author: [{ family: 'Lamport', given: 'Leslie' }],
+    issued: { 'date-parts': [[1994]] },
+  };
+  /** A cluster citing smith2020 then lamport1994, as DSK-239 will write it. */
+  const cluster =
+    '<span data-citation data-ref-id="smith2020" data-label="[1, 2]" ' +
+    'data-items="[{&quot;refId&quot;:&quot;smith2020&quot;},{&quot;refId&quot;:&quot;lamport1994&quot;}]">[1, 2]</span>';
+
+  it('lists every refId a citation cites, once each', () => {
+    const items = JSON.stringify([{ refId: 'a' }, { refId: 'b' }, { refId: 'b' }, { other: 1 }]);
+    expect(citedRefIdsOf({ refId: 'a', items })).toEqual(['a', 'b']);
+    expect(citedRefIdsOf({ refId: 'a', items: 'not json' })).toEqual(['a']);
+    expect(citedRefIdsOf({ refId: 'a', items: '{"refId":"b"}' })).toEqual(['a']);
+    expect(citedRefIdsOf({ refId: '', items: null })).toEqual([]);
+  });
+
+  it('keeps a cluster and its cached label rather than formatting its first reference', async () => {
+    useReferenceStore.getState().addReference(smith);
+    useReferenceStore.getState().addReference(lamport);
+    const { editor, element } = makeEditor();
+    editor.commands.setContent(`<p>${cluster} and <span data-citation data-ref-id="smith2020"></span></p>`);
+
+    // The plain citation proves formatting ran; the cluster must not have been
+    // re-formatted from smith2020 alone.
+    const cites = () => element.querySelectorAll('.citation-inline');
+    await waitFor(() => (cites()[1]?.textContent ?? '').includes('Smith'));
+    expect(cites()[0]?.textContent).toBe('[1, 2]');
+    const html = editor.getHTML();
+    expect(html).toContain('data-label="[1, 2]"');
+    expect(html).toContain('data-items="[{&quot;refId&quot;:&quot;smith2020&quot;},{&quot;refId&quot;:&quot;lamport1994&quot;}]"');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('counts every reference in a cluster as cited in the bibliography', async () => {
+    useReferenceStore.getState().addReference(smith);
+    useReferenceStore.getState().addReference(lamport);
+    const { editor, element } = makeEditor();
+    editor.commands.setContent(`<p>See ${cluster}.</p>`);
+    editor.commands.focus('end');
+    editor.commands.insertBibliography();
+    const content = () => element.querySelector('.bibliography-content');
+    await waitFor(() => (content()?.textContent ?? '').includes('Lamport'));
+    expect(content()?.textContent).toContain('Smith');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('stops formatting a citation that becomes a cluster while it is on screen', async () => {
+    useReferenceStore.getState().addReference(smith);
+    const { editor, element } = makeEditor();
+    editor.commands.setCitation('smith2020');
+    const cite = () => element.querySelector('.citation-inline');
+    await waitFor(() => (cite()?.textContent ?? '').includes('Smith'));
+
+    // A newer build turns it into a cluster (as a remote change would).
+    let pos = -1;
+    editor.state.doc.descendants((node, at) => {
+      if (node.type.name === 'citationInline') pos = at;
+    });
+    const items = JSON.stringify([{ refId: 'smith2020' }, { refId: 'lamport1994' }]);
+    const attrs = { ...editor.state.doc.nodeAt(pos)!.attrs, items, label: '[1, 2]' };
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, attrs));
+    expect(cite()?.textContent).toBe('[1, 2]');
+
+    // A reference change re-renders citations; the cluster must stay as written.
+    useReferenceStore.getState().addReference(lamport);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(cite()?.textContent).toBe('[1, 2]');
+    expect(editor.getHTML()).toContain('data-label="[1, 2]"');
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('shows the label a newer build gives a cluster, and formats a plain citation itself', async () => {
+    useReferenceStore.getState().addReference(smith);
+    useReferenceStore.getState().addReference(lamport);
+    const { editor, element } = makeEditor();
+    editor.commands.setContent(`<p>${cluster} and <span data-citation data-ref-id="smith2020"></span></p>`);
+    const cites = () => element.querySelectorAll('.citation-inline');
+    await waitFor(() => (cites()[1]?.textContent ?? '').includes('Smith'));
+    const formatted = cites()[1]?.textContent;
+
+    // A newer build re-labels both (another style), as a remote change would.
+    // The cluster's items stay as they were.
+    const positions: number[] = [];
+    editor.state.doc.descendants((node, at) => {
+      if (node.type.name === 'citationInline') positions.push(at);
+    });
+    const relabel: Array<[number, string]> = [
+      [positions[0]!, '(Smith 2020; Lamport 1994)'],
+      [positions[1]!, 'written elsewhere'],
+    ];
+    let tr = editor.state.tr;
+    for (const [pos, label] of relabel) tr = tr.setNodeMarkup(pos, undefined, { ...tr.doc.nodeAt(pos)!.attrs, label });
+    editor.view.dispatch(tr);
+
+    expect(cites()[0]?.textContent).toBe('(Smith 2020; Lamport 1994)');
+    // This build formats a plain citation from its reference, not its label.
+    expect(cites()[1]?.textContent).toBe(formatted);
+
+    editor.destroy();
+    element.remove();
+  });
+
+  it('shows no hover card for a cluster of several references', async () => {
+    useReferenceStore.getState().addReference(smith);
+    useReferenceStore.getState().addReference(lamport);
+    const { editor, element } = makeEditor();
+    // A newer build may also write `items` for one reference (with a prefix).
+    const single =
+      '<span data-citation data-ref-id="smith2020" data-label="see Smith, 2020" ' +
+      'data-items="[{&quot;refId&quot;:&quot;smith2020&quot;,&quot;prefix&quot;:&quot;see&quot;}]">see Smith, 2020</span>';
+    editor.commands.setContent(`<p>${cluster} and ${single}</p>`);
+    const [several, one] = Array.from(element.querySelectorAll<HTMLElement>('.citation-inline'));
+    const shown = () => (document.querySelector('.citation-card') as HTMLElement | null)?.style.display === 'block';
+
+    // The card would describe only the cluster's first reference.
+    several!.dispatchEvent(new MouseEvent('mouseenter'));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(shown()).toBe(false);
+    several!.dispatchEvent(new MouseEvent('mouseleave'));
+
+    // The same dwell over a citation of one reference shows its card.
+    one!.dispatchEvent(new MouseEvent('mouseenter'));
+    await waitFor(shown);
+    one!.dispatchEvent(new MouseEvent('mouseleave'));
 
     editor.destroy();
     element.remove();

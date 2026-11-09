@@ -80,7 +80,9 @@ const RELAY_ATTRS: Record<string, Set<string>> = {
   callout: new Set(['variant']),
   gallery: new Set(['layout']),
   figure: new Set([]),
-  citationInline: new Set(['refId', 'locator', 'label']),
+  // items/passage: written by newer citation features, carried by the relay
+  // untouched (DSK-235).
+  citationInline: new Set(['refId', 'locator', 'label', 'items', 'passage']),
   fieldRef: new Set(['name', 'label']),
   mathInline: new Set(['latex']),
   mathBlock: new Set(['latex']),

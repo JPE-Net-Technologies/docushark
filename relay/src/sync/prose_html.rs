@@ -429,6 +429,14 @@ fn citation_html<T: ReadTxn>(el: &XmlElementRef, txn: &T) -> String {
     if !label.is_empty() {
         let _ = write!(s, " data-label=\"{}\"", escape_attr(&label));
     }
+    // Written by newer editors: a citation cluster and the source passage a
+    // citation rests on, each as JSON text. Carried through untouched so a
+    // flatten or an MCP rewrite keeps them (DSK-235).
+    for (attr, html) in [("items", "data-items"), ("passage", "data-passage")] {
+        if let Some(value) = str_attr(el, txn, attr).filter(|v| !v.is_empty()) {
+            let _ = write!(s, " {html}=\"{}\"", escape_attr(&value));
+        }
+    }
     s.push('>');
     push_escaped(&mut s, &label);
     s.push_str("</span>");

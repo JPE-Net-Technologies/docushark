@@ -41,6 +41,9 @@ Once a stable (non-`-beta`) release ships:
 - **Blob references**: never orphan blobs. There are exactly **two** reference shapes — a raw hash under a key literally named `blobRef`, or the `blob://<hash>` grammar **anywhere inside a string** (prose stores HTML, so its refs are substrings). Anything storing a blob must use one of them or the GC will sweep it. `deriveBlobReferences` / `collectBlobReferences` (`src/storage/AssetBundler.ts`) is the **only** client walker — don't write a second one; its relay twin is `collect_blob_references` (`relay/src/api.rs`), and both are pinned by `relay/tests/blob-ref-fixtures/`. Add a fixture case when reference patterns change (JP-494).
 - **Settings**: new settings have defaults that preserve existing behavior.
 - **Store changes**: new fields are optional with sensible defaults so partial in-memory state can be hydrated from older snapshots without crashing.
+- **Readers before writers** (DSK-235): older builds stay in use for a while: a cached PWA, a second tab, the production editor while staging moves ahead. So a new stored shape type, node attribute or field ships the code that *reads* it at least one production release before the code that *writes* it, and that older build must keep it intact.
+  - **Shapes:** a type the build doesn't know gets the stand-in from `src/shapes/UnknownShape.ts`. It measures the shape from `x`, `y` (the centre), `width` and `height`, outlines it, and can't create one. So a new shape type must carry those four fields, and keep any other geometry relative to `x`/`y`: then an older build can place, move and cull it.
+  - **Prose:** y-prosemirror builds a node from the attributes its schema declares. When a build rewrites that node (a label write-back, an edit to it, a new block type around it), the shared copy loses every attribute that build doesn't declare. Declare a new attribute (default `null`) in the reader release, in both the editor extension and the relay's `prose_html.rs` and `prose_parse.rs`, before anything writes it. Add a case to `relay/tests/prose-fixtures/cases.json`.
 
 ## Technology Stack
 
@@ -219,6 +222,7 @@ Screen Space (canvas pixels)
 
 Shapes are plain data objects. Behavior is implemented via the **ShapeRegistry pattern**:
 - Each shape type registers handlers for: `render`, `hitTest`, `getBounds`, `getHandles`, `create`
+- `getHandler` never throws: a type the build doesn't know (written by a newer version) gets the stand-in from `UnknownShape.ts`. Ask `hasHandler` whether a type is known.
 - Shape data extends `BaseShape` interface with type-specific properties
 - No methods on shape objects — all behavior is external
 - Shape metadata (`/shapes/ShapeMetadata.ts`) provides property definitions for dynamic PropertyPanel rendering
