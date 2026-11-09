@@ -1,7 +1,7 @@
 /**
  * RelaxedFocusControl — the writing-first focus switch.
  *
- * A segmented Write / Split / Diagram control shown in the toolbar only while
+ * A segmented Write / Split / Canvas control shown in the toolbar only while
  * the Relaxed layout is active. It's the convenient, all-skill-levels way to
  * move between the expanded prose editor and the canvas (the design driver for
  * the prose-first rework), and the seed of the single-pane switcher a future

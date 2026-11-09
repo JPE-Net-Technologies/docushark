@@ -349,7 +349,7 @@ selection until closed (`sessionStore.propertiesRequested`). With the bar off in
 Settings, every selection opens the fly-out instead.
 
 In **Relaxed** the document editor is the *primary* region (a centered reading
-column), not a sidebar. A `Write · Split · Diagram` segmented control
+column), not a sidebar. A `Write · Split · Canvas` segmented control
 (`RelaxedFocusControl`, toolbar-only in Relaxed; also `Cmd+Shift+\` and a
 command-palette entry) switches focus between prose-only, prose + secondary
 canvas, and canvas-primary. The focus is ephemeral app-level state
