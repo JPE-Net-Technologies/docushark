@@ -562,9 +562,6 @@
       ],
       [
         "Build notes",
-        "Page 2 of 5"
-      ],
-      [
         "const line0 = 0 * 0; // canvas shape layout.",
         "const line1 = 1 * 7; // citation diagram figure.",
         "const line2 = 2 * 1; // source document prose.",
@@ -611,6 +608,9 @@
         "const line43 = 43 * 2; // figure canvas shape.",
         "const line44 = 44 * 9; // prose citation diagram.",
         "const line45 = 45 * 3; // heading source document.",
+        "Page 2 of 5"
+      ],
+      [
         "const line46 = 46 * 10; // relay export page.",
         "const line47 = 47 * 4; // table outline review.",
         "const line48 = 48 * 11; // canvas shape layout.",
@@ -633,6 +633,28 @@
         "const line65 = 65 * 0; // citation diagram figure.",
         "const line66 = 66 * 7; // source document prose.",
         "const line67 = 67 * 1; // export page heading.",
+        "const line68 = 68 * 8; // outline review relay.",
+        "const line69 = 69 * 2; // shape layout table.",
+        "const line70 = 70 * 9; // diagram figure canvas.",
+        "const line71 = 71 * 3; // document prose citation.",
+        "const line72 = 72 * 10; // page heading source.",
+        "const line73 = 73 * 4; // review relay export.",
+        "const line74 = 74 * 11; // layout table outline.",
+        "const line75 = 75 * 5; // figure canvas shape.",
+        "const line76 = 76 * 12; // prose citation diagram.",
+        "const line77 = 77 * 6; // heading source document.",
+        "const line78 = 78 * 0; // relay export page.",
+        "const line79 = 79 * 7; // table outline review.",
+        "const line80 = 80 * 1; // canvas shape layout.",
+        "const line81 = 81 * 8; // citation diagram figure.",
+        "const line82 = 82 * 2; // source document prose.",
+        "const line83 = 83 * 9; // export page heading.",
+        "const line84 = 84 * 3; // outline review relay.",
+        "const line85 = 85 * 10; // shape layout table.",
+        "const line86 = 86 * 4; // diagram figure canvas.",
+        "const line87 = 87 * 11; // document prose citation.",
+        "const line88 = 88 * 5; // page heading source.",
+        "const line89 = 89 * 12; // review relay export.",
         "Page 3 of 5"
       ],
       [

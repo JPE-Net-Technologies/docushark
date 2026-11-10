@@ -5,7 +5,7 @@
 
 import type { JSONContent } from '@tiptap/core';
 import { PDF_FONT_SANS, PDF_FONT_MONO } from './fonts';
-import { checkPageBreak, type PDFRenderContext, type TextSegment } from './context';
+import { checkPageBreak, pageContentHeight, spaceLeft, type PDFRenderContext, type TextSegment } from './context';
 import { renderNode } from './registry';
 import { PDF_STYLE } from './style';
 import { extractSegments, extractText, renderSegmentedText } from './text';
@@ -219,23 +219,55 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
 
   const blockHeight = wrappedLines.length * lineHeightMm + PDF_STYLE.codeBlockPadding * 2;
 
-  checkPageBreak(ctx, blockHeight);
+  if (blockHeight <= pageContentHeight(ctx)) {
+    // Fits on a page: kept together, on the next page if need be.
+    checkPageBreak(ctx, blockHeight);
+    drawCodeLines(ctx, wrappedLines, lineHeightMm);
+  } else {
+    // Taller than a page: split across pages, starting where it stands. Drawn
+    // in one piece it ran off the page and lost its end (DSK-251).
+    checkPageBreak(ctx, CODE_BLOCK_MIN_LINES * lineHeightMm + PDF_STYLE.codeBlockPadding * 2);
+    let remaining = wrappedLines;
+    while (remaining.length > 0) {
+      const room = Math.floor((spaceLeft(ctx) - PDF_STYLE.codeBlockPadding * 2) / lineHeightMm);
+      const part = remaining.slice(0, Math.max(1, room));
+      remaining = remaining.slice(part.length);
+      drawCodeLines(ctx, part, lineHeightMm);
+      if (remaining.length > 0) {
+        ctx.doc.addPage();
+        ctx.pageNumber++;
+        ctx.y = ctx.marginTop;
+      }
+    }
+  }
+
+  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+}
+
+/** Fewest lines of a split code block worth starting at the foot of a page. */
+const CODE_BLOCK_MIN_LINES = 3;
+
+/** Draw code lines on their shaded background at the current position. */
+function drawCodeLines(ctx: PDFRenderContext, lines: string[], lineHeightMm: number): void {
+  const height = lines.length * lineHeightMm + PDF_STYLE.codeBlockPadding * 2;
 
   ctx.doc.setFillColor(PDF_STYLE.codeBlockBg);
   ctx.doc.rect(
     ctx.marginLeft,
     ctx.y - 3,
     ctx.contentWidth,
-    blockHeight,
+    height,
     'F'
   );
 
   ctx.doc.setTextColor(0, 0, 0);
-  ctx.doc.text(wrappedLines, ctx.marginLeft + PDF_STYLE.codeBlockPadding, ctx.y + PDF_STYLE.codeBlockPadding);
+  // Space the lines as the background is sized: jsPDF's own default (1.15)
+  // left the bottom fifth of every block empty.
+  ctx.doc.text(lines, ctx.marginLeft + PDF_STYLE.codeBlockPadding, ctx.y + PDF_STYLE.codeBlockPadding, {
+    lineHeightFactor: PDF_STYLE.lineHeight,
+  });
 
-  ctx.y += blockHeight + 4;
-
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.y += height + 4;
 }
 
 /**
