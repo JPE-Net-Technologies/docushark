@@ -149,7 +149,7 @@ offline by `RelayDocumentCache`) and `userStore` (identity + JWT). Feature store
 | UI features / panels | The `PanelExtensions.ts` registry | [Building UI Features](./plugin-development) |
 | Shape libraries | Collections under `src/shapes/library/` | [Creating Custom Shapes](./creating-shapes) |
 | Export formats | Add exporters in `exportUtils.ts` | [Utility Modules](./utilities) |
-| PDF node types | Register with `PDFNodeRendererRegistry` in `pdfExportUtils.ts` | [Creating Prose Helpers](./creating-prose-helpers) |
+| PDF node types | Register with `pdfNodeRenderers` in `src/utils/pdfExport/nodes.ts` | [Creating Prose Helpers](./creating-prose-helpers) |
 | Prose (Tiptap) helpers | Shared extensions in `TiptapEditor.tsx` | [Creating Prose Helpers](./creating-prose-helpers) |
 
 ## Next Steps

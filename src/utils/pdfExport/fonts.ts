@@ -32,11 +32,11 @@ export async function registerPDFFonts(doc: jsPDF): Promise<void> {
     { Inter_BoldItalic },
     { JetBrainsMono_Regular },
   ] = await Promise.all([
-    import('./fonts/Inter_Regular'),
-    import('./fonts/Inter_Bold'),
-    import('./fonts/Inter_Italic'),
-    import('./fonts/Inter_BoldItalic'),
-    import('./fonts/JetBrainsMono_Regular'),
+    import('../fonts/Inter_Regular'),
+    import('../fonts/Inter_Bold'),
+    import('../fonts/Inter_Italic'),
+    import('../fonts/Inter_BoldItalic'),
+    import('../fonts/JetBrainsMono_Regular'),
   ]);
 
   // Inter — sans-serif (4 styles)
