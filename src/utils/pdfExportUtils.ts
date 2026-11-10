@@ -82,11 +82,13 @@ export async function exportToPdf(
 ): Promise<Blob> {
   const { width, height } = getPageDimensions(options.pageSize, options.orientation);
 
-  // Create PDF document
+  // Create PDF document. Compressed: jsPDF otherwise writes every content
+  // stream and embedded font raw, about four times the size (DSK-250).
   const doc = new jsPDF({
     orientation: options.orientation,
     unit: 'mm',
     format: options.pageSize,
+    compress: true,
   });
 
   // Register custom Unicode-capable fonts (Inter + JetBrains Mono)
