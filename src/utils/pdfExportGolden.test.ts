@@ -300,6 +300,15 @@ describe('PDF export golden output (DSK-242)', () => {
     await check('long/blocks', [{ id: 'blocks', name: 'Blocks', content: content(longBlocks()) }]);
   }, 30_000);
 
+  it('keeps every line of a code block taller than a page (DSK-251)', async () => {
+    // Drawn in one piece, a block this long ran off the page and lost its end.
+    const pages = [{ id: 'blocks', name: 'Blocks', content: content(longBlocks()) }];
+    const blob = await exportToPdf(DEFAULT_PDF_OPTIONS, pages[0]!.content, undefined, pages);
+    const { text } = await readBack(new Uint8Array(await blobBytes(blob)));
+    const lines = new Set(text.flat().flatMap((line) => [...line.matchAll(/const line(\d+) =/g)].map((m) => m[1])));
+    expect(lines.size).toBe(90);
+  }, 30_000);
+
   it('writes every stream compressed (DSK-250)', async () => {
     // Uncompressed, the fonts and page contents make an export about four times
     // the size. Every stream, fonts included, must carry a Flate filter.

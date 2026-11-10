@@ -104,16 +104,27 @@ export interface PDFRenderContext {
   }>;
 }
 
+/** Space kept clear at the foot of each page for its number, when shown. */
+function footerSpace(ctx: PDFRenderContext): number {
+  return ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
+}
+
+/** Height left for content on the current page, above the footer. */
+export function spaceLeft(ctx: PDFRenderContext): number {
+  return ctx.pageHeight - ctx.marginBottom - footerSpace(ctx) - ctx.y;
+}
+
+/** Height a whole page offers content, between its margins and above the footer. */
+export function pageContentHeight(ctx: PDFRenderContext): number {
+  return ctx.pageHeight - ctx.marginTop - ctx.marginBottom - footerSpace(ctx);
+}
+
 /**
  * Check if we need a page break, and add one if necessary.
  * Accounts for footer space when page numbers are enabled.
  */
 export function checkPageBreak(ctx: PDFRenderContext, requiredHeight: number): void {
-  // Reserve extra space for page numbers if enabled
-  const footerSpace = ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
-  const availableHeight = ctx.pageHeight - ctx.marginBottom - footerSpace - ctx.y;
-
-  if (requiredHeight > availableHeight) {
+  if (requiredHeight > spaceLeft(ctx)) {
     ctx.doc.addPage();
     ctx.pageNumber++;
     ctx.y = ctx.marginTop;
