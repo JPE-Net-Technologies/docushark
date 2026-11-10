@@ -58,6 +58,8 @@ export interface TextSegment {
  */
 export interface PDFRenderContext {
   doc: jsPDF;
+  /** jsPDF's name for the document's font family (DSK-246), for `setFont`. */
+  textFont: string;
   y: number;
   pageWidth: number;
   pageHeight: number;

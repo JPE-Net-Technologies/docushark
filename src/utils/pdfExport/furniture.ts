@@ -3,7 +3,6 @@
  * outline (bookmarks), internal heading links and page numbers.
  */
 
-import { PDF_FONT_SANS } from './fonts';
 import { PDFCoverPage } from '../../types/PDFExport';
 import type { PDFRenderContext } from './context';
 import {
@@ -72,7 +71,7 @@ export async function renderCoverPage(
 
   // Title
   if (coverPage.title) {
-    ctx.doc.setFont(PDF_FONT_SANS, 'bold');
+    ctx.doc.setFont(ctx.textFont, 'bold');
     ctx.doc.setFontSize(24);
     const titleLines = ctx.doc.splitTextToSize(coverPage.title, ctx.contentWidth - 40);
     ctx.doc.text(titleLines, centerX, y, { align: 'center' });
@@ -85,7 +84,7 @@ export async function renderCoverPage(
   y += 20;
 
   // Metadata
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setFontSize(12);
 
   if (coverPage.version) {
@@ -107,7 +106,7 @@ export async function renderCoverPage(
   if (coverPage.description) {
     y += 15;
     ctx.doc.setFontSize(10);
-    ctx.doc.setFont(PDF_FONT_SANS, 'italic');
+    ctx.doc.setFont(ctx.textFont, 'italic');
     const descLines = ctx.doc.splitTextToSize(coverPage.description, ctx.contentWidth - 60);
     ctx.doc.text(descLines, centerX, y, { align: 'center' });
   }
@@ -167,7 +166,7 @@ export function insertTableOfContents(ctx: PDFRenderContext, hasCover: boolean):
     let y = ctx.marginTop;
 
     if (p === 0) {
-      ctx.doc.setFont(PDF_FONT_SANS, 'bold');
+      ctx.doc.setFont(ctx.textFont, 'bold');
       ctx.doc.setFontSize(titleFontSize);
       ctx.doc.setTextColor(0, 0, 0);
       ctx.doc.text('Table of Contents', ctx.marginLeft, y + titleLineHeightMm * 0.7);
@@ -177,7 +176,7 @@ export function insertTableOfContents(ctx: PDFRenderContext, hasCover: boolean):
     const entriesOnPage = p === 0 ? firstPageEntries : subsequentPageEntries;
     const end = Math.min(headings.length, cursor + entriesOnPage);
 
-    ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+    ctx.doc.setFont(ctx.textFont, 'normal');
     ctx.doc.setFontSize(entryFontSize);
     ctx.doc.setTextColor(0, 0, 0);
 
@@ -294,7 +293,7 @@ export function addPageNumbers(ctx: PDFRenderContext, hasCoverPage: boolean): vo
 
   for (let i = 1; i <= totalPages; i++) {
     ctx.doc.setPage(i);
-    ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+    ctx.doc.setFont(ctx.textFont, 'normal');
     ctx.doc.setFontSize(10);
     ctx.doc.setTextColor(128, 128, 128);
 

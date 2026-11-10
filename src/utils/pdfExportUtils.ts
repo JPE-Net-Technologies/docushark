@@ -24,7 +24,7 @@
 
 import { jsPDF } from 'jspdf';
 import type { RichTextContent } from '../types/RichText';
-import { registerPDFFonts } from './pdfExport/fonts';
+import { pdfFontFor, registerPDFFonts } from './pdfExport/fonts';
 import { PDFExportOptions, getPageDimensions } from '../types/PDFExport';
 import type { ImageCompression } from 'jspdf';
 import type { PDFQuality } from '../types/PDFExport';
@@ -93,7 +93,7 @@ export async function exportToPdf(
 
   // Register custom Unicode-capable fonts (Inter + JetBrains Mono)
   // to replace jsPDF's built-in helvetica/courier which cause þÿ artifacts
-  await registerPDFFonts(doc);
+  const textFont = await registerPDFFonts(doc, pdfFontFor(options.fontFamily));
 
   // Determine the list of rich text pages to render
   const pagesToRender: PDFRichTextPage[] = richTextPages && richTextPages.length > 0
@@ -121,6 +121,7 @@ export async function exportToPdf(
   // Create render context
   const ctx: PDFRenderContext = {
     doc,
+    textFont,
     y: options.margins.top,
     pageWidth: width,
     pageHeight: height,
