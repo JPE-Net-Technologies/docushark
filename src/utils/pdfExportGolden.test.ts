@@ -300,6 +300,17 @@ describe('PDF export golden output (DSK-242)', () => {
     await check('long/blocks', [{ id: 'blocks', name: 'Blocks', content: content(longBlocks()) }]);
   }, 30_000);
 
+  it('writes every stream compressed (DSK-250)', async () => {
+    // Uncompressed, the fonts and page contents make an export about four times
+    // the size. Every stream, fonts included, must carry a Flate filter.
+    const pages = [{ id: 'report', name: 'Report', content: content(longReport()) }];
+    const blob = await exportToPdf(DEFAULT_PDF_OPTIONS, pages[0]!.content, undefined, pages);
+    const raw = new TextDecoder('latin1').decode(new Uint8Array(await blobBytes(blob)));
+    const streams = raw.match(/\bstream\r?\n/g)?.length ?? 0;
+    expect(streams).toBeGreaterThan(0);
+    expect(raw.match(/\/Filter\s*\/FlateDecode/g)?.length ?? 0).toBe(streams);
+  }, 30_000);
+
   it('the golden file holds exactly the documents above', () => {
     if (UPDATE) return;
     const expected = [
