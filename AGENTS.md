@@ -335,14 +335,16 @@ window chrome.
 
 ### Four named layouts
 
-The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
+The four layouts in `src/ui/layout/modes.ts` run from writing-first to
+everything docked. They are levels of tooling, not audiences: one person may
+switch between them as the work changes.
 
-| Mode | Document | Canvas | Properties | Persona |
-|------|----------|--------|------------|---------|
-| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on request) | Personal — writing |
-| `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Personal — diagramming |
-| `technician` | left, split | split | fly-out (auto-collapse) | Researcher / mid-power |
-| `power` | left, split | split | docked, pinned | Power-User |
+| Mode | Document | Canvas | Properties | Tagline (`modes.ts`) |
+|------|----------|--------|------------|----------------------|
+| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on request) | Writing-first. Canvas one tap away. |
+| `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Canvas-first. Document one tap away. |
+| `technician` | left, split | split | fly-out (auto-collapse) | Balanced split. Panels fly out on demand. |
+| `power` | left, split | split | docked, pinned | Everything visible. Tightest density. |
 
 Switch via the **layout selector** chip in the toolbar, `Cmd+Shift+1..4`, or
 the command palette ("Switch to … layout"). Zen is a backlog item (Linear).
