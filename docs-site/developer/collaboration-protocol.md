@@ -134,6 +134,10 @@ persistence mechanics live in the OSS relay source, not this client contract.
 merging. DocuShark maps its document model onto Yjs types:
 
 - **Y.Map** for shape properties and metadata
+- **Y.Map `settings`** for per-document settings, such as the document font: one
+  JSON value per key. Write one key at a time, and keep the keys you don't know.
+  A newer client adds settings without a protocol change, and the relay persists
+  every key.
 - **Y.Array** for shape ordering and collections
 - Updates are compact binary diffs, not full snapshots
 

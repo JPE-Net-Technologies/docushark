@@ -66,6 +66,10 @@ function makeMockYjs() {
     getFieldLibrary: vi.fn(() => ({ fields: {}, order: [] })),
     setField: vi.fn(),
     deleteField: vi.fn(),
+    // DSK-246 document-settings binding surface.
+    onSettingsChange: vi.fn(() => () => {}),
+    getSettings: vi.fn(() => ({})),
+    setSetting: vi.fn(),
     // JP-339 prose page-list binding surface.
     onProsePagesChange: vi.fn(() => () => {}),
     getProsePageList: vi.fn(() => ({ pages: {}, pageOrder: [] })),

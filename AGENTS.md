@@ -44,6 +44,7 @@ Once a stable (non-`-beta`) release ships:
 - **Readers before writers** (DSK-235): older builds stay in use for a while: a cached PWA, a second tab, the production editor while staging moves ahead. So a new stored shape type, node attribute or field ships the code that *reads* it at least one production release before the code that *writes* it, and that older build must keep it intact.
   - **Shapes:** a type the build doesn't know gets the stand-in from `src/shapes/UnknownShape.ts`. It measures the shape from `x`, `y` (the centre), `width` and `height`, outlines it, and can't create one. So a new shape type must carry those four fields, and keep any other geometry relative to `x`/`y`: then an older build can place, move and cull it.
   - **Prose:** y-prosemirror builds a node from the attributes its schema declares. When a build rewrites that node (a label write-back, an edit to it, a new block type around it), the shared copy loses every attribute that build doesn't declare. Declare a new attribute (default `null`) in the reader release, in both the editor extension and the relay's `prose_html.rs` and `prose_parse.rs`, before anything writes it. Add a case to `relay/tests/prose-fixtures/cases.json`.
+  - **Document settings** (DSK-246): a per-document setting goes in `settings`, the JSON object and the Y.Doc map of that name, one JSON value per key (`src/store/documentSettingsStore.ts`, `relay/src/sync/settings.rs`). Every build carries the whole object, keys it doesn't know included, so a new setting needs no reader release. Its value must still degrade on a build that doesn't know it: a font, for example, is a CSS font-family list ending in a generic family.
 
 ## Technology Stack
 
@@ -186,7 +187,7 @@ SYNC frames are applied to the Y.Doc and rebroadcast to peers. This makes the
 relay the source of truth (removing whole-document last-write-wins) — it is a
 **behavior** change only: the wire frames are unchanged lib0-v1 sync bodies and
 `PROTOCOL_VERSION` does **not** move. The relay Y.Doc's shared types
-(`shapes` map, `shapeOrder` array, `metadata` map) must keep mirroring
+(`shapes` map, `shapeOrder` array, `metadata` and `settings` maps) must keep mirroring
 `src/collaboration/YjsDocument.ts`. **Persistence (JP-36):** the relay flattens
 each dirty Y.Doc back to its JSON snapshot on a configurable interval
 (`[sync] snapshot_interval_secs`, default 10), on last-client eviction, and on
