@@ -29,6 +29,7 @@ mod prose_schema;
 mod prose_table;
 mod prose_validate;
 mod protocol;
+mod settings;
 #[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
@@ -339,6 +340,8 @@ impl DocHandle {
                                 hydration::json_references_to_ydoc(doc_json, &doc);
                                 // Phase 3c: same backstop for the field library.
                                 hydration::json_fields_to_ydoc(doc_json, &doc);
+                                // DSK-246: and for the document settings.
+                                settings::json_settings_to_ydoc(doc_json, &doc);
                                 // JP-339: same backstop for the prose page list
                                 // (an older sidecar with no `prosePages` map gets
                                 // it backfilled from `richTextPages`; idempotent).
@@ -385,6 +388,8 @@ impl DocHandle {
         hydration::json_references_to_ydoc(doc_json, &doc);
         // Phase 3c: same for the field library.
         hydration::json_fields_to_ydoc(doc_json, &doc);
+        // DSK-246: and the document settings, every key.
+        settings::json_settings_to_ydoc(doc_json, &doc);
         // JP-339: seed the prose page LIST (tab metadata) so MCP/editor tab edits
         // converge per item and surface live — removing the reload that triggered
         // the JP-338 dup. Metadata only; content stays in the `prose:<id>` seed.
@@ -569,6 +574,8 @@ impl DocHandle {
         flatten::project_references_into(&self.doc, json);
         // Phase 3c: same for the field library (live MCP/peer field edits).
         flatten::project_fields_into(&self.doc, json);
+        // DSK-246: and the document settings, every key (known or not).
+        settings::project_settings_into(&self.doc, json);
         // JP-339: re-assert the prose page LIST from the authoritative Y.Doc.
         // After `project_prose_into` (content overlay) so content is preserved and
         // only tab metadata/order is merged; prunes pages deleted in the Y.Doc.
@@ -3092,6 +3099,68 @@ mod tests {
         assert!(handle.flatten_into(&mut out));
         assert_eq!(out["references"]["itemOrder"], json!(["knuth1997"]));
         assert_eq!(out["references"]["style"], json!("mla"));
+    }
+
+    // ---- DSK-246: document settings, every key, through the real handle ----
+
+    fn settings_json(settings: serde_json::Value) -> serde_json::Value {
+        json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}},
+            "settings": settings
+        })
+    }
+
+    /// A client writes a setting, as a newer build would.
+    fn client_sets(handle: &DocHandle, key: &str, value: &str) {
+        let settings = handle.doc.get_or_insert_map("settings");
+        let mut txn = handle.doc.transact_mut();
+        settings.insert(&mut txn, key, Any::String(value.into()));
+    }
+
+    #[test]
+    fn document_settings_survive_flatten_and_rehydration_with_unknown_keys() {
+        let json = settings_json(json!({"font": "Inter, sans-serif"}));
+        let handle = DocHandle::hydrate(&json, None, false);
+        client_sets(&handle, "pageSize", "a4");
+
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        assert_eq!(out["settings"], json!({"font": "Inter, sans-serif", "pageSize": "a4"}));
+
+        // Evicted, then loaded again from the JSON alone: nothing lost.
+        let again = DocHandle::hydrate(&out, None, false);
+        let mut out2 = out.clone();
+        assert!(again.flatten_into(&mut out2));
+        assert_eq!(out2["settings"], out["settings"]);
+    }
+
+    #[test]
+    fn document_settings_come_from_the_sidecar_when_it_has_them() {
+        let json = settings_json(json!({"font": "Inter, sans-serif"}));
+        let handle = DocHandle::hydrate(&json, None, false);
+        client_sets(&handle, "font", "'Source Serif 4', serif");
+        let sidecar = handle.encode_binary(1);
+
+        // The JSON copy is stale; the sidecar holds the live value.
+        let again = DocHandle::hydrate(&json, Some(&sidecar), false);
+        let mut out = json.clone();
+        assert!(again.flatten_into(&mut out));
+        assert_eq!(out["settings"], json!({"font": "'Source Serif 4', serif"}));
+    }
+
+    #[test]
+    fn an_older_sidecar_without_settings_is_backfilled_from_json() {
+        let bare = json!({
+            "id": "d", "serverVersion": 1, "activePageId": "p1",
+            "pages": {"p1": {"shapes": {}, "shapeOrder": []}}
+        });
+        let old = DocHandle::hydrate(&bare, None, false).encode_binary(1);
+        let json = settings_json(json!({"font": "Inter, sans-serif"}));
+        let handle = DocHandle::hydrate(&json, Some(&old), false);
+        let mut out = json.clone();
+        assert!(handle.flatten_into(&mut out));
+        assert_eq!(out["settings"], json!({"font": "Inter, sans-serif"}));
     }
 
     // ---- JP-159: collection membership survives hydrate → flatten ----

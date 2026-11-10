@@ -19,6 +19,7 @@ import { useEffect, useRef } from 'react';
 import { useDocumentStore } from '../store/documentStore';
 import { useReferenceStore } from '../store/referenceStore';
 import { useFieldStore } from '../store/fieldStore';
+import { useDocumentSettingsStore } from '../store/documentSettingsStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
 import { applyRemoteDocumentName, applyRemoteDocumentTags } from '../store/persistenceStore';
@@ -86,6 +87,7 @@ export function useCollaborationSync(): void {
   const syncReferenceStyle = useCollaborationStore((state) => state.syncReferenceStyle);
   const syncField = useCollaborationStore((state) => state.syncField);
   const syncDeleteField = useCollaborationStore((state) => state.syncDeleteField);
+  const syncDocumentSetting = useCollaborationStore((state) => state.syncDocumentSetting);
   const syncProsePage = useCollaborationStore((state) => state.syncProsePage);
   const syncDeleteProsePage = useCollaborationStore((state) => state.syncDeleteProsePage);
   const syncProsePageOrder = useCollaborationStore((state) => state.syncProsePageOrder);
@@ -189,6 +191,14 @@ export function useCollaborationSync(): void {
       });
     });
 
+    // Handle remote document-settings changes (DSK-246). Same coarse reload —
+    // `remote-apply` so the local settings→Y.Doc subscription below skips it.
+    const unsubSettings = yjsDoc.onSettingsChange(() => {
+      runWithProvenance('remote-apply', () => {
+        useDocumentSettingsStore.getState().loadRemote(yjsDoc.getSettings());
+      });
+    });
+
     // Handle remote prose page-LIST changes (JP-339). Coarse bulk-merge from the
     // merged Y.Doc snapshot — `remote-apply` so the local richTextPagesStore→Y.Doc
     // subscription below skips it (no echo loop). The merge preserves each page's
@@ -223,6 +233,7 @@ export function useCollaborationSync(): void {
       unsubMeta();
       unsubRefs();
       unsubFields();
+      unsubSettings();
       unsubProsePages();
       unsubCanvasPages();
     };
@@ -272,6 +283,8 @@ export function useCollaborationSync(): void {
         useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
         // Phase 3b: adopt the authoritative field library too.
         useFieldStore.getState().loadFields(yjsDoc.getFieldLibrary());
+        // DSK-246: and the authoritative document settings.
+        useDocumentSettingsStore.getState().loadRemote(yjsDoc.getSettings());
         // JP-339: adopt the authoritative prose page LIST (tab metadata), so a
         // joining client picks up pages/renames/reorders made before it
         // connected. Only when non-empty — an empty list means the relay has no
@@ -312,6 +325,8 @@ export function useCollaborationSync(): void {
         useReferenceStore.getState().loadReferences(yjsDoc.getReferenceLibrary());
         // Phase 3b: a prose-only doc can carry fields with no shapes — adopt too.
         useFieldStore.getState().loadFields(yjsDoc.getFieldLibrary());
+        // DSK-246: …and settings.
+        useDocumentSettingsStore.getState().loadRemote(yjsDoc.getSettings());
         // JP-339: a prose-only doc carries its page list with no shapes — adopt.
         adoptProsePageList(yjsDoc);
         // JP-339: adopt the canvas page list even on an empty-shapes doc (a
@@ -550,6 +565,31 @@ export function useCollaborationSync(): void {
 
     return unsubscribe;
   }, [isActive, syncField, syncDeleteField]);
+
+  // Subscribe to local document-settings changes and sync to the CRDT (DSK-246).
+  // Same gates as the libraries above, and a per-key diff (INVARIANT A — set or
+  // delete one setting, never a whole-map rewrite), so a peer's concurrent
+  // change to another setting survives. The store keeps an unchanged setting's
+  // identity, so only the keys that changed are sent.
+  useEffect(() => {
+    if (!isActive) return undefined;
+
+    const unsubscribe = useDocumentSettingsStore.subscribe((state, prevState) => {
+      const provenance = getProvenance();
+      if (provenance === 'remote-apply' || provenance === 'load') return;
+      if (isAutoSaveSuppressed()) return;
+      if (!useCollaborationStore.getState().isActive) return;
+      if (!initializedRef.current) return;
+
+      const keys = new Set([...Object.keys(state.settings), ...Object.keys(prevState.settings)]);
+      for (const key of keys) {
+        const cur = state.settings[key];
+        if (cur !== prevState.settings[key]) syncDocumentSetting(key, cur);
+      }
+    });
+
+    return unsubscribe;
+  }, [isActive, syncDocumentSetting]);
 
   // Subscribe to local prose page-LIST changes and sync to the CRDT (JP-339).
   // Mirrors the reference/field subscriptions: same provenance +

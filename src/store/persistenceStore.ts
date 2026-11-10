@@ -27,6 +27,7 @@ import { runPreSaveFlushes } from './preSaveFlush';
 import { usePendingSyncPages } from './pendingSyncPages';
 import { useReferenceStore } from './referenceStore';
 import { useFieldStore } from './fieldStore';
+import { settingsForSave, useDocumentSettingsStore } from './documentSettingsStore';
 import { useUserStore } from './userStore';
 import { isRelayAuthenticated, relaySessionUsable, useConnectionStore } from './connectionStore';
 import { useRelayDocumentStore, hasRelayDocumentProvider } from './relayDocumentStore';
@@ -685,6 +686,13 @@ function createDocumentFromPageStore(
     doc.tags = existingDoc.tags;
   }
 
+  // Document settings (DSK-246): every setting the document holds, including
+  // ones a newer build wrote that this build doesn't know.
+  const settings = settingsForSave(existingDoc?.settings);
+  if (settings) {
+    doc.settings = settings;
+  }
+
   // Preserve relay-related fields from existing document
   if (existingDoc) {
     if (existingDoc.isRelayDocument !== undefined) {
@@ -781,6 +789,10 @@ function loadDocumentToPageStore(input: DiagramDocument): void {
       useFieldStore.getState().clear();
     }
 
+    // Document settings (DSK-246), whole: keys this build doesn't know
+    // included. None when absent, so a prior document's never bleed in.
+    useDocumentSettingsStore.getState().load(doc.settings, doc.id);
+
     // Load whiteboard state (or initialize with defaults if not present)
     if (doc.whiteboard) {
       useWhiteboardStore.getState().loadSnapshot(doc.whiteboard);
@@ -865,6 +877,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
 
           // Reset the reference library (JP-89) for the new empty document
           useReferenceStore.getState().clear();
+
+          // …and its settings (DSK-246): a new document starts with none.
+          useDocumentSettingsStore.getState().clear();
 
           // Clear selection and history
           useSessionStore.getState().clearSelection();
