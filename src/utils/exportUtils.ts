@@ -340,7 +340,7 @@ export async function exportToPng(
       // Without this, connector labels are missing from PNG export entirely.
       for (const shape of overlays) {
         const handler = shapeRegistry.getHandler(shape.type);
-        if (handler?.renderOverlay) {
+        if (handler.renderOverlay) {
           ctx.save();
           handler.renderOverlay(ctx, shape);
           ctx.restore();
@@ -415,51 +415,14 @@ function renderShapeForExport(
   } else {
     ctx.save();
     ctx.globalAlpha = effectiveOpacity;
+    // A type this build doesn't know gets the registry's stand-in (DSK-235).
     const handler = shapeRegistry.getHandler(shape.type);
-    if (handler) {
-      handler.render(ctx, shape);
-    } else {
-      // Fallback for unknown shape types: render placeholder box
-      renderUnknownShapeFallback(ctx, shape);
-    }
+    handler.render(ctx, shape);
     ctx.restore();
     // Defer overlay-capable shapes (e.g. connector labels) to a top pass so
     // they are not buried — and so they appear in PNG export at all (JP-353).
-    if (overlays && handler?.renderOverlay) overlays.push(shape);
+    if (overlays && handler.renderOverlay) overlays.push(shape);
   }
-}
-
-/**
- * Render a placeholder for unknown shape types.
- */
-function renderUnknownShapeFallback(ctx: CanvasRenderingContext2D, shape: Shape): void {
-  // Get bounds if available, otherwise use x,y with default size
-  const handler = shapeRegistry.getHandler(shape.type);
-  let bounds: Box;
-  if (handler) {
-    bounds = handler.getBounds(shape);
-  } else {
-    // Estimate bounds from shape properties
-    const width = 'width' in shape ? (shape as { width: number }).width : 100;
-    const height = 'height' in shape ? (shape as { height: number }).height : 60;
-    bounds = new Box(shape.x - width / 2, shape.y - height / 2, shape.x + width / 2, shape.y + height / 2);
-  }
-
-  // Draw dashed rectangle
-  ctx.strokeStyle = '#999999';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.strokeRect(bounds.minX, bounds.minY, bounds.width, bounds.height);
-  ctx.setLineDash([]);
-
-  // Draw type label
-  ctx.fillStyle = '#666666';
-  ctx.font = '12px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`[${shape.type}]`, bounds.centerX, bounds.centerY);
-
-  console.warn(`[Export] Unknown shape type "${shape.type}" rendered as placeholder`);
 }
 
 // ============ SVG Export ============
@@ -601,7 +564,8 @@ function shapeToSvg(
     return connectorToSvg(shape, allShapes, offsetX, offsetY, effectiveOpacity);
   }
 
-  // Fallback for unknown shape types
+  // Every other type has no SVG writer here (file and library shapes as well as
+  // types a newer version wrote), so it exports as a placeholder box.
   return unknownShapeToSvg(shape, offsetX, offsetY, effectiveOpacity);
 }
 
