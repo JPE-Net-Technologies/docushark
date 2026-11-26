@@ -881,6 +881,11 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
           // …and its settings (DSK-246): a new document starts with none.
           useDocumentSettingsStore.getState().clear();
 
+          // …and the field library and whiteboard (DSK-253): they belong to the
+          // previous document, and the first save would copy them into this one.
+          useFieldStore.getState().clear();
+          useWhiteboardStore.getState().reset();
+
           // Clear selection and history
           useSessionStore.getState().clearSelection();
           useHistoryStore.getState().clear();
