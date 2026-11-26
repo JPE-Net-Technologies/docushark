@@ -7,6 +7,9 @@ import type { GroupShapeHandler } from '../shapes/Group';
 import { setLatexRenderCallback } from '../utils/textUtils';
 import { onIconLoad } from '../utils/iconCache';
 import { onThumbnailLoad } from '../shapes/FileShape';
+import { onFontLoad } from '../fonts/fontLoader';
+import { onCurrentDocumentFontChange } from '../fonts/currentDocumentFont';
+import { clearMeasureCache } from '../shapes/label/measureCache';
 import { ContrastCache, isAutoColor } from './ContrastResolver';
 import { setRenderContext, type RenderContext } from './RenderContext';
 import { getAdaptiveBudget } from '../platform/adaptiveBudget';
@@ -149,6 +152,7 @@ export class Renderer {
   // Cleanup callback for icon load subscription
   private unsubscribeIconLoad: (() => void) | null = null;
   private unsubscribeThumbnailLoad: (() => void) | null = null;
+  private unsubscribeFonts: Array<() => void> = [];
 
   // Shape data for rendering
   private shapes: Record<string, Shape> = {};
@@ -222,6 +226,15 @@ export class Renderer {
 
     // Re-render when FileShape thumbnails resolve (blob:// → object URL) asynchronously
     this.unsubscribeThumbnailLoad = onThumbnailLoad(() => this.requestRender());
+
+    // Text measured before its font arrived was measured in the fallback, so
+    // drop those widths and draw again; the same when the document font
+    // changes (DSK-246).
+    const remeasure = () => {
+      clearMeasureCache();
+      this.requestRender();
+    };
+    this.unsubscribeFonts = [onFontLoad(remeasure), onCurrentDocumentFontChange(remeasure)];
   }
 
   /**
@@ -389,6 +402,8 @@ export class Renderer {
     this.unsubscribeIconLoad = null;
     this.unsubscribeThumbnailLoad?.();
     this.unsubscribeThumbnailLoad = null;
+    for (const unsubscribe of this.unsubscribeFonts) unsubscribe();
+    this.unsubscribeFonts = [];
   }
 
   /**

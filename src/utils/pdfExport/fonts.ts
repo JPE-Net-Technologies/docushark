@@ -22,6 +22,7 @@ import {
   type CatalogueFont,
 } from '../../fonts/catalogue';
 import { catalogueFontFor } from '../../fonts/fontFamily';
+import { faceFiles } from '../../fonts/fontFiles';
 import { loadFontBytes } from '../../fonts/fontLoader';
 
 /** Monospace font family name used for code blocks */
@@ -85,18 +86,18 @@ export async function registerPDFFonts(doc: jsPDF, text: CatalogueFont = DEFAULT
   const textFaces = PDF_STYLES.map(({ style, weight, italic }) => ({ style, face: faceFor(text, weight, italic) }));
   const code = faceFor(CODE_FONT, 400, false);
   const files = new Map<string, string>();
-  const urls = new Set([...textFaces.map(({ face }) => face.ttf), code.ttf]);
+  const urls = new Set([...textFaces.map(({ face }) => faceFiles(face).ttf), faceFiles(code).ttf]);
   await Promise.all([...urls].map(async (url) => files.set(url, await fileAsBase64(url))));
 
   for (const { style, face } of textFaces) {
-    doc.addFileToVFS(face.file, files.get(face.ttf)!);
+    doc.addFileToVFS(face.file, files.get(faceFiles(face).ttf)!);
     doc.addFont(face.file, text.pdfName, style);
   }
 
   if (text !== CODE_FONT) {
     // The code font: regular only, standing in for its italic too (DSK-247
     // embeds just the faces a document uses).
-    doc.addFileToVFS(code.file, files.get(code.ttf)!);
+    doc.addFileToVFS(code.file, files.get(faceFiles(code).ttf)!);
     doc.addFont(code.file, CODE_FONT.pdfName, 'normal');
     doc.addFont(code.file, CODE_FONT.pdfName, 'italic');
   }

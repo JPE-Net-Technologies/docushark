@@ -4,6 +4,7 @@ import { ShapeHandler, shapeRegistry } from './ShapeRegistry';
 import { TextShape, Handle, HandleType, DEFAULT_TEXT } from './Shape';
 import { isAutoColor } from '../engine/ContrastResolver';
 import { getRenderContext } from '../engine/RenderContext';
+import { canvasFont } from '../fonts/canvasFont';
 
 /**
  * Transform a local point to world space.
@@ -75,9 +76,11 @@ export const textHandler: ShapeHandler<TextShape> = {
    * Render text to the canvas context.
    */
   render(ctx: CanvasRenderingContext2D, shape: TextShape): void {
-    const { x, y, text, fontSize, fontFamily, textAlign, verticalAlign, rotation, fill, opacity, width, height } = shape;
+    const { x, y, text, fontSize, textAlign, verticalAlign, rotation, fill, opacity, width, height } = shape;
 
     if (!text) return;
+    // The document font unless the shape has its own (DSK-246).
+    const fontFamily = canvasFont(shape.fontFamily);
 
     ctx.save();
     ctx.globalAlpha = opacity;

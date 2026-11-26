@@ -40,6 +40,7 @@ import {
 type FactoryShape = BaseShape & {
   label?: string;
   labelFontSize?: number;
+  labelFontFamily?: string;
   labelColor?: string;
   labelBackground?: string;
   labelOffsetX?: number;
@@ -138,6 +139,7 @@ export function createShapeHandler<T extends Shape>(
           boxWidth: width,
           boxHeight: height,
           fontSize: labelFontSize,
+          fontFamily: f.labelFontFamily,
           color: f.labelColor || stroke || '#000000',
           background: f.labelBackground,
           offsetX: f.labelOffsetX || 0,

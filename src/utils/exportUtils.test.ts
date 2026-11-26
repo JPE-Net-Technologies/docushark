@@ -1,3 +1,7 @@
+vi.mock('../fonts/fontLoader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../fonts/fontLoader')>()),
+  fontsReady: vi.fn(async () => {}),
+}));
 import { describe, it, expect, vi } from 'vitest';
 import {
   getExportBounds,
@@ -590,6 +594,20 @@ describe('exportUtils', () => {
 
       expect(svg).toContain('stroke="#ffffff"');
       expect(svg).not.toContain('stroke="auto"');
+    });
+  });
+
+  describe('PNG export fonts (DSK-246)', () => {
+    it('waits for every font its shapes draw in, before drawing', async () => {
+      const { fontsReady } = await import('../fonts/fontLoader');
+      const ready = vi.mocked(fontsReady);
+      ready.mockClear();
+      const ctx = recordingCtx();
+      const labeled = { ...makeRect('r1', 0, 0, 100, 60), label: 'Hand', labelFontFamily: 'Caveat, cursive' } as Shape;
+      await withMockCanvas(ctx, () => exportToPng(makeExportData([labeled]), defaultOptions({ format: 'png' })));
+      expect(ready).toHaveBeenCalledTimes(1);
+      expect(ready.mock.calls[0]![0]).toEqual(expect.arrayContaining(['Caveat, cursive', 'Inter, sans-serif']));
+      expect(ready.mock.invocationCallOrder[0]!).toBeLessThan(ctx.fillText.mock.invocationCallOrder[0]!);
     });
   });
 });

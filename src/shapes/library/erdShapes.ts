@@ -15,6 +15,7 @@ import { createStandardAnchors, createDiamondAnchors } from './ShapeLibraryTypes
 import { createStandardProperties } from '../ShapeMetadata';
 import type { PropertyDefinition } from '../ShapeMetadata';
 import type { LibraryShape } from '../Shape';
+import { canvasFont } from '../../fonts/canvasFont';
 
 /**
  * Create ellipse anchors with 8 points on the ellipse edge.
@@ -184,7 +185,7 @@ const renderERDEntity: CustomRenderFunction = (ctx, shape) => {
 
   // Draw title in header
   const titleFontSize = Math.min(14, headerHeight * 0.6);
-  ctx.font = `bold ${titleFontSize}px sans-serif`;
+  ctx.font = `bold ${titleFontSize}px ${canvasFont()}`;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -225,7 +226,7 @@ const renderERDEntity: CustomRenderFunction = (ctx, shape) => {
     }
 
     // Draw member text - centered vertically in each row with padding
-    ctx.font = `${memberFontSize}px sans-serif`;
+    ctx.font = `${memberFontSize}px ${canvasFont()}`;
     ctx.textAlign = 'left';
 
     members.forEach((member, index) => {
@@ -284,7 +285,7 @@ const renderERDWeakEntity: CustomRenderFunction = (ctx, shape) => {
 
   // Draw title in header (inside inner rectangle)
   const titleFontSize = Math.min(14, (headerHeight - gap) * 0.6);
-  ctx.font = `bold ${titleFontSize}px sans-serif`;
+  ctx.font = `bold ${titleFontSize}px ${canvasFont()}`;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -325,7 +326,7 @@ const renderERDWeakEntity: CustomRenderFunction = (ctx, shape) => {
     }
 
     // Draw member text - centered vertically in each row with padding
-    ctx.font = `${memberFontSize}px sans-serif`;
+    ctx.font = `${memberFontSize}px ${canvasFont()}`;
     ctx.textAlign = 'left';
 
     members.forEach((member, index) => {

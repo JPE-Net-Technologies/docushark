@@ -1,0 +1,27 @@
+/* FontSelect: a font's name drawn in the font, its kind beside it (DSK-246). */
+
+.font-select-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.font-select-name {
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+}
+
+.font-select-kind {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+/* In the Properties panel's `.compact-select-row`, the trigger fills the row. */
+.font-select-row .rich-select-trigger {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height-md);
+}

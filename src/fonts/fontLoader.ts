@@ -1,69 +1,44 @@
 /**
  * Loading the bundled fonts (DSK-246).
  *
- * At startup every face is registered with the FontFace API, which fetches
- * nothing until a face is used. Text in the page then loads what it needs by
- * itself. The canvas doesn't: it asks here (`requestFont`) for what it is
+ * At startup every face is registered with the FontFace API
+ * (`registerFonts.ts`), which fetches nothing until a face is used. Text in the page then loads what it needs by
+ * itself. The canvas doesn't: it asks here (`requestFamily`) for what it is
  * about to draw, and redraws when a face arrives (`onFontLoad`).
  *
  * Where there is no `document.fonts` (tests, a worker) all of this does
  * nothing, and text draws in its fallback family.
  */
 
-import { FONT_CATALOGUE, INTERFACE_INTER } from './catalogue';
-
 type FontLoadListener = () => void;
 
 const listeners = new Set<FontLoadListener>();
 const requested = new Set<string>();
-let registered = false;
 
-function fontSet(): FontFaceSet | null {
+export function fontSet(): FontFaceSet | null {
   if (typeof document === 'undefined' || typeof FontFace === 'undefined') return null;
   return document.fonts ?? null;
 }
 
-/**
- * Register every bundled face (no network). Call once at startup; later calls
- * do nothing.
- */
-export function registerBundledFonts(): void {
-  if (registered) return;
-  registered = true;
-  const fonts = fontSet();
-  if (!fonts) return;
-  for (const font of FONT_CATALOGUE) {
-    for (const face of font.faces) {
-      fonts.add(
-        new FontFace(font.family, `url(${face.woff2}) format('woff2')`, {
-          weight: String(face.weight),
-          style: face.style,
-          display: 'swap',
-        }),
-      );
-    }
-  }
-  fonts.add(
-    new FontFace(INTERFACE_INTER.family, `url(${INTERFACE_INTER.woff2}) format('woff2')`, {
-      weight: INTERFACE_INTER.weights,
-      style: 'normal',
-      display: 'swap',
-    }),
-  );
-  fonts.addEventListener('loadingdone', () => {
-    for (const listener of listeners) listener();
-  });
+/** Tell subscribers fonts have arrived (on `loadingdone`, and in tests). */
+export function notifyFontLoad(): void {
+  for (const listener of listeners) listener();
 }
 
+/** The four faces a canvas may draw a family in. */
+const VARIANTS = ['normal 400', 'normal 700', 'italic 400', 'italic 700'] as const;
+
 /**
- * Ask for the face the canvas is about to draw `css` with. Loads it once;
- * {@link onFontLoad} fires when it has arrived.
+ * Ask for the family the canvas is about to draw `css` in: all its faces, once,
+ * so bold and italic text never wait on a face of their own. {@link onFontLoad}
+ * fires as they arrive.
  */
-export function requestFont(css: string, weight: 400 | 700 = 400, style: 'normal' | 'italic' = 'normal'): void {
-  const key = `${style} ${weight} ${css}`;
-  if (requested.has(key)) return;
-  requested.add(key);
-  void fontSet()?.load(`${style} ${weight} 16px ${css}`).catch(() => {});
+export function requestFamily(css: string): void {
+  if (requested.has(css)) return;
+  requested.add(css);
+  const fonts = fontSet();
+  if (!fonts) return;
+  for (const variant of VARIANTS) void fonts.load(`${variant} 16px ${css}`).catch(() => []);
 }
 
 /**
@@ -74,9 +49,7 @@ export async function fontsReady(cssList: readonly string[]): Promise<void> {
   const fonts = fontSet();
   if (!fonts) return;
   const loads = cssList.flatMap((css) =>
-    ['normal 400', 'normal 700', 'italic 400', 'italic 700'].map((variant) =>
-      fonts.load(`${variant} 16px ${css}`).catch(() => []),
-    ),
+    VARIANTS.map((variant) => fonts.load(`${variant} 16px ${css}`).catch(() => [])),
   );
   await Promise.all(loads);
 }

@@ -28,6 +28,19 @@ Every shape has styling properties you can adjust in the Property Panel:
 
 Select a shape and the **selection bar** appears above it, with the colours you change most. For everything else, press **More** to open the Property Panel.
 
+## Fonts
+
+A shape's text uses the document's font until you give it one of its own. In
+the Property Panel, a text box has **Font** under **Text**, and a shape with a
+label has **Font** under **Label**. Choose from:
+
+- **Document font**: follows the document, and changes when the document's font
+  does.
+- **Inter**, **Source Serif 4** or **JetBrains Mono**.
+- **Caveat**, a handwriting font for notes and sketches.
+
+A style profile carries the font along with the shape's other styling.
+
 ## The Selection Bar
 
 The bar stays with your selection as you move around the canvas, and steps aside while you drag, resize or edit text.

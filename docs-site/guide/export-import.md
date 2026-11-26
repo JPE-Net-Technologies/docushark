@@ -52,6 +52,7 @@ Export your rich text and diagrams together as a polished PDF:
 - Configurable margins and page numbers
 - Optional **cover page** with logo, title, version, author, date, and description
 - Full rich text rendering: headings, formatting, tables, LaTeX math, images, embedded diagram groups, code blocks, task lists, and more
+- The document's font, embedded in the file, so the PDF looks the same wherever it's opened
 
 Configure PDF defaults in **Settings → PDF Export**.
 

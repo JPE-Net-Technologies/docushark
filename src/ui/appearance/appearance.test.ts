@@ -51,6 +51,13 @@ describe('appearance applier (Abstraction A)', () => {
     expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.2');
   });
 
+  it('mirrors the interface font onto the document root (DSK-246)', () => {
+    useUIPreferencesStore.getState().setAppFont('inter');
+    expect(document.documentElement.dataset['appFont']).toBe('inter');
+    useUIPreferencesStore.getState().setAppFont('system');
+    expect(document.documentElement.dataset['appFont']).toBe('system');
+  });
+
   it('sets --prose-bg for a preset and removes it for default', () => {
     useUIPreferencesStore.getState().setProseBackground('glow');
     expect(document.documentElement.style.getPropertyValue('--prose-bg')).toContain('gradient');

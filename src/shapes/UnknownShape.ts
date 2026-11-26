@@ -14,6 +14,7 @@ import { Box } from '../math/Box';
 import type { Vec2 } from '../math/Vec2';
 import type { Shape, Handle } from './Shape';
 import type { ShapeHandler } from './ShapeRegistry';
+import { canvasFont } from '../fonts/canvasFont';
 
 /** Width and height given to an unknown shape that carries no usable size. */
 export const UNKNOWN_SHAPE_FALLBACK_SIZE = 40;
@@ -49,7 +50,7 @@ export const unknownShapeHandler: ShapeHandler = {
     if (b.width >= 80 && b.height >= 20) {
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(128, 128, 128, 0.95)';
-      ctx.font = '12px sans-serif';
+      ctx.font = `12px ${canvasFont()}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(UNKNOWN_SHAPE_LABEL, (b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, b.width - 8);

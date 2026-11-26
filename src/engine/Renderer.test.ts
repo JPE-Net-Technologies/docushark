@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Renderer, RendererOptions, scaleHandleSize } from './Renderer';
 import { Camera } from './Camera';
+import { notifyFontLoad } from '../fonts/fontLoader';
+import { setCurrentDocumentFont } from '../fonts/currentDocumentFont';
+import { DEFAULT_DOCUMENT_FONT } from '../fonts/catalogue';
+import { measureWith } from '../shapes/label/measureCache';
 import { device } from '../platform/device';
 import { refreshAdaptiveBudget } from '../platform/adaptiveBudget';
 import { Vec2 } from '../math/Vec2';
@@ -795,5 +799,32 @@ describe('Renderer', () => {
       // f (vertical translation) = centerY + (-camY) * zoom = 300 - 50 = 250
       expect(call![5]).toBe(250);
     });
+  });
+});
+
+describe('Renderer fonts (DSK-246)', () => {
+  it('redraws, measuring afresh, when a font arrives or the document font changes', () => {
+    setCurrentDocumentFont(DEFAULT_DOCUMENT_FONT.css);
+    const renderer = new Renderer(createMockCanvas(), new Camera());
+    const requestRender = vi.spyOn(renderer, 'requestRender').mockImplementation(() => {});
+    let measured = 0;
+    const ctx = { font: '', measureText: () => { measured++; return { width: 1 } as TextMetrics; } } as unknown as CanvasRenderingContext2D;
+
+    measureWith(ctx, 'width', 12, 'Inter, sans-serif');
+    measureWith(ctx, 'width', 12, 'Inter, sans-serif');
+    expect(measured, 'cached').toBe(1);
+
+    notifyFontLoad();
+    expect(requestRender).toHaveBeenCalledTimes(1);
+    measureWith(ctx, 'width', 12, 'Inter, sans-serif');
+    expect(measured, 'measured again after the font arrived').toBe(2);
+
+    setCurrentDocumentFont("'Source Serif 4', serif");
+    expect(requestRender).toHaveBeenCalledTimes(2);
+
+    renderer.destroy();
+    notifyFontLoad();
+    expect(requestRender, 'not after destroy').toHaveBeenCalledTimes(2);
+    setCurrentDocumentFont(DEFAULT_DOCUMENT_FONT.css);
   });
 });

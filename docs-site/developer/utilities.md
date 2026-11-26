@@ -322,3 +322,38 @@ Key patterns used across all utility modules:
 - **Angles** — All angles are in **radians**, counter-clockwise positive. Use `degToRad()` / `radToDeg()` for conversion.
 - **Matrix multiplication** — `a.multiply(b)` applies `b` first, then `a`. This follows standard linear algebra convention.
 - **Performance** — Use `lengthSquared()` / `distanceSquared()` to avoid `sqrt` when you only need relative comparisons (e.g., "is A closer than B?").
+
+## Fonts <Badge type="info" text="src/fonts/" />
+
+DocuShark bundles its fonts, so text looks the same on every computer and in
+every export. Each face ships twice from one source: the TTF that PDF export
+embeds, and a WOFF2 for the screen generated from that TTF, so a line wraps on
+paper where it wraps on screen.
+
+- **`catalogue.ts`** lists the families (Inter, Source Serif 4, JetBrains Mono
+  and Caveat), their faces and where each may be chosen: for a document, a
+  shape, or both.
+- **Stored fonts are CSS font-family lists** ending in a generic family, such as
+  `'Source Serif 4', serif`. A build without the font falls back to the
+  generic family. `fontFamily.ts` resolves them: `resolveDocumentFont` for a
+  document's `settings.font`, and `resolveShapeFont` for a shape's
+  `fontFamily` or `labelFontFamily`, where `sans-serif` or no value follows the
+  document font.
+- **On the canvas**, draw text with `canvasFont(stored)` from `canvasFont.ts`.
+  It resolves the font and asks for it to load; the renderer redraws when it
+  arrives. An export that renders once awaits `fontsReady(fontsOf(shapes))`
+  first.
+
+### Adding a font
+
+1. Put its TTFs in `src/assets/fonts/<id>/` with its licence. They must have
+   TrueType outlines (jsPDF can't embed CFF), and a document font needs
+   regular, bold, italic and bold italic.
+2. Generate the WOFF2s, which also checks they measure like their TTFs:
+   `uv run --with fonttools,brotli python scripts/fonts/build-woff2.py`.
+3. Add an entry to `FONT_CATALOGUE` in `src/fonts/catalogue.ts`, and its
+   files to `src/fonts/fontFiles.ts`. The catalogue holds names only, so code
+   that just needs a font's name imports no font file.
+
+Removing a font later is safe: documents that use it fall back to its generic
+family.

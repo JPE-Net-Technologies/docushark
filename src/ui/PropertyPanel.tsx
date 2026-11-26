@@ -62,6 +62,8 @@ import { getFileTypeLucideIcon } from '../utils/fileTypeIcons';
 import { centeredIconRenderSize, iconOnlyLabelOffsetY } from '../utils/iconRenderer';
 import { Icon } from './icons';
 import { SegmentedControl, type SegmentedOption } from './components/SegmentedControl';
+import { FontSelect } from './FontSelect';
+import { FOLLOW_DOCUMENT_FONT } from '../fonts/fontFamily';
 import './PropertyPanel.css';
 
 /** Connector "Type" options for the icon'd radio (semantic marker style). */
@@ -280,6 +282,24 @@ function PropertyQuickBar({
 /**
  * Generic property editor based on PropertyDefinition.
  */
+/**
+ * A shape's font (DSK-246): "Document font", which follows the document, or a
+ * bundled font. `undefined` means follow the document.
+ */
+function FontRow({ value, onChange }: { value: string | undefined; onChange: (css: string | undefined) => void }) {
+  return (
+    <div className="compact-select-row font-select-row">
+      <label className="compact-select-label">Font</label>
+      <FontSelect role="shape" value={value} onChange={onChange} ariaLabel="Font" />
+    </div>
+  );
+}
+
+/** An update that sets the label font, or clears it to follow the document font. */
+function labelFontUpdate(css: string | undefined): Partial<Shape> {
+  return css === undefined ? clearFields('labelFontFamily') : { labelFontFamily: css };
+}
+
 function MetadataPropertyEditor({
   definition,
   value,
@@ -513,6 +533,12 @@ function LibraryShapeProperties({
               onChange={(val) => handleUpdate('labelFontSize', val)}
               min={8}
               max={100}
+            />
+          </ProfileProp>
+          <ProfileProp name="labelFontFamily">
+            <FontRow
+              value={shape.labelFontFamily}
+              onChange={(css) => handleUpdate('labelFontFamily', css)}
             />
           </ProfileProp>
           <ProfileProp name="labelColor">
@@ -1513,6 +1539,12 @@ function FileShapeProperties({
             max={36}
           />
         </ProfileProp>
+        <ProfileProp name="labelFontFamily">
+          <FontRow
+            value={shape.labelFontFamily}
+            onChange={(css) => updateShape(shape.id, labelFontUpdate(css))}
+          />
+        </ProfileProp>
         <ProfileProp name="labelColor">
           <CompactColorInput
             label="Color"
@@ -2016,6 +2048,12 @@ function PropertyPanelBody({ className }: PropertyPanelProps) {
                       max={48}
                     />
                   </ProfileProp>
+                  <ProfileProp name="labelFontFamily">
+                    <FontRow
+                      value={(shape as GroupShape).labelFontFamily}
+                      onChange={(css) => handleBulkUpdate(labelFontUpdate(css))}
+                    />
+                  </ProfileProp>
                   <ProfileProp name="labelColor">
                     <CompactColorInput
                       label="Color"
@@ -2203,6 +2241,16 @@ function PropertyPanelBody({ className }: PropertyPanelProps) {
                 min={8}
                 max={100}
                 suffix="px"
+              />
+            </ProfileProp>
+            <ProfileProp name="labelFontFamily">
+              <FontRow
+                value={shape.labelFontFamily}
+                onChange={(css) => {
+                  selectedShapes.forEach((s) => {
+                    if (isRectangle(s) || isEllipse(s)) updateShape(s.id, labelFontUpdate(css));
+                  });
+                }}
               />
             </ProfileProp>
             <ProfileProp name="labelColor">
@@ -2637,6 +2685,16 @@ function PropertyPanelBody({ className }: PropertyPanelProps) {
                 min={8}
                 max={200}
                 suffix="px"
+              />
+            </ProfileProp>
+            <ProfileProp name="fontFamily">
+              <FontRow
+                value={shape.fontFamily}
+                onChange={(css) => {
+                  selectedShapes.forEach((s) => {
+                    if (isText(s)) updateShape(s.id, { fontFamily: css ?? FOLLOW_DOCUMENT_FONT });
+                  });
+                }}
               />
             </ProfileProp>
             <div className="align-row">
@@ -3141,6 +3199,16 @@ function PropertyPanelBody({ className }: PropertyPanelProps) {
                 }}
                 min={8}
                 max={32}
+              />
+            </ProfileProp>
+            <ProfileProp name="labelFontFamily">
+              <FontRow
+                value={shape.labelFontFamily}
+                onChange={(css) => {
+                  selectedShapes.forEach((s) => {
+                    if (isConnector(s)) updateShape(s.id, labelFontUpdate(css));
+                  });
+                }}
               />
             </ProfileProp>
             <ProfileProp name="labelColor">

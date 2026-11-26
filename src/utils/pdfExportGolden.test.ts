@@ -320,6 +320,30 @@ describe('PDF export golden output (DSK-242)', () => {
     expect(raw.match(/\/Filter\s*\/FlateDecode/g)?.length ?? 0).toBe(streams);
   }, 30_000);
 
+  it('embeds the document’s font, and keeps every word (DSK-246)', async () => {
+    const pages = [{ id: 'report', name: 'Report', content: content(longReport()) }];
+    const exported = async (fontFamily?: string) => {
+      // Page numbers and the contents page change with the page count, so leave
+      // them out: what must match is the text itself.
+      const furnitureless = { ...DEFAULT_PDF_OPTIONS, showPageNumbers: false, includeTableOfContents: false };
+      const options = { ...furnitureless, ...(fontFamily !== undefined && { fontFamily }) };
+      const bytes = new Uint8Array(await blobBytes(await exportToPdf(options, pages[0]!.content, undefined, pages)));
+      const fonts = new Set(new TextDecoder('latin1').decode(bytes).match(/\/BaseFont\s*\/\w+/g));
+      const words = (await readBack(bytes)).text.flat().join(' ').split(/\s+/).filter(Boolean);
+      return { fonts, words };
+    };
+    const inter = await exported();
+    const serif = await exported("'Source Serif 4', serif");
+    expect(inter.fonts.has('/BaseFont /Inter')).toBe(true);
+    expect(serif.fonts.has('/BaseFont /SourceSerif4')).toBe(true);
+    expect(serif.fonts.has('/BaseFont /Inter'), 'only the document’s font is embedded').toBe(false);
+    // Another font wraps lines elsewhere, but says the same thing.
+    expect(serif.words).toEqual(inter.words);
+    // A font the PDF can't embed falls back to the bundled font of its kind.
+    expect((await exported("'Comic Sans MS', cursive")).fonts.has('/BaseFont /Caveat')).toBe(true);
+    expect((await exported("'Atkinson Hyperlegible', sans-serif")).fonts.has('/BaseFont /Inter')).toBe(true);
+  }, 60_000);
+
   it('the golden file holds exactly the documents above', () => {
     if (UPDATE) return;
     const expected = [
