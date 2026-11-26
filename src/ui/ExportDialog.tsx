@@ -84,7 +84,7 @@ export function ExportDialog({ isOpen, onClose, scope, defaultFilename = 'diagra
     <div className="export-dialog-overlay" onClick={onClose}>
       <div className="export-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="export-dialog-header">
-          <h2>Export {scope === 'selection' ? 'Selection' : 'Diagram'}</h2>
+          <h2>Export {scope === 'selection' ? 'Selection' : 'Canvas'}</h2>
           <button className="export-dialog-close" onClick={onClose} aria-label="Close">
             ×
           </button>

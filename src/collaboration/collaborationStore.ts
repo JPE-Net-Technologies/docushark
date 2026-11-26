@@ -57,6 +57,7 @@ import type { JSONContent } from '@tiptap/core';
 import type { Shape } from '../shapes/Shape';
 import type { CSLItem, CitationStyle } from '../types/Citation';
 import type { Field } from '../types/Field';
+import type { SettingValue } from '../types/DocumentSettings';
 import type { DocEvent } from './protocol';
 import { isDeletedDocError, isUnknownDocError, isViewForbiddenError } from './protocol';
 import { throttle } from '../utils/requestUtils';
@@ -249,6 +250,11 @@ interface CollaborationActions {
    * CRDT copy after an out-of-band REST tag edit.
    */
   syncDocumentTags: (tags: string[]) => void;
+  /**
+   * Sync one document setting (DSK-246) to peers via the Y.Doc `settings` map,
+   * per key; `undefined` removes it.
+   */
+  syncDocumentSetting: (key: string, value: SettingValue | undefined) => void;
 
   // Prose (CRDT-native programmatic writes, JP-193)
   /**
@@ -1013,6 +1019,13 @@ export const useCollaborationStore = create<CollaborationState & CollaborationAc
         // Same shape as the rename above: metadata-map write + `updatedAt`
         // bump so the relay flatten adopts it (JP-388).
         doc.setMetadata({ tags, updatedAt: Date.now() });
+      }
+    },
+
+    syncDocumentSetting: (key: string, value: SettingValue | undefined) => {
+      const doc = syncTarget(get().config?.documentId);
+      if (doc) {
+        doc.setSetting(key, value);
       }
     },
 

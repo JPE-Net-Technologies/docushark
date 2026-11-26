@@ -12,7 +12,7 @@ Most tools make you choose: a doc editor *or* a diagram editor. DocuShark is bot
 ## What DocuShark Is
 
 - **Write** — a full rich-text editor (headings, tables, LaTeX math, code, callouts, citations) for real documentation, not just labels.
-- **Diagram** — an infinite canvas with smart connectors and shape libraries (flowchart, UML, ERD, cloud) that stays smooth at thousands of shapes.
+- **Canvas** — infinite space for diagrams, with smart connectors and shape libraries (flowchart, UML, ERD, cloud), smooth at thousands of shapes.
 - **Store** — drop PDFs, spreadsheets, images, and datasets straight onto the canvas, pinned wherever you want them.
 - **Collaborate** — connect a document to a workspace and edit live, with conflict-free syncing so you never lose work.
 - **Automate** — connect any MCP-compatible AI agent to draft prose, diagrams, and references directly in your live document.

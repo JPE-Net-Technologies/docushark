@@ -265,6 +265,29 @@ impl LocalDoc {
         prose.get_string(&self.doc.transact())
     }
 
+    /// Set a document setting (the `settings` map, DSK-246) locally and return
+    /// the incremental `Update` frame.
+    fn set_setting_update(&self, key: &str, value: &str) -> Vec<u8> {
+        let before = self.doc.transact().state_vector();
+        let settings = self.doc.get_or_insert_map("settings");
+        {
+            let mut txn = self.doc.transact_mut();
+            settings.insert(&mut txn, key, Any::String(value.into()));
+        }
+        let update = self.doc.transact().encode_state_as_update_v1(&before);
+        SyncMessage::Update(update).encode_v1()
+    }
+
+    /// A document setting's string value, if the doc holds one.
+    fn setting(&self, key: &str) -> Option<String> {
+        let settings = self.doc.get_or_insert_map("settings");
+        let txn = self.doc.transact();
+        match settings.get(&txn, key) {
+            Some(yrs::Out::Any(Any::String(s))) => Some(s.to_string()),
+            _ => None,
+        }
+    }
+
     /// Render the page's `prose:<page>` XmlFragment to a flat string (the PM-XML
     /// shape, e.g. `<paragraph>text</paragraph>`) — enough to assert content
     /// arrived live from a relay-side write.
@@ -610,6 +633,55 @@ async fn evict_flush_persists_without_rest_save() {
         doc["serverVersion"], version_before,
         "relay snapshot must not bump serverVersion"
     );
+
+    relay.server.stop().await.expect("stop");
+}
+
+/// DSK-246: a document setting a client writes over CRDT, one the relay has no
+/// code for, persists through eviction into the JSON copy, and a client that
+/// joins later receives it.
+#[tokio::test]
+async fn document_settings_persist_through_eviction_and_reach_a_later_client() {
+    let relay = start_relay().await;
+    let token = relay.issuer.mint("alice", "default", WorkspaceRole::Owner);
+
+    put_doc(
+        &relay.http,
+        &token,
+        json!({
+            "id": "settings-doc", "name": "Settings", "pageOrder": ["p1"],
+            "activePageId": "p1", "ownerId": "alice", "ownerName": "alice",
+            "pages": {"p1": {"id": "p1", "shapes": {}, "shapeOrder": []}},
+            "settings": {"font": "Inter, sans-serif"}
+        }),
+    )
+    .await;
+
+    let mut client = WsClient::connect(&relay.ws_base).await;
+    client.auth(&token).await;
+    let local = LocalDoc::new();
+    join_and_sync(&mut client, &local, "settings-doc").await;
+    assert_eq!(local.setting("font").as_deref(), Some("Inter, sans-serif"), "seeded from the stored copy");
+
+    client.send_sync(&local.set_setting_update("fromANewerBuild", "kept")).await;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    // The last participant leaving makes the relay flush the document.
+    drop(client);
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    let doc = get_doc(&relay.http, &token, "settings-doc").await;
+    assert_eq!(
+        doc["settings"],
+        json!({"font": "Inter, sans-serif", "fromANewerBuild": "kept"}),
+        "the JSON copy holds every setting: {doc}"
+    );
+
+    let mut later = WsClient::connect(&relay.ws_base).await;
+    later.auth(&token).await;
+    let fresh = LocalDoc::new();
+    join_and_sync(&mut later, &fresh, "settings-doc").await;
+    assert_eq!(fresh.setting("fromANewerBuild").as_deref(), Some("kept"));
+    assert_eq!(fresh.setting("font").as_deref(), Some("Inter, sans-serif"));
 
     relay.server.stop().await.expect("stop");
 }

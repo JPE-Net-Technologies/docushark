@@ -31,7 +31,7 @@ With mobile preview on, menus open as sheets from the bottom of the screen, with
 
 ## The top bar
 
-The bar at the top of the editor is icons only on a phone: **Documents**, the document's name, **Write** and **Diagram**, the layout, **Tools** and **Settings**.
+The bar at the top of the editor is icons only on a phone: **Documents**, the document's name, **Write** and **Canvas**, the layout, **Tools** and **Settings**.
 
 **Tools** opens a sheet with what **Tools** holds on a computer: importing a diagram, exporting to PDF, version history, the whiteboard and any connected integrations. It also has the documentation, which a computer keeps on its own button, and the command palette, for searching every other action.
 

@@ -44,6 +44,7 @@ Once a stable (non-`-beta`) release ships:
 - **Readers before writers** (DSK-235): older builds stay in use for a while: a cached PWA, a second tab, the production editor while staging moves ahead. So a new stored shape type, node attribute or field ships the code that *reads* it at least one production release before the code that *writes* it, and that older build must keep it intact.
   - **Shapes:** a type the build doesn't know gets the stand-in from `src/shapes/UnknownShape.ts`. It measures the shape from `x`, `y` (the centre), `width` and `height`, outlines it, and can't create one. So a new shape type must carry those four fields, and keep any other geometry relative to `x`/`y`: then an older build can place, move and cull it.
   - **Prose:** y-prosemirror builds a node from the attributes its schema declares. When a build rewrites that node (a label write-back, an edit to it, a new block type around it), the shared copy loses every attribute that build doesn't declare. Declare a new attribute (default `null`) in the reader release, in both the editor extension and the relay's `prose_html.rs` and `prose_parse.rs`, before anything writes it. Add a case to `relay/tests/prose-fixtures/cases.json`.
+  - **Document settings** (DSK-246): a per-document setting goes in `settings`, the JSON object and the Y.Doc map of that name, one JSON value per key (`src/store/documentSettingsStore.ts`, `relay/src/sync/settings.rs`). Every build carries the whole object, keys it doesn't know included, so a new setting needs no reader release. Its value must still degrade on a build that doesn't know it: a font, for example, is a CSS font-family list ending in a generic family.
 
 ## Technology Stack
 
@@ -186,7 +187,7 @@ SYNC frames are applied to the Y.Doc and rebroadcast to peers. This makes the
 relay the source of truth (removing whole-document last-write-wins) — it is a
 **behavior** change only: the wire frames are unchanged lib0-v1 sync bodies and
 `PROTOCOL_VERSION` does **not** move. The relay Y.Doc's shared types
-(`shapes` map, `shapeOrder` array, `metadata` map) must keep mirroring
+(`shapes` map, `shapeOrder` array, `metadata` and `settings` maps) must keep mirroring
 `src/collaboration/YjsDocument.ts`. **Persistence (JP-36):** the relay flattens
 each dirty Y.Doc back to its JSON snapshot on a configurable interval
 (`[sync] snapshot_interval_secs`, default 10), on last-client eviction, and on
@@ -335,14 +336,16 @@ window chrome.
 
 ### Four named layouts
 
-The four layouts in `src/ui/layout/modes.ts` map to the wedge personas:
+The four layouts in `src/ui/layout/modes.ts` run from writing-first to
+everything docked. They are levels of tooling, not audiences: one person may
+switch between them as the work changes.
 
-| Mode | Document | Canvas | Properties | Persona |
-|------|----------|--------|------------|---------|
-| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on request) | Personal — writing |
-| `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Personal — diagramming |
-| `technician` | left, split | split | fly-out (auto-collapse) | Researcher / mid-power |
-| `power` | left, split | split | docked, pinned | Power-User |
+| Mode | Document | Canvas | Properties | Tagline (`modes.ts`) |
+|------|----------|--------|------------|----------------------|
+| `relaxed` (default) | primary (reading column) | secondary, focus switch | hidden (on request) | Writing-first. Canvas one tap away. |
+| `designer` | hidden, toggle | dominant | fly-out (auto-collapse) | Canvas-first. Document one tap away. |
+| `technician` | left, split | split | fly-out (auto-collapse) | Balanced split. Panels fly out on demand. |
+| `power` | left, split | split | docked, pinned | Everything visible. Tightest density. |
 
 Switch via the **layout selector** chip in the toolbar, `Cmd+Shift+1..4`, or
 the command palette ("Switch to … layout"). Zen is a backlog item (Linear).
@@ -353,7 +356,7 @@ selection until closed (`sessionStore.propertiesRequested`). With the bar off in
 Settings, every selection opens the fly-out instead.
 
 In **Relaxed** the document editor is the *primary* region (a centered reading
-column), not a sidebar. A `Write · Split · Diagram` segmented control
+column), not a sidebar. A `Write · Split · Canvas` segmented control
 (`RelaxedFocusControl`, toolbar-only in Relaxed; also `Cmd+Shift+\` and a
 command-palette entry) switches focus between prose-only, prose + secondary
 canvas, and canvas-primary. The focus is ephemeral app-level state

@@ -13,7 +13,7 @@ app-switching, no pasted screenshots.
 **What you'll build:** a one-page "URL Shortener" design doc — a written spec on
 the left, a live architecture diagram on the right.
 
-**You'll learn:** prose pages, the Write · Split · Diagram focus, drawing shapes
+**You'll learn:** prose pages, the Write · Split · Canvas focus, drawing shapes
 and smart connectors, auto-layout, and exporting the result.
 
 **Before you start:** just [open DocuShark](https://app.docushark.app) — no setup
@@ -28,7 +28,7 @@ canvas. Click **Untitled Document** in the toolbar and rename it to
 ## 2. Write the spec
 
 You'll start in writing mode. If you're not already in it, click **Write** in the
-**Write · Split · Diagram** control in the toolbar.
+**Write · Split · Canvas** control in the toolbar.
 
 In the document editor, write a short spec. Type naturally, and use the toolbar
 (or Markdown shortcuts) for structure:
@@ -57,7 +57,7 @@ math, and callouts all work. See [Rich Text & Notes](/guide/rich-text-editor).
 ## 3. Bring in the canvas
 
 Now put the diagram next to the writing. Click **Split** in the
-**Write · Split · Diagram** control. The document editor stays on the left and an
+**Write · Split · Canvas** control. The document editor stays on the left and an
 infinite **canvas** opens on the right — the same document, two views.
 
 ## 4. Draw the architecture
@@ -112,7 +112,7 @@ DocuShark **auto-saves** as you go. To share or hand it off:
 ## What you learned
 
 You built a document that holds **both** a written spec and its live diagram —
-the core DocuShark workflow. You used prose pages, the Write · Split · Diagram
+the core DocuShark workflow. You used prose pages, the Write · Split · Canvas
 focus, rectangles and smart connectors, auto-layout, and export.
 
 ## Next steps

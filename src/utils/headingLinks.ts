@@ -14,7 +14,7 @@
  * The `id:` discriminator keeps the two forms unambiguous (a legacy index is
  * always plain digits). This module is the single parser/author for the
  * grammar — shared by `useProseLinkClicks` (click navigation),
- * `InsertLinkDialog` (authoring), and `pdfExportUtils` (PDF-internal links).
+ * `InsertLinkDialog` (authoring), and the PDF exporter (`pdfExport/text.ts`, PDF-internal links).
  */
 
 export interface HeadingHref {

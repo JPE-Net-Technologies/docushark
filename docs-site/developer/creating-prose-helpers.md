@@ -25,7 +25,7 @@ makes them not break for the next helper.
 | **Serialization discipline** | A self-describing node that survives reload in WebKitGTK/Tauri (jsdom tests alone miss this) | the rules below + `src/tiptap/CitationExtension.ts` as the worked example |
 | **Projection foundation** | Derived/async-rendered content that doesn't corrupt local persistence | `src/tiptap/proseProjection.ts` |
 | **Relay round-trip** | The node survives the collaborative Y.Doc (HTML → Y.Doc → HTML) | `relay/src/sync/prose_schema.rs` (`CUSTOM_PROSE_NODES`), `prose_parse.rs`, `prose_html.rs`, `hydration.rs` |
-| **Export** | Renders in PDF + MCP `get_prose` | `src/utils/pdfExportUtils.ts` |
+| **Export** | Renders in PDF + MCP `get_prose` | `src/utils/pdfExport/` (`nodes.ts`, `text.ts`) |
 
 ## Pick your category first
 
@@ -143,9 +143,12 @@ entry.
 
 ### 4. Export
 
-Register a renderer in `src/utils/pdfExportUtils.ts` (`pdfNodeRenderers.register`
-+ handle the node in `extractSegments`) so the node appears in PDF export and is
-carried through MCP `get_prose`.
+Register a renderer in `src/utils/pdfExport/nodes.ts` (`pdfNodeRenderers.register`;
+block renderers live beside it in `blocks.ts`) and handle the node in
+`extractSegments` (`src/utils/pdfExport/text.ts`), so the node appears in PDF
+export and is carried through MCP `get_prose`. `src/utils/pdfExportGolden.test.ts`
+shows what an export contains; add a corpus case and run it with
+`UPDATE_PDF_GOLDEN=1` to record the new node's output.
 
 ---
 

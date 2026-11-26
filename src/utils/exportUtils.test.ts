@@ -15,6 +15,8 @@ import type {
   ConnectorShape,
   Shape,
 } from '../shapes/Shape';
+import { shapeRegistry } from '../shapes/ShapeRegistry';
+import { unknownShapeHandler, UNKNOWN_SHAPE_LABEL } from '../shapes/UnknownShape';
 
 // Import shape modules to trigger handler registration
 import '../shapes/Rectangle';
@@ -147,6 +149,40 @@ function defaultOptions(overrides: Partial<ExportOptions> = {}): ExportOptions {
     filename: 'test',
     ...overrides,
   };
+}
+
+/** A recording 2D context for asserting which draw calls a PNG export makes. */
+function recordingCtx() {
+  return {
+    scale: vi.fn(), translate: vi.fn(), save: vi.fn(), restore: vi.fn(),
+    beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+    fill: vi.fn(), closePath: vi.fn(), arc: vi.fn(), setLineDash: vi.fn(),
+    clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+    fillText: vi.fn(), strokeText: vi.fn(),
+    measureText: vi.fn().mockReturnValue({ width: 40 }),
+    rotate: vi.fn(), setTransform: vi.fn(), transform: vi.fn(),
+    globalAlpha: 1, strokeStyle: '', fillStyle: '', lineWidth: 1,
+    lineCap: 'butt', lineJoin: 'miter', font: '',
+    textAlign: 'left', textBaseline: 'alphabetic',
+  };
+}
+
+/** Stub document.createElement so the offscreen export canvas is recordable. */
+function withMockCanvas<T>(ctx: ReturnType<typeof recordingCtx>, run: () => T): T {
+  const fakeCanvas = {
+    width: 0, height: 0, parentNode: null,
+    getContext: vi.fn().mockReturnValue(ctx),
+    toBlob: (cb: (b: Blob | null) => void) => cb(new Blob(['x'], { type: 'image/png' })),
+  } as unknown as HTMLCanvasElement;
+  const orig = document.createElement.bind(document);
+  const spy = vi.spyOn(document, 'createElement').mockImplementation(
+    (tag: string) => (tag === 'canvas' ? fakeCanvas : orig(tag)) as HTMLElement
+  );
+  try {
+    return run();
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 // ============ Tests ============
@@ -483,40 +519,6 @@ describe('exportUtils', () => {
   });
 
   describe('PNG export connector labels (JP-353)', () => {
-    /** A recording 2D context for asserting which draw calls a PNG export makes. */
-    function recordingCtx() {
-      return {
-        scale: vi.fn(), translate: vi.fn(), save: vi.fn(), restore: vi.fn(),
-        beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
-        fill: vi.fn(), closePath: vi.fn(), arc: vi.fn(), setLineDash: vi.fn(),
-        clearRect: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
-        fillText: vi.fn(), strokeText: vi.fn(),
-        measureText: vi.fn().mockReturnValue({ width: 40 }),
-        rotate: vi.fn(), setTransform: vi.fn(), transform: vi.fn(),
-        globalAlpha: 1, strokeStyle: '', fillStyle: '', lineWidth: 1,
-        lineCap: 'butt', lineJoin: 'miter', font: '',
-        textAlign: 'left', textBaseline: 'alphabetic',
-      };
-    }
-
-    /** Stub document.createElement so the offscreen export canvas is recordable. */
-    function withMockCanvas<T>(ctx: ReturnType<typeof recordingCtx>, run: () => T): T {
-      const fakeCanvas = {
-        width: 0, height: 0, parentNode: null,
-        getContext: vi.fn().mockReturnValue(ctx),
-        toBlob: (cb: (b: Blob | null) => void) => cb(new Blob(['x'], { type: 'image/png' })),
-      } as unknown as HTMLCanvasElement;
-      const orig = document.createElement.bind(document);
-      const spy = vi.spyOn(document, 'createElement').mockImplementation(
-        (tag: string) => (tag === 'canvas' ? fakeCanvas : orig(tag)) as HTMLElement
-      );
-      try {
-        return run();
-      } finally {
-        spy.mockRestore();
-      }
-    }
-
     it('draws the connector label text (regression: PNG had no labels)', async () => {
       const ctx = recordingCtx();
       const conn = makeConnector('c1', 0, 0, 100, 0, { label: 'imports', stroke: '#333333' });
@@ -542,6 +544,31 @@ describe('exportUtils', () => {
         ([x, y]: [number, number]) => x === 0 && Math.abs(y - 10) < 1e-6
       );
       expect(resumes).toBe(true);
+    });
+  });
+
+  describe('PNG export of a shape type this build does not know (DSK-235)', () => {
+    /** A shape of a type no build has registered, as a newer version might write it. */
+    const future = {
+      ...baseProps, id: 'future', type: 'pen-stroke-from-the-future', x: 50, y: 40, width: 80, height: 60,
+    } as unknown as Shape;
+
+    it('draws it with the registry stand-in', async () => {
+      expect(shapeRegistry.hasHandler(future.type)).toBe(false);
+      const ctx = recordingCtx();
+      const render = vi.spyOn(unknownShapeHandler, 'render');
+      try {
+        await withMockCanvas(ctx, () => exportToPng(makeExportData([future]), defaultOptions({ format: 'png' })));
+
+        expect(render).toHaveBeenCalledTimes(1);
+        expect(render).toHaveBeenCalledWith(ctx, expect.objectContaining({ id: 'future' }));
+        // The outline and notice land on the export canvas, in the shape's box:
+        // centre (50, 40), 80 by 60.
+        expect(ctx.strokeRect).toHaveBeenCalledWith(10, 10, 80, 60);
+        expect(ctx.fillText).toHaveBeenCalledWith(UNKNOWN_SHAPE_LABEL, 50, 40, 72);
+      } finally {
+        render.mockRestore();
+      }
     });
   });
 

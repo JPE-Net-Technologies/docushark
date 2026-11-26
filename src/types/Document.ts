@@ -9,6 +9,7 @@ import type { WhiteboardState } from './Whiteboard';
 import type { PDFSettings } from './PDFExport';
 import type { ReferenceLibrary } from './Citation';
 import type { FieldLibrary } from './Field';
+import type { DocumentSettings } from './DocumentSettings';
 
 /**
  * A single page within a document.
@@ -159,6 +160,16 @@ export interface DiagramDocument {
    * choices don't bleed into unrelated documents on next open.
    */
   pdfSettings?: PDFSettings;
+
+  // Document settings (DSK-246)
+  /**
+   * Per-document settings, such as the document font. Synced live through
+   * the collab `settings` map, one key per setting. Every build carries the
+   * whole object, keys it doesn't know included (see `DocumentSettings`), so a
+   * new setting needs no reader release. Optional/additive: an older document
+   * has no `settings` key (no `version` bump).
+   */
+  settings?: DocumentSettings;
 }
 
 /**

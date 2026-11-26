@@ -15,7 +15,7 @@ fighting the UI to get the room you need.
 | Layout | Best for | At a glance |
 |--------|----------|-------------|
 | **Relaxed** | Writing | Writing-first. Canvas one tap away. |
-| **Designer** | Diagramming | Diagram-first. Document one tap away. |
+| **Designer** | Diagramming | Canvas-first. Document one tap away. |
 | **Technician** | Doing both | Balanced split. Panels fly out on demand. |
 | **Power** | Dense work | Everything visible. Tightest density. |
 
@@ -54,13 +54,13 @@ Navigator panel** in the command palette.
 
 ## Focus in Relaxed
 
-Because Relaxed is writing-first, it adds a **Write · Split · Diagram** focus
+Because Relaxed is writing-first, it adds a **Write · Split · Canvas** focus
 control so you can shift emphasis without leaving the layout:
 
 - **Write** — just the document, distraction-free
 - **Split** — document and canvas side by side (collapses to a single pane when the
   window is narrow)
-- **Diagram** — canvas primary, prose tucked away
+- **Canvas** — the canvas fills the view, prose tucked away
 
 Switch focus from the control in the toolbar or with
 <kbd>Cmd/Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>\\</kbd>.

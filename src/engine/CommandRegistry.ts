@@ -551,7 +551,7 @@ function buildCommands(): Command[] {
     ...layoutCommands(),
     {
       id: 'view.cycleRelaxedFocus', icon: Columns2,
-      label: 'Cycle prose / split / diagram focus',
+      label: 'Cycle write / split / canvas focus',
       category: 'View',
       keys: 'Mod+Shift+\\', scope: 'global', whileTyping: true,
       execute: () => useSessionStore.getState().cycleRelaxedFocus(),

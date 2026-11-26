@@ -64,9 +64,9 @@ You don't paste a screenshot of a diagram into your doc — the diagram *is* in 
 doc, on its own canvas, always current.
 
 How much of each you see is set by the **layout mode** (Relaxed, Designer,
-Technician, Power) and, in Relaxed, the **Write · Split · Diagram** focus. Writing
+Technician, Power) and, in Relaxed, the **Write · Split · Canvas** focus. Writing
 a spec? Stay in Write. Explaining a diagram? Split them side by side. Deep in a
-diagram? Switch to Diagram. Nothing moves in the document — only your view of it.
+diagram? Switch to Canvas. Nothing moves in the document — only your view of it.
 See [Layout Modes](/guide/layout-modes).
 
 ## Files that live with the document

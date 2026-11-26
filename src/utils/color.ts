@@ -334,7 +334,7 @@ export function withAlpha(hex: string, alpha: number): string {
  * Named CSS colors accepted as color *input*.
  *
  * This table is the single source shared with the PDF exporter
- * (`pdfExportUtils.parseColor` imports it) so the two grammars cannot drift.
+ * (`parseColor` in `pdfExport/text.ts` imports it) so the two grammars cannot drift.
  * Adding a name here must keep `parseColorInput`'s output PDF-renderable —
  * which it does by construction, since that function always emits `#rrggbb`.
  */
@@ -384,7 +384,7 @@ const RGB_FN_RE =
  *
  * Deliberately **liberal in what it accepts and strict in what it emits**: the
  * output is always lowercase `#rrggbb`, which every consumer — the canvas
- * renderer, prose inline styles, the relay, and `pdfExportUtils.parseColor` —
+ * renderer, prose inline styles, the relay, and the PDF exporter's `parseColor` —
  * can render. Alpha is accepted on input but **dropped**, because the PDF
  * exporter cannot represent it and would silently lose the color entirely;
  * shapes express transparency through their separate opacity property.

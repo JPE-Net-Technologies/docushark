@@ -141,6 +141,12 @@ export type ReferenceChangeCallback = () => void;
 export type FieldChangeCallback = () => void;
 
 /**
+ * Callback for when the document settings change from remote updates (DSK-246).
+ * Coarse: the binding reloads the whole settings object from the merged map.
+ */
+export type SettingsChangeCallback = () => void;
+
+/**
  * Callback for when the prose page-list changes from remote updates (JP-339).
  * Coarse by design (no per-item args), mirroring {@link ReferenceChangeCallback}:
  * the binding bulk-reloads `richTextPagesStore` from
@@ -208,6 +214,9 @@ export class YjsDocument {
   // are NOT here — each page's shapes live in their own `shapes:<id>` surface.
   private canvasPages: Y.Map<CanvasPageMeta>;
   private canvasPageOrder: Y.Array<string>;
+  // DSK-246: the document settings — `settings` keyed by setting name, merged
+  // per key. Every build carries every key, known to it or not.
+  private settings: Y.Map<unknown>;
 
   private shapeChangeCallbacks: Set<ShapeChangeCallback> = new Set();
   private orderChangeCallbacks: Set<OrderChangeCallback> = new Set();
@@ -216,6 +225,7 @@ export class YjsDocument {
   private fieldChangeCallbacks: Set<FieldChangeCallback> = new Set();
   private prosePagesChangeCallbacks: Set<ProsePagesChangeCallback> = new Set();
   private canvasPagesChangeCallbacks: Set<CanvasPagesChangeCallback> = new Set();
+  private settingsChangeCallbacks: Set<SettingsChangeCallback> = new Set();
 
   private isLocalUpdate = false;
 
@@ -250,6 +260,7 @@ export class YjsDocument {
     this.prosePageOrder = this.doc.getArray('prosePageOrder');
     this.canvasPages = this.doc.getMap('canvasPages');
     this.canvasPageOrder = this.doc.getArray('canvasPageOrder');
+    this.settings = this.doc.getMap('settings');
 
     // Set up observers
     this.setupObservers();
@@ -673,6 +684,25 @@ export class YjsDocument {
     return { fields, order };
   }
 
+  // ============ Document settings (DSK-246) ============
+
+  /**
+   * Set one document setting (local change → broadcast to peers); `undefined`
+   * removes it. Strictly per key, never a whole-map rewrite, so a peer's
+   * concurrent change to another setting survives.
+   */
+  setSetting(key: string, value: unknown): void {
+    this.withLocalUpdate(() => {
+      if (value === undefined) this.settings.delete(key);
+      else this.settings.set(key, JSON.parse(JSON.stringify(value)));
+    });
+  }
+
+  /** Every document setting, keys this build doesn't know included. */
+  getSettings(): Record<string, unknown> {
+    return this.settings.toJSON();
+  }
+
   // ============ Prose page-list (JP-339) — local to remote ============
 
   /**
@@ -890,6 +920,14 @@ export class YjsDocument {
   }
 
   /**
+   * Subscribe to document-settings changes from remote peers (DSK-246).
+   */
+  onSettingsChange(callback: SettingsChangeCallback): () => void {
+    this.settingsChangeCallbacks.add(callback);
+    return () => this.settingsChangeCallbacks.delete(callback);
+  }
+
+  /**
    * Subscribe to prose page-list changes from remote peers (JP-339). Fires on
    * any `prosePages` / `prosePageOrder` change.
    */
@@ -1037,6 +1075,7 @@ export class YjsDocument {
     this.metadata.unobserve(this.handleReferenceMetaChange);
     this.fields.unobserve(this.handleFieldChange);
     this.fieldOrder.unobserve(this.handleFieldChange);
+    this.settings.unobserve(this.handleSettingsChange);
     this.prosePages.unobserve(this.handleProsePagesChange);
     this.prosePageOrder.unobserve(this.handleProsePagesChange);
     this.canvasPages.unobserve(this.handleCanvasPagesChange);
@@ -1063,6 +1102,7 @@ export class YjsDocument {
     // analogue — fields carry no style/active-key.
     this.fields.observe(this.handleFieldChange);
     this.fieldOrder.observe(this.handleFieldChange);
+    this.settings.observe(this.handleSettingsChange);
 
     // JP-339: observe prose page-list changes (map + order). No metadata
     // analogue.
@@ -1151,6 +1191,13 @@ export class YjsDocument {
   ): void => {
     if (this.isLocalUpdate || event.transaction.origin === this) return;
     this.fieldChangeCallbacks.forEach((cb) => cb());
+  };
+
+  // DSK-246: a remote change to `settings` → fire the coarse settings callback
+  // (the binding reloads the whole object from the merged map).
+  private handleSettingsChange = (event: Y.YMapEvent<unknown>): void => {
+    if (this.isLocalUpdate || event.transaction.origin === this) return;
+    this.settingsChangeCallbacks.forEach((cb) => cb());
   };
 
   // JP-339: a remote change to `prosePages` or `prosePageOrder` → fire the
