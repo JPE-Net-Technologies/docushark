@@ -43,6 +43,9 @@ Click anywhere on the canvas to place a text box, then start typing. Click outsi
 
 **Double-click** any existing shape to edit its text inline.
 
+Text uses the document's font; to give a text box its own, see
+[Styling → Fonts](./styling#fonts).
+
 ## Hand Tool (`H`)
 
 Pan the canvas without accidentally selecting shapes. Useful when you want to navigate without worrying about clicking on shapes.

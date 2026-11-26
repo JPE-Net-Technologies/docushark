@@ -37,6 +37,7 @@ import type {
 import { useThemeStore } from '../store/themeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import './PDFExportDialog.css';
+import { documentFont } from '../fonts/documentFont';
 
 export interface PDFExportDialogProps {
   isOpen: boolean;
@@ -268,8 +269,9 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
       warnUnhandledNodes(extensionNodeNames);
 
       // Pass theme background for diagram rendering
+      // The document's font reaches the PDF too (DSK-246).
       const pdfBlob = await exportToPdf(
-        options,
+        { ...options, fontFamily: documentFont() },
         richTextContent,
         themeColors.exportBackgroundColor,
         richTextPages,

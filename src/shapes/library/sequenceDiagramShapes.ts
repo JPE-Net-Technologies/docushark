@@ -18,6 +18,7 @@ import { createStandardProperties } from '../ShapeMetadata';
 import type { PropertyDefinition } from '../ShapeMetadata';
 import type { LibraryShape, Handle } from '../Shape';
 import { Vec2 } from '../../math/Vec2';
+import { canvasFont } from '../../fonts/canvasFont';
 
 // ============================================================================
 // Type Definitions
@@ -250,13 +251,13 @@ const renderLifeline: CustomRenderFunction = (ctx, shape) => {
 
   if (showStereotype && stereotype) {
     const stereoFontSize = fontSize * 0.85;
-    ctx.font = `${stereoFontSize}px sans-serif`;
+    ctx.font = `${stereoFontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText(`«${stereotype}»`, 0, headerCenterY - 2, width - 10);
 
     // Object name below stereotype
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textBaseline = 'top';
     if (objectType) {
       ctx.fillText(`${objectName} : ${objectType}`, 0, headerCenterY + 2, width - 10);
@@ -265,7 +266,7 @@ const renderLifeline: CustomRenderFunction = (ctx, shape) => {
     }
   } else {
     // Standard object name and type
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -628,14 +629,14 @@ const renderFragment: CustomRenderFunction = (ctx, shape) => {
   // Draw operator text
   const fontSize = Math.min(12, labelHeight * 0.5);
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.font = `bold ${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(fragmentType.toUpperCase(), -hw + labelWidth / 2, -hh + labelHeight / 2);
 
   // Draw guard condition if present (for first operand or single condition)
   if (guardCondition) {
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'left';
     const guardX = -hw + labelWidth + 10;
     const guardY = -hh + labelHeight / 2;
@@ -665,7 +666,7 @@ const renderFragment: CustomRenderFunction = (ctx, shape) => {
       const operand = operands[i];
       if (operand?.condition) {
         ctx.setLineDash([]);
-        ctx.font = `${fontSize}px sans-serif`;
+        ctx.font = `${fontSize}px ${canvasFont()}`;
         ctx.textAlign = 'left';
         ctx.fillStyle = shape.labelColor || stroke || '#000000';
         ctx.fillText(`[${operand.condition}]`, -hw + 10, dividerY + 12, width - 20);
@@ -673,7 +674,7 @@ const renderFragment: CustomRenderFunction = (ctx, shape) => {
       } else if (operand?.label === 'else' || (!operand?.condition && i === operands.length - 1 && fragmentType === 'alt')) {
         // Draw "else" for alt fragments
         ctx.setLineDash([]);
-        ctx.font = `${fontSize}px sans-serif`;
+        ctx.font = `${fontSize}px ${canvasFont()}`;
         ctx.textAlign = 'left';
         ctx.fillStyle = shape.labelColor || stroke || '#000000';
         ctx.fillText('[else]', -hw + 10, dividerY + 12, width - 20);
@@ -797,14 +798,14 @@ const renderActor: CustomRenderFunction = (ctx, shape) => {
     const stereo = actorType === 'system' ? '«system»' : '«external»';
     const fontSize = Math.min(10, width * 0.15);
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(stereo, 0, -hh + 12, width - 10);
 
     // Draw actor name
     const label = shape.label || 'Actor';
-    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.font = `bold ${fontSize}px ${canvasFont()}`;
     ctx.fillText(label, 0, 0, width - 10);
   } else {
     // Draw stick figure (person)
@@ -844,7 +845,7 @@ const renderActor: CustomRenderFunction = (ctx, shape) => {
     if (label) {
       const fontSize = Math.min(12, width * 0.2);
       ctx.fillStyle = shape.labelColor || stroke || '#000000';
-      ctx.font = `${fontSize}px sans-serif`;
+      ctx.font = `${fontSize}px ${canvasFont()}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(label, 0, height / 2 + 5, width);
@@ -1013,7 +1014,7 @@ const renderStateInvariant: CustomRenderFunction = (ctx, shape) => {
   // Draw constraint text in curly braces
   const fontSize = Math.min(12, height * 0.5);
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(`{${constraint}}`, 0, 0, width - 8);
@@ -1433,7 +1434,7 @@ const renderContinuation: CustomRenderFunction = (ctx, shape) => {
   // Draw continuation label
   const fontSize = Math.min(14, height * 0.6);
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(continuationLabel, 0, 0, width - radius * 2);

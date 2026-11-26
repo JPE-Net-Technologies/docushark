@@ -16,6 +16,7 @@ import { createStandardProperties } from '../ShapeMetadata';
 import type { PropertyDefinition } from '../ShapeMetadata';
 import type { LibraryShape, Handle } from '../Shape';
 import { Vec2 } from '../../math/Vec2';
+import { canvasFont } from '../../fonts/canvasFont';
 
 // ============================================================================
 // Type Definitions
@@ -137,7 +138,7 @@ const renderAction: CustomRenderFunction = (ctx, shape) => {
   // Draw label
   const fontSize = shape.labelFontSize || 14;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -151,7 +152,7 @@ const renderAction: CustomRenderFunction = (ctx, shape) => {
 
   // Draw precondition and postcondition as small annotations
   const constraintFontSize = Math.min(10, fontSize * 0.7);
-  ctx.font = `${constraintFontSize}px sans-serif`;
+  ctx.font = `${constraintFontSize}px ${canvasFont()}`;
 
   if (precondition) {
     ctx.textAlign = 'left';
@@ -450,7 +451,7 @@ const renderForkJoinBar: CustomRenderFunction = (ctx, shape) => {
     const isHorizontal = width > height;
     const fontSize = 10;
     ctx.fillStyle = shape.labelColor || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = isHorizontal ? 'top' : 'middle';
 
@@ -596,7 +597,7 @@ const renderSendSignal: CustomRenderFunction = (ctx, shape) => {
   if (label) {
     const fontSize = shape.labelFontSize || 12;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, -arrowIndent / 2, 0, width - arrowIndent - 10);
@@ -678,7 +679,7 @@ const renderReceiveSignal: CustomRenderFunction = (ctx, shape) => {
   if (label) {
     const fontSize = shape.labelFontSize || 12;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, notchIndent / 2, 0, width - notchIndent - 10);
@@ -863,7 +864,7 @@ const renderSwimlane: CustomRenderFunction = (ctx, shape) => {
   if (props.partitionType === 'external') {
     const fontSize = 10;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `italic ${fontSize}px sans-serif`;
+    ctx.font = `italic ${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'top';
     ctx.fillText('«external»', hw - 4, -hh + 2, width - 8);
@@ -911,7 +912,7 @@ const renderSwimlane: CustomRenderFunction = (ctx, shape) => {
       // Draw header text with ellipsis if needed
       const header = props.laneHeaders[i] || `Lane ${i + 1}`;
       ctx.fillStyle = shape.labelColor || stroke || '#000000';
-      ctx.font = `${shape.labelFontSize || 12}px sans-serif`;
+      ctx.font = `${shape.labelFontSize || 12}px ${canvasFont()}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const maxTextWidth = laneWidth - 8;
@@ -973,7 +974,7 @@ const renderSwimlane: CustomRenderFunction = (ctx, shape) => {
       // Draw header text with ellipsis if needed
       const header = props.laneHeaders[i] || `Lane ${i + 1}`;
       ctx.fillStyle = shape.labelColor || stroke || '#000000';
-      ctx.font = `${shape.labelFontSize || 12}px sans-serif`;
+      ctx.font = `${shape.labelFontSize || 12}px ${canvasFont()}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const maxTextWidthV = headerWidth - 8;
@@ -1275,7 +1276,7 @@ const renderDecisionNode: CustomRenderFunction = (ctx, shape) => {
   if (decisionInput) {
     const fontSize = 10;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText(`«decisionInput» ${decisionInput}`, 0, -hh - 4, width + 20);
@@ -1491,7 +1492,7 @@ const renderTimeEvent: CustomRenderFunction = (ctx, shape) => {
   if (timeExpression) {
     const fontSize = 10;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(timeExpression, 0, hh + 4, width + 20);
@@ -1600,7 +1601,7 @@ const renderObjectNode: CustomRenderFunction = (ctx, shape) => {
   // Draw label
   const fontSize = shape.labelFontSize || 12;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(labelText, 0, 0, width - 8);
@@ -1608,7 +1609,7 @@ const renderObjectNode: CustomRenderFunction = (ctx, shape) => {
   // Draw ordering annotation if present
   if (ordering) {
     const annotFontSize = 9;
-    ctx.font = `${annotFontSize}px sans-serif`;
+    ctx.font = `${annotFontSize}px ${canvasFont()}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
     ctx.fillText(`{${ordering}}`, hw - 4, hh - 2, width - 8);
@@ -1725,14 +1726,14 @@ const renderDataStore: CustomRenderFunction = (ctx, shape) => {
   // Draw stereotype
   const fontSize = 10;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText('«datastore»', 0, -hh + 2, width - 8);
 
   // Draw store name
   const nameFontSize = shape.labelFontSize || 12;
-  ctx.font = `${nameFontSize}px sans-serif`;
+  ctx.font = `${nameFontSize}px ${canvasFont()}`;
   ctx.textBaseline = 'middle';
   ctx.fillText(storeName, 0, 5, width - 8);
 };
@@ -1814,21 +1815,21 @@ const renderCentralBuffer: CustomRenderFunction = (ctx, shape) => {
   // Draw stereotype
   const fontSize = 10;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText('«centralBuffer»', 0, -hh + 2, width - 8);
 
   // Draw buffer name
   const nameFontSize = shape.labelFontSize || 12;
-  ctx.font = `${nameFontSize}px sans-serif`;
+  ctx.font = `${nameFontSize}px ${canvasFont()}`;
   ctx.textBaseline = 'middle';
   ctx.fillText(bufferName, 0, 5, width - 8);
 
   // Draw ordering annotation if present
   if (ordering) {
     const annotFontSize = 9;
-    ctx.font = `${annotFontSize}px sans-serif`;
+    ctx.font = `${annotFontSize}px ${canvasFont()}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
     ctx.fillText(`{${ordering}}`, hw - 4, hh - 2, width - 8);
@@ -1950,7 +1951,7 @@ const renderPin: CustomRenderFunction = (ctx, shape) => {
   if (pinName || dataType) {
     const fontSize = 9;
     ctx.fillStyle = shape.labelColor || stroke || '#000000';
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     // Format as "name : Type" if both present, otherwise just the one that exists
@@ -2094,7 +2095,7 @@ const renderExpansionRegion: CustomRenderFunction = (ctx, shape) => {
   // Draw mode keyword
   const fontSize = 10;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
   ctx.fillText(`«${mode}»`, hw - 4, -hh + 4, width - 20);
@@ -2277,7 +2278,7 @@ const renderActivityParameter: CustomRenderFunction = (ctx, shape) => {
   // Draw label
   const fontSize = shape.labelFontSize || 11;
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
-  ctx.font = `${fontSize}px sans-serif`;
+  ctx.font = `${fontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(dirIndicator + labelText, 0, 0, width - 8);

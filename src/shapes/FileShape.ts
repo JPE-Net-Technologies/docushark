@@ -23,6 +23,7 @@ import {
   requestBlobThumbnail,
   resetBlobCache,
 } from '../storage/blobResolver';
+import { canvasFont } from '../fonts/canvasFont';
 
 // Module-level thumbnail cache to avoid re-decoding every frame. Keyed by shape id.
 const thumbnailCache = new Map<string, HTMLImageElement>();
@@ -304,7 +305,7 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
     const barCenterY = barTop + bottomBarHeight / 2;
     const barPadding = 8;
 
-    ctx.font = `${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px ${canvasFont()}`;
     ctx.textBaseline = 'middle';
     ctx.fillStyle = labelColor;
 
@@ -342,7 +343,7 @@ export const fileShapeHandler: ShapeHandler<FileShape> = {
     const tags = shape.tags;
     if (tags && tags.length > 0) {
       const badgeFont = Math.max(9, Math.min(12, fontSize));
-      ctx.font = `${badgeFont}px sans-serif`;
+      ctx.font = `${badgeFont}px ${canvasFont()}`;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
       const badgePadX = 6;

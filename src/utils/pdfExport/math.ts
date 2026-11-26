@@ -3,7 +3,7 @@
  */
 
 import type { JSONContent } from '@tiptap/core';
-import { PDF_FONT_SANS, PDF_FONT_MONO } from './fonts';
+import { PDF_FONT_MONO } from './fonts';
 import { checkPageBreak, type PDFRenderContext } from './context';
 import { calculateScaledDimensions, convertSvgToPng, getImageDimensions } from './images';
 import { PDF_STYLE } from './style';
@@ -31,7 +31,7 @@ export async function renderMathInline(ctx: PDFRenderContext, node: JSONContent)
   ctx.doc.text(latex, ctx.marginLeft, ctx.y);
   const lineH = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight;
   ctx.y += lineH;
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setTextColor(0, 0, 0);
 }
 
@@ -59,7 +59,7 @@ export async function renderMathBlock(ctx: PDFRenderContext, node: JSONContent):
   ctx.doc.text(lines, centerX, ctx.y, { align: 'center' });
   const lineH = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight;
   ctx.y += lines.length * lineH + 4;
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setTextColor(0, 0, 0);
 }
 

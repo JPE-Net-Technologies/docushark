@@ -119,23 +119,25 @@ const cornerRadiusFacet: StyleFacet = {
   apply: (props) => (props.cornerRadius !== undefined ? { cornerRadius: props.cornerRadius } : {}),
 };
 
-/** Label font size + color — any shape whose metadata says it carries a label. */
+/** Label font size, font and color — any shape whose metadata says it carries a label. */
 const labelFacet: StyleFacet = {
   id: 'label',
-  names: ['Label Font Size', 'Label Color'],
-  keys: ['labelFontSize', 'labelColor'],
+  names: ['Label Font Size', 'Label Font', 'Label Color'],
+  keys: ['labelFontSize', 'labelFontFamily', 'labelColor'],
   appliesTo: shapeSupportsLabel,
   extract: (shape, opts) => {
     if (!opts.includeLabelStyle) return {};
     const extra = asRecord(shape);
     const out: ReturnType<StyleFacet['extract']> = {};
     if (typeof extra['labelFontSize'] === 'number') out.labelFontSize = extra['labelFontSize'];
+    if (typeof extra['labelFontFamily'] === 'string') out.labelFontFamily = extra['labelFontFamily'];
     if (typeof extra['labelColor'] === 'string') out.labelColor = extra['labelColor'];
     return out;
   },
   apply: (props) => {
     const out: ReturnType<StyleFacet['apply']> = {};
     if (props.labelFontSize !== undefined) out.labelFontSize = props.labelFontSize;
+    if (props.labelFontFamily !== undefined) out.labelFontFamily = props.labelFontFamily;
     if (props.labelColor !== undefined) out.labelColor = props.labelColor;
     return out;
   },

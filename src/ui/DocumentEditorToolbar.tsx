@@ -62,6 +62,8 @@ import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 import { tip } from './TooltipLayer';
+import { FontSelect } from './FontSelect';
+import { setDocumentFont, useDocumentFont } from '../fonts/documentFont';
 
 /** Home and Insert are always there; Table and Image only in their context. */
 type PlainTab = 'home' | 'insert';
@@ -86,6 +88,7 @@ export function DocumentEditorToolbar() {
   const docReadOnly = useActiveDocReadOnly();
   const activeMirror = useActivePageMirror();
   const activePageId = useRichTextPagesStore((s) => s.activePageId);
+  const documentFont = useDocumentFont();
   const viewOnlyNoticeDismissed = useUIPreferencesStore((s) => s.viewOnlyNoticeDismissed);
   const dismissViewOnlyNotice = useUIPreferencesStore((s) => s.dismissViewOnlyNotice);
   const [viewOnlyNoticeExpired, setViewOnlyNoticeExpired] = useState(false);
@@ -436,6 +439,20 @@ export function DocumentEditorToolbar() {
                 hoverOpen
                 ariaLabel="Text style"
                 minWidth={132}
+              />
+            </div>
+
+            {/* The document's font (DSK-246): all of its text, not the selection. */}
+            <div
+              className="document-editor-toolbar-group"
+              {...tip('Document font', undefined, 'The font for all of this document’s text. Shapes use it too, unless they have their own.')}
+            >
+              <FontSelect
+                role="document"
+                value={documentFont}
+                onChange={(css) => css && setDocumentFont(css)}
+                ariaLabel="Document font"
+                minWidth={124}
               />
             </div>
 

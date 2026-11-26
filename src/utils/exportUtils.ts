@@ -29,6 +29,8 @@ import {
   collectConnectorLabelGapBoxes,
 } from '../shapes/Connector';
 import { groupHandler } from '../shapes/Group';
+import { canvasFont, fontsOf } from '../fonts/canvasFont';
+import { fontsReady } from '../fonts/fontLoader';
 import type { GroupLabelPosition } from '../shapes/GroupStyles';
 
 /**
@@ -292,6 +294,10 @@ export async function exportToPng(
   }
 
   try {
+    // Text draws only in fonts that have arrived (DSK-246): wait for the ones
+    // these shapes use, or the image would hold their fallbacks.
+    await fontsReady(fontsOf(Object.values(data.shapes)));
+
     // Apply scale
     ctx.scale(scale, scale);
 
@@ -648,7 +654,9 @@ function rectangleToSvg(
       shape.labelFontSize || 14,
       shape.labelColor || shape.stroke || '#000000',
       rotation,
-      opacity
+      opacity,
+      undefined,
+      shape.labelFontFamily
     );
     svg += '\n' + labelSvg;
   }
@@ -693,7 +701,9 @@ function ellipseToSvg(
       shape.labelFontSize || 14,
       shape.labelColor || shape.stroke || '#000000',
       rotation,
-      opacity
+      opacity,
+      undefined,
+      shape.labelFontFamily
     );
     svg += '\n' + labelSvg;
   }
@@ -827,7 +837,7 @@ function connectorToSvg(
     const ly = at.y + (shape.labelOffsetY ?? 0);
     const labelColor = shape.labelColor || shape.stroke || '#000000';
     elements.push(
-      labelToSvg(shape.label, lx, ly, shape.labelFontSize || 12, labelColor, 0, opacity, shape.labelStrokeColor)
+      labelToSvg(shape.label, lx, ly, shape.labelFontSize || 12, labelColor, 0, opacity, shape.labelStrokeColor, shape.labelFontFamily)
     );
   }
 
@@ -881,7 +891,7 @@ function textToSvg(
   const attrs: string[] = [
     `x="${textX}"`,
     `y="${startY}"`,
-    `font-family="${shape.fontFamily}"`,
+    `font-family="${escapeXml(canvasFont(shape.fontFamily))}"`,
     `font-size="${shape.fontSize}"`,
     `text-anchor="${textAnchor}"`,
     `dominant-baseline="${dominantBaseline}"`,
@@ -922,7 +932,8 @@ function labelToSvg(
   color: string,
   rotation: number,
   opacity: number,
-  haloColor?: string
+  haloColor?: string,
+  fontFamily?: string
 ): string {
   // Split on explicit newlines (e.g. Mermaid `\n` / `<br/>` node labels). The
   // single shared label helper is used by rectangle / ellipse / connector, so
@@ -936,7 +947,7 @@ function labelToSvg(
   const attrs: string[] = [
     `x="${cx}"`,
     `y="${startY}"`,
-    `font-family="sans-serif"`,
+    `font-family="${escapeXml(canvasFont(fontFamily))}"`,
     `font-size="${fontSize}"`,
     `text-anchor="middle"`,
     `dominant-baseline="central"`,

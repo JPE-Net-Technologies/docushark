@@ -3,9 +3,8 @@
  * measuring, word breaking, and drawing wrapped, styled text.
  */
 
-import type { jsPDF } from 'jspdf';
 import type { JSONContent } from '@tiptap/core';
-import { PDF_FONT_SANS, PDF_FONT_MONO } from './fonts';
+import { PDF_FONT_MONO } from './fonts';
 import { formatFileSize } from '../byteSize';
 import { parseHeadingHref } from '../headingLinks';
 import { NAMED_COLORS } from '../color';
@@ -158,9 +157,9 @@ export function parseColor(color: string): [number, number, number] | null {
  * The `text` parameter is the actual string to measure (e.g. a single word),
  * while `seg` provides the font styling (bold, italic, code, size scale).
  */
-function measureTextWidth(doc: jsPDF, seg: TextSegment, text: string, fontSize: number, defaultStyle: string): number {
-  applySegmentFont(doc, seg, fontSize, defaultStyle);
-  return doc.getTextWidth(text);
+function measureTextWidth(ctx: PDFRenderContext, seg: TextSegment, text: string, fontSize: number, defaultStyle: string): number {
+  applySegmentFont(ctx, seg, fontSize, defaultStyle);
+  return ctx.doc.getTextWidth(text);
 }
 
 /**
@@ -201,7 +200,8 @@ export function breakOversizedWord(
 /**
  * Apply a segment's font style to jsPDF.
  */
-function applySegmentFont(doc: jsPDF, seg: TextSegment, fontSize: number, defaultStyle: string): void {
+function applySegmentFont(ctx: PDFRenderContext, seg: TextSegment, fontSize: number, defaultStyle: string): void {
+  const { doc } = ctx;
   const actualSize = fontSize * seg.fontSizeScale;
   doc.setFontSize(actualSize);
 
@@ -212,7 +212,7 @@ function applySegmentFont(doc: jsPDF, seg: TextSegment, fontSize: number, defaul
     if (seg.bold && seg.italic) style = 'bolditalic';
     else if (seg.bold) style = 'bold';
     else if (seg.italic) style = 'italic';
-    doc.setFont(PDF_FONT_SANS, style);
+    doc.setFont(ctx.textFont, style);
   }
 }
 
@@ -268,7 +268,7 @@ export function renderSegmentedText(
       continue;
     }
 
-    const wordWidth = measureTextWidth(ctx.doc, word.seg, word.text, fontSize, defaultStyle);
+    const wordWidth = measureTextWidth(ctx, word.seg, word.text, fontSize, defaultStyle);
 
     // Single token wider than the entire line — fall back to character-level
     // breaking so the text can't overflow the column / page. Whitespace-only
@@ -279,7 +279,7 @@ export function renderSegmentedText(
         currentLine = [];
         currentLineWidth = 0;
       }
-      applySegmentFont(ctx.doc, word.seg, fontSize, defaultStyle);
+      applySegmentFont(ctx, word.seg, fontSize, defaultStyle);
       const pieces = breakOversizedWord(
         word.text,
         availableWidth,
@@ -287,12 +287,12 @@ export function renderSegmentedText(
       );
       for (let i = 0; i < pieces.length - 1; i++) {
         const pieceText = pieces[i]!;
-        const pieceWidth = measureTextWidth(ctx.doc, word.seg, pieceText, fontSize, defaultStyle);
+        const pieceWidth = measureTextWidth(ctx, word.seg, pieceText, fontSize, defaultStyle);
         lines.push({ chunks: [{ text: pieceText, seg: word.seg }], width: pieceWidth });
       }
       const lastPiece = pieces[pieces.length - 1]!;
       currentLine = [{ text: lastPiece, seg: word.seg }];
-      currentLineWidth = measureTextWidth(ctx.doc, word.seg, lastPiece, fontSize, defaultStyle);
+      currentLineWidth = measureTextWidth(ctx, word.seg, lastPiece, fontSize, defaultStyle);
       continue;
     }
 
@@ -324,7 +324,7 @@ export function renderSegmentedText(
     let cursorX = lineX;
     for (const chunk of line.chunks) {
       const seg = chunk.seg;
-      applySegmentFont(ctx.doc, seg, fontSize, defaultStyle);
+      applySegmentFont(ctx, seg, fontSize, defaultStyle);
 
       // Set text color
       if (seg.color) {
@@ -427,7 +427,7 @@ export function renderSegmentedText(
   }
 
   // Reset defaults
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
 }

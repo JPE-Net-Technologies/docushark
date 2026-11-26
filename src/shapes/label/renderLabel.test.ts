@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderLabel } from './renderLabel';
 import { RECT_LABEL_SPEC, CONNECTOR_LABEL_SPEC, GROUP_LABEL_SPEC } from './specs';
 import { clearMeasureCache } from './measureCache';
+import { setCurrentDocumentFont } from '../../fonts/currentDocumentFont';
+import { DEFAULT_DOCUMENT_FONT } from '../../fonts/catalogue';
 
 type SpyCtx = CanvasRenderingContext2D & {
   fillText: ReturnType<typeof vi.fn>;
@@ -177,5 +179,18 @@ describe('renderLabel', () => {
       expect(ys[0]!).toBeLessThan(0); // first line above the center anchor
       expect(ys[ys.length - 1]!).toBeGreaterThan(0); // last line below it
     });
+  });
+
+  it('draws in the shape’s label font, else the document font (DSK-246)', () => {
+    setCurrentDocumentFont("'Source Serif 4', serif");
+    try {
+      const ctx = makeCtx();
+      renderLabel(ctx, { ...baseInput, text: 'Hello' });
+      expect(ctx.font).toBe("10px 'Source Serif 4', serif");
+      renderLabel(ctx, { ...baseInput, text: 'Hello', fontFamily: 'Caveat, cursive' });
+      expect(ctx.font).toBe('10px Caveat, cursive');
+    } finally {
+      setCurrentDocumentFont(DEFAULT_DOCUMENT_FONT.css);
+    }
   });
 });

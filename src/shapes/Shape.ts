@@ -205,6 +205,8 @@ export interface RectangleShape extends BaseShape {
   label?: string;
   /** Label font size in world units (default: 14) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Label text color (default: inherits from stroke or '#000000') */
   labelColor?: string;
   /** Label background color (default: transparent) */
@@ -329,6 +331,8 @@ export interface EllipseShape extends BaseShape {
   label?: string;
   /** Label font size in world units (default: 14) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Label text color (default: inherits from stroke or '#000000') */
   labelColor?: string;
   /** Label background color (default: transparent) */
@@ -374,6 +378,8 @@ export interface LineShape extends BaseShape {
   label?: string;
   /** Label font size in world units (default: 12) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Label text color (default: inherits from stroke or '#000000') */
   labelColor?: string;
   /** Label background color (default: transparent) */
@@ -514,6 +520,8 @@ export interface ConnectorShape extends BaseShape {
   label?: string;
   /** Font size for the label (default: 12) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Color for the label (default: stroke color or black) */
   labelColor?: string;
   /** Outline (stroke) color drawn around the label text for legibility. Unset = no outline. */
@@ -575,7 +583,10 @@ export interface TextShape extends BaseShape {
   text: string;
   /** Font size in world units */
   fontSize: number;
-  /** Font family (CSS font-family) */
+  /**
+   * Font family, a CSS font-family list. `sans-serif`, the default, follows the
+   * document font (DSK-246).
+   */
   fontFamily: string;
   /** Horizontal text alignment within the text box */
   textAlign: TextAlign;
@@ -632,6 +643,8 @@ export interface GroupShape extends BaseShape {
   label?: string;
   /** Label font size in pixels (default: 14) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Label text color (default: '#000000') */
   labelColor?: string;
   /** Label background color (default: transparent) */
@@ -683,6 +696,8 @@ export interface FileShape extends BaseShape {
   label?: string;
   /** Label font size in world units (default: 12) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Label text color */
   labelColor?: string;
   /**
@@ -710,6 +725,8 @@ export interface LibraryShape extends Omit<BaseShape, 'type'> {
   label?: string;
   /** Label font size in world units (default: 14) */
   labelFontSize?: number;
+  /** Label font, a CSS font-family list; absent follows the document font (DSK-246). */
+  labelFontFamily?: string;
   /** Label text color (default: inherits from stroke or '#000000') */
   labelColor?: string;
   /** Label background color (default: transparent) */

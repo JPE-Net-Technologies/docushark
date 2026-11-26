@@ -11,6 +11,7 @@
  *   set for overridden tokens, removed otherwise — so a Light customization can
  *   never bleed onto Dark, and clearing a slot reverts cleanly to the base.
  * Density → `data-density` root attribute.
+ * Interface font → `data-app-font` root attribute.
  * Glass → `data-glass` root attribute (the glass token block's on/off switch).
  * UI size → `--ui-scale` root var (rem root font-size).
  * Motion → handed to `adaptiveBudget`, the sole authority over `data-reduced-motion`.
@@ -46,6 +47,8 @@ function applyNonColor(prefs: AppearancePrefs): void {
   if (typeof document !== 'undefined') {
     const root = document.documentElement;
     root.dataset['density'] = prefs.density;
+    // Interface font: `[data-app-font="inter"]` in index.css swaps --font-sans (DSK-246).
+    root.dataset['appFont'] = prefs.appFont;
     root.style.setProperty('--ui-scale', String(prefs.uiScale));
     // Prose editor background: set the override, or remove it so the panel keeps
     // its built-in per-base behavior (the `default` preset).

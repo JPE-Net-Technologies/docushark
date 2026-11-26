@@ -79,6 +79,16 @@ Set **interface animations** to **Full**, **Reduced**, or **System** (which
 follows your device's accessibility setting). Reduced motion also quiets related
 effects like the smooth caret.
 
+## Interface font
+
+The font of menus, panels and the ribbon:
+
+- **System**, the default: your operating system's own font.
+- **Inter**: the same on every computer.
+
+This doesn't change any document. A document's text uses its own font, chosen in
+the ribbon (see [Document Font](./rich-text-editor#document-font)).
+
 ## Density
 
 Tighten or loosen spacing across the whole app:

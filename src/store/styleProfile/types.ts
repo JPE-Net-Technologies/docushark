@@ -43,6 +43,8 @@ export interface StyleProfileProperties {
   // Label properties
   /** Optional - label font size for shapes with labels */
   labelFontSize?: number;
+  /** Optional - label font (CSS font-family list) for shapes with labels (DSK-246) */
+  labelFontFamily?: string;
   /** Optional - label color for shapes with labels */
   labelColor?: string;
 

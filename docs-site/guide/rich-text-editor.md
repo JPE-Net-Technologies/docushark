@@ -26,7 +26,8 @@ button, or tab to it, for its name and shortcut; the less familiar ones, such as
 fields, callouts and citations, also say what they do.
 
 - **Undo** and **Redo** come first, as they do on the canvas toolbar.
-- **Home** holds text styles, formatting, colours, lists and alignment.
+- **Home** holds text styles, the document font, formatting, colours, lists and
+  alignment.
 - **Insert** holds everything you can add, the same set as the `/` menu: inline
   code and code blocks, dividers, callouts, tables, equations, images, files,
   galleries, fields, citations and the bibliography.
@@ -39,6 +40,23 @@ In a narrow panel, such as Split, the controls that don't fit move under a
 **More tools** (…) button at the end of the row. Rest the pointer on it, or
 click it to keep them open, and they drop down beneath the row; tabbing onto
 one of them opens them too. Escape or a click back in your page puts them away.
+
+### Document Font
+
+Each document has one font for all of its text, chosen in the **font** box
+beside the text style on **Home**:
+
+- **Inter**, the default: a clear sans-serif.
+- **Source Serif 4**, a serif made for long reading.
+- **JetBrains Mono**, a monospaced font.
+
+The font applies to the whole document rather than to a selection, and everyone
+working in a shared document sees it. Code keeps its monospaced font. Shapes on
+the canvas use the document font too, unless you give one its own (see
+[Styling](./styling#fonts)), and the PDF export uses it as well.
+
+The fonts come with DocuShark, so a document looks the same on every computer,
+including offline.
 
 ### Formatting on Selection
 

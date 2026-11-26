@@ -13,6 +13,7 @@ import type { LibraryShapeDefinition, CustomRenderFunction } from './ShapeLibrar
 import { createStandardAnchors } from './ShapeLibraryTypes';
 import { createStandardProperties } from '../ShapeMetadata';
 import type { PropertyDefinition } from '../ShapeMetadata';
+import { canvasFont } from '../../fonts/canvasFont';
 
 /**
  * UML class member (attribute or method).
@@ -60,21 +61,21 @@ const renderUMLClass: CustomRenderFunction = (ctx, shape) => {
 
   // Draw stereotype if present
   if (stereotype) {
-    ctx.font = `italic ${nameFontSize * 0.75}px sans-serif`;
+    ctx.font = `italic ${nameFontSize * 0.75}px ${canvasFont()}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(`«${stereotype}»`, 0, -hh + compartmentHeight * 0.3, width - 10);
   }
 
   // Draw class name in first compartment
-  ctx.font = `bold ${nameFontSize}px sans-serif`;
+  ctx.font = `bold ${nameFontSize}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const nameY = stereotype ? -hh + compartmentHeight * 0.65 : -hh + compartmentHeight / 2;
   ctx.fillText(className, 0, nameY, width - 10);
 
   // Draw attributes in second compartment
-  ctx.font = `${memberFontSize}px sans-serif`;
+  ctx.font = `${memberFontSize}px ${canvasFont()}`;
   ctx.textAlign = 'left';
 
   const attrStartY = -hh + compartmentHeight + 5;
@@ -157,17 +158,17 @@ const renderUMLInterface: CustomRenderFunction = (ctx, shape) => {
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
 
   // Draw <<interface>> stereotype
-  ctx.font = `italic ${nameFontSize * 0.75}px sans-serif`;
+  ctx.font = `italic ${nameFontSize * 0.75}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('«interface»', 0, -hh + stereotypeHeight / 2, width - 10);
 
   // Draw interface name
-  ctx.font = `bold ${nameFontSize}px sans-serif`;
+  ctx.font = `bold ${nameFontSize}px ${canvasFont()}`;
   ctx.fillText(className, 0, -hh + stereotypeHeight + nameHeight / 2, width - 10);
 
   // Draw attributes
-  ctx.font = `${memberFontSize}px sans-serif`;
+  ctx.font = `${memberFontSize}px ${canvasFont()}`;
   ctx.textAlign = 'left';
 
   const attrStartY = -hh + stereotypeHeight + nameHeight + 5;
@@ -218,17 +219,17 @@ const renderUMLAbstractClass: CustomRenderFunction = (ctx, shape) => {
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
 
   // Draw <<abstract>> stereotype
-  ctx.font = `italic ${nameFontSize * 0.75}px sans-serif`;
+  ctx.font = `italic ${nameFontSize * 0.75}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('«abstract»', 0, -hh + stereotypeHeight / 2, width - 10);
 
   // Draw class name (italic for abstract)
-  ctx.font = `italic bold ${nameFontSize}px sans-serif`;
+  ctx.font = `italic bold ${nameFontSize}px ${canvasFont()}`;
   ctx.fillText(className, 0, -hh + stereotypeHeight + compartmentHeight / 2, width - 10);
 
   // Draw attributes
-  ctx.font = `${memberFontSize}px sans-serif`;
+  ctx.font = `${memberFontSize}px ${canvasFont()}`;
   ctx.textAlign = 'left';
 
   const attrStartY = -hh + stereotypeHeight + compartmentHeight + 5;
@@ -267,17 +268,17 @@ const renderUMLEnum: CustomRenderFunction = (ctx, shape) => {
   ctx.fillStyle = shape.labelColor || stroke || '#000000';
 
   // Draw <<enumeration>> stereotype
-  ctx.font = `italic ${nameFontSize * 0.75}px sans-serif`;
+  ctx.font = `italic ${nameFontSize * 0.75}px ${canvasFont()}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('«enumeration»', 0, -hh + stereotypeHeight / 2, width - 10);
 
   // Draw enum name
-  ctx.font = `bold ${nameFontSize}px sans-serif`;
+  ctx.font = `bold ${nameFontSize}px ${canvasFont()}`;
   ctx.fillText(enumName, 0, -hh + stereotypeHeight + nameHeight / 2, width - 10);
 
   // Draw enum values
-  ctx.font = `${valueFontSize}px sans-serif`;
+  ctx.font = `${valueFontSize}px ${canvasFont()}`;
   ctx.textAlign = 'left';
 
   const valueStartY = -hh + stereotypeHeight + nameHeight + 5;

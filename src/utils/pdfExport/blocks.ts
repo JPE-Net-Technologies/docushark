@@ -4,7 +4,7 @@
  */
 
 import type { JSONContent } from '@tiptap/core';
-import { PDF_FONT_SANS, PDF_FONT_MONO } from './fonts';
+import { PDF_FONT_MONO } from './fonts';
 import { checkPageBreak, pageContentHeight, spaceLeft, type PDFRenderContext, type TextSegment } from './context';
 import { renderNode } from './registry';
 import { PDF_STYLE } from './style';
@@ -160,7 +160,7 @@ export async function renderListItem(
   const fontSize = PDF_STYLE.bodyFontSize;
   checkPageBreak(ctx, fontSize * PDF_STYLE.lineHeight);
 
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setFontSize(fontSize);
 
   const indentMm = listLevel * PDF_STYLE.listIndent;
@@ -241,7 +241,7 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
     }
   }
 
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
 }
 
 /** Fewest lines of a split code block worth starting at the foot of a page. */
@@ -281,7 +281,7 @@ export async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent)
   const startPage = ctx.pageNumber;
 
   ctx.y += pad;
-  ctx.doc.setFont(PDF_FONT_SANS, 'italic');
+  ctx.doc.setFont(ctx.textFont, 'italic');
 
   for (const child of node.content) {
     await renderNode(ctx, child, 1);
@@ -308,7 +308,7 @@ export async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent)
     ctx.doc.line(ctx.marginLeft + 2, ctx.marginTop, ctx.marginLeft + 2, ctx.y);
   }
 
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.y += 2;
 }
 
@@ -398,7 +398,7 @@ export async function renderCallout(ctx: PDFRenderContext, node: JSONContent): P
   const labelLineH = 8 * 0.352778 * 1.3;
   const bodyAscent = PDF_STYLE.bodyFontSize * 0.352778 * PDF_STYLE.lineHeight * 0.75;
   checkPageBreak(ctx, labelLineH + bodyAscent + 4);
-  ctx.doc.setFont(PDF_FONT_SANS, 'bold');
+  ctx.doc.setFont(ctx.textFont, 'bold');
   ctx.doc.setFontSize(8);
   ctx.doc.setTextColor(color[0], color[1], color[2]);
   ctx.doc.text(variant.toUpperCase(), ctx.marginLeft + 4, ctx.y + labelLineH * 0.72);
@@ -407,7 +407,7 @@ export async function renderCallout(ctx: PDFRenderContext, node: JSONContent): P
   // first line overlaps the label.
   ctx.y += labelLineH + bodyAscent;
   ctx.doc.setTextColor(0, 0, 0);
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
 
   for (const child of node.content) {
     await renderNode(ctx, child, 1);

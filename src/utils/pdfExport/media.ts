@@ -3,7 +3,6 @@
  */
 
 import type { JSONContent } from '@tiptap/core';
-import { PDF_FONT_SANS } from './fonts';
 import { checkPageBreak, type PDFRenderContext } from './context';
 import {
   calculateScaledDimensions,
@@ -94,12 +93,12 @@ export async function renderFigure(ctx: PDFRenderContext, node: JSONContent): Pr
   if (imageNode) await renderImage(ctx, imageNode);
   const caption = captionNode ? extractText(captionNode).trim() : '';
   if (caption) {
-    ctx.doc.setFont(PDF_FONT_SANS, 'italic');
+    ctx.doc.setFont(ctx.textFont, 'italic');
     ctx.doc.setFontSize(9);
     ctx.doc.setTextColor(120, 120, 120);
     renderCenteredText(ctx, caption, 9);
     ctx.doc.setTextColor(0, 0, 0);
-    ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+    ctx.doc.setFont(ctx.textFont, 'normal');
     ctx.y += 3;
   }
 }

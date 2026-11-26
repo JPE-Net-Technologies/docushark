@@ -56,6 +56,9 @@ export interface ThemeBuild {
 /** Chrome spacing density — tightens/loosens spacing + control heights. */
 export type Density = 'compact' | 'normal' | 'spacious';
 
+/** The interface's font (DSK-246): the operating system's, or the bundled Inter. */
+export type AppFont = 'system' | 'inter';
+
 /** Prose editor background preset (token-based gradients; `default` = base behavior). */
 export type ProseBackground = 'default' | 'flat' | 'glow' | 'aurora';
 
@@ -84,6 +87,8 @@ export interface AppearancePrefs {
   motion: MotionPreference;
   /** Spacing density (chrome only). */
   density: Density;
+  /** Interface font (chrome only; documents have their own, DSK-246). */
+  appFont: AppFont;
   /** Interface size multiplier (rem root scale); clamped to [0.9, 1.25]. */
   uiScale: number;
   /** Prose editor background preset. */
@@ -265,6 +270,7 @@ export interface UIPreferencesActions {
   setSpellcheckMode: (spellcheck: SpellcheckMode) => void;
   /** Set the spacing density. */
   setDensity: (density: Density) => void;
+  setAppFont: (appFont: AppFont) => void;
   /** Set the prose caret shape. */
   setCaretStyle: (caretStyle: CaretStyle) => void;
   /** Toggle the smooth (gliding) caret. */
@@ -336,6 +342,7 @@ const initialAppearancePrefs: AppearancePrefs = {
   themeInputs: { light: {}, dark: {} },
   motion: 'system',
   density: device.isTouch() ? 'spacious' : 'normal',
+  appFont: 'system',
   uiScale: 1,
   proseBackground: 'default',
   caretStyle: 'bar',
@@ -637,6 +644,10 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
 
       setDensity: (density) => {
         set({ appearancePrefs: { ...get().appearancePrefs, density } });
+      },
+
+      setAppFont: (appFont) => {
+        set({ appearancePrefs: { ...get().appearancePrefs, appFont } });
       },
 
       setUiScale: (uiScale) => {

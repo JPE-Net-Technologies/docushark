@@ -8,6 +8,10 @@
  * geometry itself, so a behaviorless stub is sufficient.
  */
 
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { setFontBytesSource } from '../fonts/fontLoader';
+
 type PathMethods = Record<string, (...args: number[]) => void>;
 
 // jsdom does not implement `matchMedia`. Stores read it at module load
@@ -54,3 +58,10 @@ if (typeof (globalThis as { Path2D?: unknown }).Path2D === 'undefined') {
   }
   (globalThis as { Path2D?: unknown }).Path2D = Path2DStub;
 }
+
+// The PDF exporter fetches its font files (DSK-246). Tests have no server, and
+// a `?url` asset import is a path from the project root, so read it from disk.
+setFontBytesSource(async (url) => {
+  const bytes = await readFile(path.join(process.cwd(), url.replace(/^\//, '').replace(/\?.*$/, '')));
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+});

@@ -12,6 +12,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { usePageStore } from '../store/pageStore';
 import { usePersistenceStore, AUTO_SAVE_DEBOUNCE } from '../store/persistenceStore';
 import { useRichTextStore } from '../store/richTextStore';
+import { useDocumentSettingsStore } from '../store/documentSettingsStore';
 import {
   isAutoSaveSuppressed,
   withAutoSaveSuppressed,
@@ -122,6 +123,15 @@ function install(debounceMs: number): void {
   useRichTextStore.subscribe((state, prevState) => {
     if (isAutoSaveSuppressed()) return;
     if (state.isDirty && !prevState.isDirty) {
+      usePersistenceStore.getState().markDirty();
+      scheduleDebouncedSave();
+    }
+  });
+
+  // A document setting is part of the document, such as its font (DSK-246).
+  useDocumentSettingsStore.subscribe((state, prevState) => {
+    if (isAutoSaveSuppressed()) return;
+    if (state.settings !== prevState.settings) {
       usePersistenceStore.getState().markDirty();
       scheduleDebouncedSave();
     }
