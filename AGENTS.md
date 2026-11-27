@@ -246,6 +246,7 @@ Shape library tiers: basic shapes (Rectangle, Ellipse, Line, Text, Connector, Gr
 - **Top-level order**: `shapeOrder` holds only what's drawn at the top level; a group's children are drawn through its `childIds`. An order from outside the store (a shared document, a snapshot) goes through `resolveDrawOrder`, which draws every shape exactly once. Don't compare an incoming order with the current one: undoing a group legitimately adds to it.
 - **Incoming shapes**: a shape from the Y.Doc replaces the store's copy (`replaceShape`), never merges. It is one whole value there, so a field it has lost is simply absent, and a merge would keep that field and write it back with the next edit.
 - **Input handling**: InputHandler normalizes mouse/touch/pen. Handle pointer capture on down, release on up. Prevent default on wheel events.
+- **Prose attribute renderers**: an extension attribute's `renderHTML` returns a fresh object with fixed keys, such as `{ 'data-x': String(value) }`, never a value taken from the document. Tiptap 2's `mergeAttributes` turns an own `__proto__` key into inherited DOM attributes, `onerror` included (GHSA-cp6q-959q-f8rh, fixed only in Tiptap 3). `src/tiptap/attributeRenderers.test.ts` checks every renderer.
 
 ## MCP (Model Context Protocol) Integration
 
