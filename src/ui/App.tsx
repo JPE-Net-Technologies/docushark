@@ -64,7 +64,7 @@ import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { registerTokenRefresher } from '../api/tokenRefresh';
 import { createCloudTokenRefresher } from '../api/cloudTokenRefresher';
-import { useRelayDocumentStore, isCloudSignedIn } from '../store/relayDocumentStore';
+import { useRelayDocumentStore, isCloudSignedIn, handleReplayFailure } from '../store/relayDocumentStore';
 import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
@@ -367,10 +367,18 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
     // while offline get replayed to the relay on reconnect (JP-106). The
     // manager auto-processes its queue when the connection becomes
     // authenticated; we give it a provider that pushes via the relay store.
+    // A save the workspace refuses (access revoked) moves to Trash instead of
+    // failing forever (DSK-13, `handleReplayFailure`).
     const syncManager = getSyncStateManager({ autoProcessOnReconnect: true });
     syncManager.setProvider({
-      saveDocument: (doc, expectedVersion) =>
-        useRelayDocumentStore.getState().saveToHost(doc, expectedVersion),
+      saveDocument: async (doc, expectedVersion) => {
+        try {
+          return await useRelayDocumentStore.getState().saveToHost(doc, expectedVersion);
+        } catch (e) {
+          await handleReplayFailure(doc.id, e);
+          throw e;
+        }
+      },
       deleteDocument: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
       isReady: () =>
         useConnectionStore.getState().status === 'authenticated' &&
