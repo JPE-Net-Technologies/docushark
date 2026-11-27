@@ -10,14 +10,14 @@ The quickest way to see what a DocuShark document can hold, with writing, diagra
 ## Open an example {#open}
 
 1. Download the example's `.docushark` file.
-2. In [DocuShark](https://app.docushark.app), open **Documents** and use the import button beside **New** (or the arrow beside **New**, then **Import a document…**).
+2. In [DocuShark](https://app.docushark.app), open **Documents** and click **Import**, beside **New**. (On a phone, it's **Import a document…** in the menu beside **New**.)
 3. Pick the file. It opens as a new document with all its pages and files, online or off.
 
 An imported example is an ordinary document of your own: rename it, change it, or take it apart to see how it's made. The file you downloaded isn't touched.
 
 ## A research notebook {#research-notebook}
 
-![The study notebook in Split view: the written report on the left and the study's data and analysis diagram on the right.](/screenshots/example-research-project.png)
+![The study notebook in Split view: the written report on the left and the study-design diagram on the right.](/screenshots/example-research-project.png)
 
 A psychology study, *Does Music Tempo Affect Recall?*: a cited write-up, a study-design diagram on its own canvas page, a results table with statistics, and a concept map of the theory. The kind of document a researcher keeps for each study.
 
@@ -44,7 +44,7 @@ An *Intro to Astronomy* course: a weekly schedule, the readings, a cited reading
 
 ## A channel content plan {#content-plan}
 
-![The channel plan in Split view: the publishing calendar and performance tables on the left and the production pipeline on the right.](/screenshots/example-content-plan.png)
+![The channel plan in Split view: the content pillars and publishing calendar on the left and the topic map on the right.](/screenshots/example-content-plan.png)
 
 *Curious Minds*, a science channel's plan: content pillars, a publishing calendar, a performance log, a topic map and a production pipeline. Everything a creator usually spreads across five apps, in one document.
 
@@ -60,11 +60,11 @@ An *Intro to Astronomy* course: a weekly schedule, the readings, a cited reading
 
 ## A lab protocol {#lab-protocol}
 
-![The protocol in Split view: the method notes on the left, an icon-styled workflow of the assay on the canvas, and Properties on the right.](/screenshots/example-cell-viability.png)
+![The protocol in the Power layout: the method notes on the left, the assay's workflow on the canvas with one step selected, and that step's Properties on the right.](/screenshots/example-cell-viability.png)
 
 A *Cell Viability Assay* protocol: step-by-step method notes beside a workflow of the assay drawn with icons. A compact example of writing and a diagram supporting each other.
 
-**Shows:** a procedure in prose, an icon-styled workflow, Split, and style profiles ([Make it yours](/guide/make-it-yours#style-profiles)).
+**Shows:** a procedure in prose, an icon-styled workflow, the Power layout with Properties docked, and style profiles ([Make it yours](/guide/make-it-yours#style-profiles)).
 
 <a href="/examples/cell-viability-assay.docushark" download>Download <code>cell-viability-assay.docushark</code></a>
 

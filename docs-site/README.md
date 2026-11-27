@@ -22,6 +22,7 @@ Run from `docs-site/`:
 - `developer/` — the **Build** section (customer-facing nav label "Build"; routes stay under `/developer/`). Scoped to two jobs: **Extend** (shapes, tools, UI features, plugins) and **Integrate** (REST/MCP consumption, building clients). The engine core + relay CRDT/sync internals are readable AGPL but deliberately *not* a documented extension surface here — see the "extension surface vs engine core" note in `developer/architecture.md`.
 - `.vitepress/config.mts` — nav, breadcrumb JSON-LD, `llms.txt`/`llms-full.txt` generation and the redirects. Any new top-level nav section needs a sidebar array in `sidebar.ts`, a `resolveBreadcrumb` branch, and a `buildEnd` section here.
 - `.vitepress/plugins/llms.ts` — generates `/llms.txt` + `/llms-full.txt` from the sidebar structures at build time.
+- `scripts/capture-screenshots.cjs` — regenerates `public/screenshots/` from a production build of the app, with a fresh browser profile and the example documents; its header says how to run it. Refresh the pictures when the interface they show changes.
 - `guide/shape-libraries.data.ts` — a VitePress build-time data loader that reads the shape/icon catalog directly from application source (`src/shapes/library/`, `scripts/gen-icon-catalog.ts`), so the shape catalogue on the Draw page never drifts from what's actually in the app.
 
 See the repo root `AGENTS.md` (one directory up) for the DocuShark codebase's broader conventions.
