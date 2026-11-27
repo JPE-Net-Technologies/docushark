@@ -24,6 +24,7 @@
  */
 
 import { create } from 'zustand';
+import { nanoid } from 'nanoid';
 import type { DiagramDocument } from '../types/Document';
 import { getDocumentMetadata } from '../types/Document';
 import { collectBlobReferences } from '../storage/AssetBundler';
@@ -31,6 +32,7 @@ import { blobStorage } from '../storage/BlobStorage';
 import { BlobGarbageCollector } from '../storage/BlobGarbageCollector';
 import {
   getTrashItems,
+  getTrashItem,
   getTrashedBlobReferences,
   moveToTrash,
   recoverFromTrash,
@@ -42,6 +44,16 @@ import {
 } from '../storage/TrashStorage';
 import { usePersistenceStore, loadDocumentFromStorage } from './persistenceStore';
 import { useCollectionStore } from './collectionStore';
+
+/**
+ * A stranded copy as a new personal document: a new id, with no workspace
+ * owner or shares (DSK-13). Its content, blob references included, is kept
+ * whole, so its files stay alive.
+ */
+export function asPersonalCopy(doc: DiagramDocument): DiagramDocument {
+  const { ownerId: _owner, sharedWith: _shares, ...rest } = doc;
+  return { ...rest, id: nanoid() };
+}
 
 /** Reused so the incremental ref cache survives across reclaim passes. */
 const gc = new BlobGarbageCollector(blobStorage);
@@ -149,9 +161,16 @@ export const useTrashStore = create<TrashState & TrashActions>((set, get) => ({
   },
 
   restore: async (id) => {
+    const kind = getTrashItem(id)?.kind;
     const result = recoverFromTrash(id);
     if (!result.success || !result.document) return false;
-    usePersistenceStore.getState().adoptDocument(result.document);
+    // A stranded copy came from a workspace document that may still exist (its
+    // access was revoked, DSK-13). Under the old id it would collide with that
+    // document as soon as it's moved back to a workspace, so it comes back as a
+    // personal copy with a new id (JP-183's restore-as-a-new-id). The user's own
+    // trashed documents keep theirs.
+    const doc = kind === 'stranded' ? asPersonalCopy(result.document) : result.document;
+    usePersistenceStore.getState().adoptDocument(doc);
     get().refresh();
     return true;
   },

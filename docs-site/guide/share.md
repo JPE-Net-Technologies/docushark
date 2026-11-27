@@ -52,7 +52,7 @@ The **Workspace** section of the access panel lists everyone in your workspace a
 
 - **Create an invite link** for a **Member**, who can edit documents shared with them, or a **Viewer**, who can only read, even on a document shared with them to edit. Anyone with the link can join until it expires or you revoke it.
 - **Copy** or **revoke** a pending invite.
-- **Remove a member.** They lose access to the workspace and everything shared with them, though copies already on their device stay there. You can invite them again later.
+- **Remove a member.** They lose access to the workspace and everything shared with them, though copies already on their device stay there. Unsaved changes they had made to a shared document go to their **Trash**, where they can restore them as a personal copy. You can invite them again later.
 
 ## Connect an AI agent {#connect-an-ai-agent}
 
