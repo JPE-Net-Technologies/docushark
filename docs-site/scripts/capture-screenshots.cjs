@@ -153,8 +153,16 @@ const SCENES = {
     await open(page, 'cell');
     await page.keyboard.press('Control+Shift+4'); // Power
     await page.waitForTimeout(900);
+    // Power's default notes column is too narrow for its ribbon; widen it.
+    const handle = await page.getByRole('separator', { name: 'Resize panel' }).boundingBox();
+    if (!handle) throw new Error('no panel resize handle');
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 + 150, handle.y + handle.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
     await fit(page);
-    await selectAt(page, 759, 418, '"Incubate 48 h"');
+    await selectAt(page, 834, 418, '"Incubate 48 h"');
     await shot(page, 'example-cell-viability');
   },
   // Draw → Connectors: a connector's routing and type in Properties.

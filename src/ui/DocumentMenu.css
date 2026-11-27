@@ -1,0 +1,33 @@
+/* The ribbon's Document menu, "Aa" (DocumentMenu.tsx). */
+
+/* A toolbar button, a little wider than the icon buttons for "Aa" and its arrow. */
+.document-menu-trigger {
+  width: auto;
+  min-width: 40px;
+  padding: 0 var(--space-1);
+  gap: 2px;
+}
+
+.document-menu-aa {
+  font-size: var(--font-size-base);
+  line-height: 1;
+}
+
+.document-menu-chevron {
+  color: var(--text-secondary);
+}
+
+.document-menu-trigger[data-state='open'] {
+  background: var(--bg-hover);
+}
+
+/* The menu is wider than its small trigger; give the fonts room. */
+.document-menu-content {
+  min-width: 220px;
+}
+
+.document-menu-label {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}

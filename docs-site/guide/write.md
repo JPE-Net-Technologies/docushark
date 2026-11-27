@@ -12,12 +12,12 @@ Prose pages are where you write, from a quick note to a long report with tables,
 Above the page sits the **ribbon**:
 
 - **Undo** and **Redo** come first.
-- **Home** holds text styles, the [document font](#document-font), formatting, colours, lists and alignment.
+- **Home** starts with the text style (it reads **Text**, or **H1** to **H6** in a heading), then bold and the other formatting, lists, links, colours and alignment, and ends with **Aa**, the [document font](#document-font).
 - **Insert** holds everything you can add: code, dividers, callouts, tables, equations, images, files, galleries, fields, citations and a bibliography.
 - **Table** and **Image** tabs appear while your cursor is in a table or an image is selected. They never switch the ribbon over by themselves.
 - **Find and replace** sits at the end (`Ctrl+F`).
 
-Rest the pointer on any button for its name and shortcut. In a narrow window, such as Split, the buttons that don't fit move under **More tools** (**…**) at the end of the row.
+Rest the pointer on any button for its name and shortcut. In a narrow window, such as Split, the buttons that don't fit move under **More tools** (**…**) at the end of the row, the least used first; click **…** to show them. A dot on **…** means one of them applies to your text, such as a list or an alignment.
 
 Three shortcuts save trips to the ribbon:
 
@@ -34,18 +34,18 @@ The status bar counts the page's words, or the selected words while you have a s
 | **Bold**, *italic*, underline | `Ctrl+B`, `Ctrl+I`, `Ctrl+U` | |
 | `Inline code` | `Ctrl+E` | |
 | Heading 1, 2 or 3 | `Ctrl+Alt+1`, `2` or `3` | `#`, `##` or `###` and a space |
-| Body text | `Ctrl+Alt+0` | |
+| Text (body text) | `Ctrl+Alt+0` | |
 | Bulleted list | `Ctrl+Shift+8` | `-` and a space |
 | Numbered list | `Ctrl+Shift+7` | `1.` and a space |
 | Quote | | `>` and a space |
 
-On a Mac, use `Cmd` for `Ctrl`. Task lists, strikethrough, subscript, superscript, links and alignment are on **Home**. In a list, `Tab` and `Shift+Tab` indent and outdent. Headings 4 to 6 are in the text style menu.
+On a Mac, use `Cmd` for `Ctrl`. Task lists, strikethrough, subscript, superscript, links and alignment are on **Home**. In a list, `Tab` and `Shift+Tab` indent and outdent. Headings 4 to 6 are in the text style menu, **Text** at the start of **Home**.
 
 **Colour.** Text colour and highlight open the same colour picker the canvas uses, so a colour from your diagram is one click away. **Default** at the top returns text to the body colour without touching bold, italics or links. Type any colour into the field at the bottom (`#ff6600`, `#f60`, `rgb(255, 102, 0)` or a name such as `crimson`), and the picker shows a contrast reading so you can tell whether a pairing stays readable.
 
 ## The document font {#document-font}
 
-A document has one font for all its text, chosen in the font box beside the text style on **Home**:
+A document has one font for all its text, chosen from **Aa** at the end of **Home**:
 
 - **Inter**, the default: a clear sans-serif.
 - **Source Serif 4**: a serif made for long reading.
