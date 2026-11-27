@@ -426,3 +426,18 @@ when the first non-core panel needs it (YAGNI today).
 
 Plugin extensibility for shape libraries etc. still lives at
 `/src/plugins/PanelExtensions.ts`.
+
+### The prose ribbon: where a new tool goes
+
+The writing ribbon (`src/ui/DocumentEditorToolbar.tsx`) is one row at icon-button height. In a narrow panel its groups wrap, whole, from the end into **More tools** (`…`, opened by a click; `src/ui/useRibbonOverflow.ts`), so a group's position is also its fold priority: the most used come first and the rarest last. The Home tab's order is one list, `HOME_GROUP_ORDER`, so a custom order can replace it later.
+
+| A tool that… | Goes in |
+|---|---|
+| formats the selection or its block | Home, as an icon button in the group it belongs to (and the selection bubble if it's used constantly) |
+| adds something to the document | Insert and the `/` menu, both built from the catalogue in `src/tiptap/slashCommands.ts` |
+| works on a table, an image or another selected object | that object's contextual tab |
+| changes the whole document (its font, page size, margins) | the Document menu, **Aa**, last on Home (`src/ui/DocumentMenu.tsx`), as a headed section |
+| changes the view (Paper Mode on or off, focus) | the top bar, beside Write · Split · Canvas, not the ribbon |
+| reviews (comments, suggestions, an assistant) | a Review tab, once there are three such tools |
+
+Keep every control at button height: a dropdown shows a short token (**Text**, **H2**, **Aa**) and opens a menu that names its choices in full. Toolbar buttons mark their state with the `active` class, which is what lets `…` show a dot when a folded control applies to the selection.

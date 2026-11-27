@@ -34,7 +34,7 @@ function selectedValue(value: string | undefined, role: FontRole): string {
 }
 
 /** "Comic Sans MS" from `'Comic Sans MS', cursive`, as written. */
-function displayName(css: string): string {
+export function fontDisplayName(css: string): string {
   return (css.split(',')[0] ?? css).trim().replace(/^['"]|['"]$/g, '');
 }
 
@@ -49,13 +49,19 @@ function fontRow(name: string, kind: string, css: string) {
   );
 }
 
-export function FontSelect({ value, onChange, role, ariaLabel, minWidth, className }: FontSelectProps) {
-  const documentFont = useDocumentFont();
+/**
+ * The fonts a picker offers for a role, and the option a stored value selects.
+ * Shared by FontSelect and the ribbon's Document menu.
+ */
+export function fontOptions(
+  role: FontRole,
+  value: string | undefined,
+  documentFont: string,
+): { selected: string; items: RichSelectItem<string>[] } {
   const selected = selectedValue(value, role);
-
   const items: RichSelectItem<string>[] = [];
   if (role === 'shape') {
-    const documentName = displayName(documentFont);
+    const documentName = fontDisplayName(documentFont);
     items.push({
       value: FOLLOW_DOCUMENT_FONT,
       label: 'Document font',
@@ -73,7 +79,7 @@ export function FontSelect({ value, onChange, role, ariaLabel, minWidth, classNa
     });
   }
   if (selected !== '' && !items.some((item) => item.value === selected)) {
-    const name = displayName(selected);
+    const name = fontDisplayName(selected);
     items.push({
       value: selected,
       label: name,
@@ -81,6 +87,12 @@ export function FontSelect({ value, onChange, role, ariaLabel, minWidth, classNa
       render: () => fontRow(name, 'Not bundled', selected),
     });
   }
+  return { selected, items };
+}
+
+export function FontSelect({ value, onChange, role, ariaLabel, minWidth, className }: FontSelectProps) {
+  const documentFont = useDocumentFont();
+  const { selected, items } = fontOptions(role, value, documentFont);
 
   return (
     <RichSelect<string>

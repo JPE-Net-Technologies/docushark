@@ -108,35 +108,45 @@ export function RichSelect<T extends string>({
           onCloseAutoFocus={(e) => e.preventDefault()}
           {...hoverProps}
         >
-          <DropdownMenu.RadioGroup value={value} onValueChange={(v) => onChange(v as T)}>
-            {items.map((item) => (
-              <DropdownMenu.RadioItem
-                key={item.value}
-                value={item.value}
-                textValue={item.keywords ?? item.label}
-                className="rich-select-item"
-              >
-                <span className="rich-select-item-check">
-                  <DropdownMenu.ItemIndicator>
-                    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                      <path
-                        d="M10 3L4.5 8.5 2 6"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        fill="none"
-                      />
-                    </svg>
-                  </DropdownMenu.ItemIndicator>
-                </span>
-                <span className="rich-select-item-body">
-                  {item.render ? item.render(item.value === value) : item.label}
-                </span>
-              </DropdownMenu.RadioItem>
-            ))}
-          </DropdownMenu.RadioGroup>
+          <RichSelectItems value={value} onChange={onChange} items={items} />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+/**
+ * A RichSelect's options as a radio group, for a menu that holds more than one
+ * list under its own headings (the ribbon's Document menu). Render it inside a
+ * Radix `DropdownMenu.Content`.
+ */
+export function RichSelectItems<T extends string>({
+  value,
+  onChange,
+  items,
+}: Pick<RichSelectProps<T>, 'value' | 'onChange' | 'items'>) {
+  return (
+    <DropdownMenu.RadioGroup value={value} onValueChange={(v) => onChange(v as T)}>
+      {items.map((item) => (
+        <DropdownMenu.RadioItem
+          key={item.value}
+          value={item.value}
+          textValue={item.keywords ?? item.label}
+          className="rich-select-item"
+        >
+          <span className="rich-select-item-check">
+            <DropdownMenu.ItemIndicator>
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M10 3L4.5 8.5 2 6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              </svg>
+            </DropdownMenu.ItemIndicator>
+          </span>
+          <span className="rich-select-item-body">
+            {item.render ? item.render(item.value === value) : item.label}
+          </span>
+        </DropdownMenu.RadioItem>
+      ))}
+    </DropdownMenu.RadioGroup>
   );
 }
 

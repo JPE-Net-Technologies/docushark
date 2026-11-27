@@ -35,7 +35,7 @@ In a browser tab, `F6` belongs to the browser: use **Move focus to the canvas** 
 |---|---|
 | Bold, italic, underline | `Ctrl+B`, `Ctrl+I`, `Ctrl+U` |
 | Inline code | `Ctrl+E` |
-| Heading 1, 2, 3 / body text | `Ctrl+Alt+1`, `2`, `3` / `Ctrl+Alt+0` |
+| Heading 1, 2, 3 / Text (body text) | `Ctrl+Alt+1`, `2`, `3` / `Ctrl+Alt+0` |
 | Bulleted / numbered list | `Ctrl+Shift+8` / `Ctrl+Shift+7` |
 | Indent / outdent a list item | `Tab` / `Shift+Tab` |
 | Insert anything | `/` at the start of a line |

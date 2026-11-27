@@ -803,7 +803,7 @@ export function DocumentEditorContextMenu({
             onClick={() => { if (editor) cmd.setParagraph(editor); onClose(); }}
           >
             <span className="doc-editor-context-menu-icon"><Icon icon={Pilcrow} /></span>
-            <span className="doc-editor-context-menu-label">Paragraph</span>
+            <span className="doc-editor-context-menu-label">Text</span>
           </div>
           <div className="doc-editor-context-menu-divider" />
           {([1, 2, 3, 4, 5, 6] as const).map((level) => (

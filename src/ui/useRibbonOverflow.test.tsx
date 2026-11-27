@@ -1,14 +1,28 @@
 /**
  * The ribbon's overflow (DSK-200): "…" shows while the tab's groups wrap below
- * the first row, and drops those rows down on a rest, a click or keyboard focus.
- * jsdom has no layout, so each element's box comes from its data-top.
+ * the first row, and drops those rows down on a click or keyboard focus, never on
+ * a pointer passing over it. It marks the folded groups, and flags "…" while a
+ * folded control applies to the selection.
+ * jsdom has no layout, so each element's box comes from its data-top and data-left.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { useRef } from 'react';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import { HOVER_CLOSE_MS, HOVER_OPEN_MS, useRibbonOverflow, wrapsPastFirstRow } from './useRibbonOverflow';
+import { useRibbonOverflow, wrapsPastFirstRow } from './useRibbonOverflow';
 
-function Ribbon({ secondRowTop = 40, tab = 'home' }: { secondRowTop?: number; tab?: string }) {
+function Ribbon({
+  secondRowTop = 40,
+  tab = 'home',
+  thirdGroup = false,
+  activeButton = null,
+}: {
+  secondRowTop?: number;
+  tab?: string;
+  /** A second folded group, further along the same folded row. */
+  thirdGroup?: boolean;
+  /** Which button shows as active, as a toolbar button applying to the selection does. */
+  activeButton?: 'Bold' | 'Align' | null;
+}) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const overflow = useRibbonOverflow(stripRef, toolbarRef, tab);
@@ -19,11 +33,16 @@ function Ribbon({ secondRowTop = 40, tab = 'home' }: { secondRowTop?: number; ta
           <div ref={stripRef} {...overflow.stripProps}>
             <div>
               <div className="document-editor-toolbar-group" data-top="0">
-                <button data-top="0">Bold</button>
+                <button data-top="0" className={`document-editor-toolbar-btn${activeButton === 'Bold' ? ' active' : ''}`}>Bold</button>
               </div>
-              <div className="document-editor-toolbar-group" data-top={secondRowTop}>
-                <button data-top={secondRowTop}>Align</button>
+              <div className="document-editor-toolbar-group" data-top={secondRowTop} data-testid="align-group">
+                <button data-top={secondRowTop} className={`document-editor-toolbar-btn${activeButton === 'Align' ? ' active' : ''}`}>Align</button>
               </div>
+              {thirdGroup && (
+                <div className="document-editor-toolbar-group" data-top={secondRowTop} data-left="100" data-testid="third-group">
+                  <button data-top={secondRowTop} data-left="100">Aa</button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -51,7 +70,8 @@ function renderRibbon(props: Parameters<typeof Ribbon>[0] = {}) {
 beforeEach(() => {
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     const top = Number((this as HTMLElement).dataset['top'] ?? 0);
-    return { top, bottom: top + 32, height: 32, left: 0, right: 32, width: 32, x: 0, y: top, toJSON: () => ({}) };
+    const left = Number((this as HTMLElement).dataset['left'] ?? 0);
+    return { top, bottom: top + 32, height: 32, left, right: left + 32, width: 32, x: left, y: top, toJSON: () => ({}) };
   });
 });
 
@@ -93,46 +113,43 @@ describe('useRibbonOverflow (DSK-200)', () => {
     expect(isOpen()).toBe(false);
   });
 
-  it('opens after the pointer rests on "…", and closes after it leaves the rows', () => {
+  it('opens on a click only: passing over "…" on the way to Find opens nothing', () => {
     vi.useFakeTimers();
     renderRibbon();
-    fireEvent.pointerOver(more(), { pointerType: 'mouse' });
-    act(() => vi.advanceTimersByTime(HOVER_OPEN_MS - 1));
-    expect(isOpen()).toBe(false);
-    act(() => vi.advanceTimersByTime(1));
-    expect(isOpen()).toBe(true);
-
-    // Into the rows: they stay open past the grace period.
-    fireEvent.pointerOut(more(), { pointerType: 'mouse', relatedTarget: screen.getByText('Align') });
-    fireEvent.pointerOver(screen.getByText('Align'), { pointerType: 'mouse', relatedTarget: more() });
-    act(() => vi.advanceTimersByTime(HOVER_CLOSE_MS * 2));
-    expect(isOpen()).toBe(true);
-
-    // Away from them: closed once the grace period ends.
-    fireEvent.pointerOut(screen.getByText('Align'), { pointerType: 'mouse', relatedTarget: document.body });
-    act(() => vi.advanceTimersByTime(HOVER_CLOSE_MS - 1));
-    expect(isOpen()).toBe(true);
-    act(() => vi.advanceTimersByTime(1));
-    expect(isOpen()).toBe(false);
-  });
-
-  it('a click while hover-open pins it, so leaving no longer closes it', () => {
-    vi.useFakeTimers();
-    renderRibbon();
-    fireEvent.pointerOver(more(), { pointerType: 'mouse' });
-    act(() => vi.advanceTimersByTime(HOVER_OPEN_MS));
+    for (const pointerType of ['mouse', 'pen', 'touch']) {
+      fireEvent.pointerOver(more(), { pointerType });
+      fireEvent.pointerEnter(more(), { pointerType });
+      act(() => vi.advanceTimersByTime(2000));
+      expect(isOpen()).toBe(false);
+      fireEvent.pointerOut(more(), { pointerType, relatedTarget: screen.getByText('Find') });
+    }
     fireEvent.click(more());
-    fireEvent.pointerOut(more(), { pointerType: 'mouse', relatedTarget: document.body });
-    act(() => vi.advanceTimersByTime(HOVER_CLOSE_MS * 2));
     expect(isOpen()).toBe(true);
   });
 
-  it('ignores touch hover: a tap is a click', () => {
-    vi.useFakeTimers();
-    renderRibbon();
-    fireEvent.pointerOver(more(), { pointerType: 'touch' });
-    act(() => vi.advanceTimersByTime(HOVER_OPEN_MS * 2));
-    expect(isOpen()).toBe(false);
+  it('marks the groups that folded, and the one each folded row starts with', () => {
+    renderRibbon({ thirdGroup: true });
+    const first = screen.getByText('Bold').parentElement!;
+    expect(first.hasAttribute('data-folded')).toBe(false);
+    expect(screen.getByTestId('align-group').hasAttribute('data-folded')).toBe(true);
+    expect(screen.getByTestId('align-group').hasAttribute('data-row-start')).toBe(true);
+    expect(screen.getByTestId('third-group').hasAttribute('data-folded')).toBe(true);
+    expect(screen.getByTestId('third-group').hasAttribute('data-row-start')).toBe(false);
+  });
+
+  it('flags "…" while a folded control applies to the selection, following it without a resize', () => {
+    const view = renderRibbon();
+    expect(more().hasAttribute('data-active-hidden')).toBe(false);
+    view.rerender(<Ribbon activeButton="Align" />);
+    expect(more().hasAttribute('data-active-hidden')).toBe(true);
+    // An active control still in sight needs no flag.
+    view.rerender(<Ribbon activeButton="Bold" />);
+    expect(more().hasAttribute('data-active-hidden')).toBe(false);
+  });
+
+  it('never flags "…" while nothing has folded', () => {
+    renderRibbon({ secondRowTop: 0, activeButton: 'Align' });
+    expect(more().hasAttribute('data-active-hidden')).toBe(false);
   });
 
   it('closes on Escape, moving focus off a control about to be clipped', () => {
