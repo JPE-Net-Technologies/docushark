@@ -1,93 +1,81 @@
 ---
-title: Example Gallery
-description: Four real DocuShark documents you can download, open, and explore — a research notebook, a course plan, a channel content plan, and a lab protocol. Each pairs with a build-it-yourself tutorial.
+title: Example gallery
+description: Four finished DocuShark documents to download and explore (a research notebook, a course plan, a channel content plan and a lab protocol), and a diagram-first example of an AWS architecture.
 ---
 
-# Example Gallery
+# Example gallery
 
-The fastest way to understand what a DocuShark document *is* — prose, diagrams,
-files, and references living together in one place — is to open a finished one.
+The quickest way to see what a DocuShark document can hold, with writing, diagrams, files and references together, is to open a finished one. Each example below is a `.docushark` file: the document and everything it uses, in one file. Each comes with a note on how it's built, so you can make your own.
 
-Each example below is a real `.docushark` archive: the document plus everything it
-references, bundled into a single file. Download one, drop it into DocuShark, and
-poke around. When you want to build the same thing from scratch, follow its
-tutorial.
+## Open an example {#open}
 
-## Open an example
+1. Download the example's `.docushark` file.
+2. In [DocuShark](https://app.docushark.app), open **Documents** and use the import button beside **New** (or the arrow beside **New**, then **Import a document…**).
+3. Pick the file. It opens as a new document with all its pages and files, online or off.
 
-1. [Open DocuShark](https://app.docushark.app) (or the desktop app).
-2. Go to **Documents** home and choose **Import**.
-3. Pick the `.docushark` file you downloaded — a new document is created with all
-   its pages and embedded files intact.
+An imported example is an ordinary document of your own: rename it, change it, or take it apart to see how it's made. The file you downloaded isn't touched.
 
-The archive is self-contained, so it imports the same on the web app or desktop,
-online or off. See [Export & Import](/guide/export-import) for the full format.
+## A research notebook {#research-notebook}
 
-::: tip These are yours to change
-An imported example is an ordinary document — rename it, edit it, tear it apart to
-see how it's built. It won't touch the original file you downloaded.
-:::
+![The study notebook in Split view: the written report on the left and the study's data and analysis diagram on the right.](/screenshots/example-research-project.png)
 
-## A Research Project Notebook
+A psychology study, *Does Music Tempo Affect Recall?*: a cited write-up, a study-design diagram on its own canvas page, a results table with statistics, and a concept map of the theory. The kind of document a researcher keeps for each study.
 
-![The study notebook in Split view — the written report on the left, the data & analysis pipeline diagram on the right.](/screenshots/example-research-project.png)
+**Shows:** fields, citations and a bibliography, a diagram beside the text, equations, and a diagram shown inside the text.
 
-A psychology study notebook — *Does Music Tempo Affect Recall?* — with a properly
-cited write-up, a study-design diagram on its own canvas page, a results table with
-LaTeX statistics, and a concept mind-map. The kind of document a researcher keeps
-one of per study.
+<a href="/examples/music-tempo-recall-study.docushark" download>Download <code>music-tempo-recall-study.docushark</code></a> · [Build it step by step](/tutorials/research-project)
 
-**Shows off:** document fields · inline citations + a generated bibliography ·
-a linked diagram page · math · a mind-map via **Add Group**.
+## A course plan {#course-curriculum}
 
-<a href="/examples/music-tempo-recall-study.docushark" download>Download <code>music-tempo-recall-study.docushark</code></a> · [Build it: A Research Project Notebook](/tutorials/research-project)
+![The course plan in Split view: the weekly schedule on the left and the map of how the units connect on the right.](/screenshots/example-course-plan.png)
 
-## A Course Curriculum
+An *Intro to Astronomy* course: a weekly schedule, the readings, a cited reading list, and a map of how the units build on each other. Reuse it each term by changing a few fields.
 
-![The course plan in Split view — the weekly schedule on the left, the concept-dependency map on the right.](/screenshots/example-course-plan.png)
+**How it's built:**
 
-An *Intro to Astronomy* course plan — a weekly schedule, a citable reading list, and
-a concept-dependency map showing how the units build on each other. Clone it each
-term by changing a few fields.
+- **Fields** for the course, term and instructor, so next term's copy is a few edits ([Fields](/guide/write#fields)).
+- The weekly schedule as a **table**, with a row per week and columns for the topic, reading and assignment.
+- The readings attached as **files** on the canvas, so students open everything from one place, and the set texts cited from the document's **references** ([Files](/guide/write#files), [Citations](/guide/write#citations)).
+- A **Course Map** canvas page: *Foundations → Solar System → Stars → Galaxies → Cosmology*, with connectors for prerequisites.
+- A **showcase** area on the canvas for standout student work.
+- At the end of each term, the plan exported as a `.docushark` file and kept in a **collection** of past terms ([.docushark files](/guide/export-import#docushark-files), [Collections](/guide/organize#collections-and-tags)).
 
-**Shows off:** tables · a reference library for set texts · a linked concept map ·
-document fields for reuse.
+<a href="/examples/intro-to-astronomy-course-plan.docushark" download>Download <code>intro-to-astronomy-course-plan.docushark</code></a>
 
-<a href="/examples/intro-to-astronomy-course-plan.docushark" download>Download <code>intro-to-astronomy-course-plan.docushark</code></a> · [Build it: A Course Curriculum](/tutorials/course-curriculum)
+## A channel content plan {#content-plan}
 
-## A Content Creator's Plan
+![The channel plan in Split view: the publishing calendar and performance tables on the left and the production pipeline on the right.](/screenshots/example-content-plan.png)
 
-![The channel plan in Split view — the publishing calendar and performance tables on the left, the production pipeline on the right.](/screenshots/example-content-plan.png)
+*Curious Minds*, a science channel's plan: content pillars, a publishing calendar, a performance log, a topic map and a production pipeline. Everything a creator usually spreads across five apps, in one document.
 
-A *Curious Minds* science-channel content plan — content pillars, a publishing
-calendar, a performance log, a topic mind-map, and a production-pipeline diagram
-with a feedback loop. Everything a creator usually spreads across five apps, in one
-document.
+**How it's built:**
 
-**Shows off:** planning tables · a topic mind-map via **Add Group** · a
-process diagram with a loop · light fact-check citations.
+- **Fields** for the channel, quarter and host, and the content pillars as a list.
+- A publishing calendar as a **table** (date, topic, format and status), and a **performance** table of past episodes with views and notes.
+- A **topic map** on the canvas: each pillar branching into episode ideas, quick to rearrange as the backlog grows.
+- A **Production Pipeline** canvas page: *Ideate → Research → Script → Record → Edit → Thumbnail → Publish → Promote → Analyze*, with a connector looping from Analyze back to Ideate.
+- **Citations** for the claims made on screen, a primary source for each episode.
 
-<a href="/examples/curious-minds-content-plan.docushark" download>Download <code>curious-minds-content-plan.docushark</code></a> · [Build it: A Content Creator's Plan](/tutorials/content-creator)
+<a href="/examples/curious-minds-content-plan.docushark" download>Download <code>curious-minds-content-plan.docushark</code></a>
 
-## A Lab Protocol
+## A lab protocol {#lab-protocol}
 
-![The DocuShark editor in Split view — the protocol notes on the left, an icon-styled assay workflow on the canvas in the middle, and the Property panel on the right.](/screenshots/example-cell-viability.png)
+![The protocol in Split view: the method notes on the left, an icon-styled workflow of the assay on the canvas, and Properties on the right.](/screenshots/example-cell-viability.png)
 
-A *Cell Viability Assay* protocol — step-by-step method notes beside an icon-styled
-workflow diagram of the assay. A compact example of prose and a diagram reinforcing
-each other on one page. It's also the document in the [Interface Tour](/getting-started/interface-tour).
+A *Cell Viability Assay* protocol: step-by-step method notes beside a workflow of the assay drawn with icons. A compact example of writing and a diagram supporting each other.
 
-**Shows off:** a procedure written as prose · an icon-styled workflow diagram ·
-the Split layout · the Property panel and style profiles.
+**Shows:** a procedure in prose, an icon-styled workflow, Split, and style profiles ([Make it yours](/guide/make-it-yours#style-profiles)).
 
-<a href="/examples/cell-viability-assay.docushark" download>Download <code>cell-viability-assay.docushark</code></a> · [Take the Interface Tour](/getting-started/interface-tour)
+<a href="/examples/cell-viability-assay.docushark" download>Download <code>cell-viability-assay.docushark</code></a>
 
-## Prefer a diagram-first example?
+## An AWS architecture {#aws-architecture}
 
-Two more tutorials build a document around a single diagram — no download, just
-follow along on a fresh canvas:
+A diagram-first example, with no download: build it on a fresh canvas in about fifteen minutes. It's a serverless image service, with *Browser → CloudFront → S3* for images and *Browser → API Gateway → Lambda → DynamoDB* for the API.
 
-- **[A Design Doc with a Diagram](/tutorials/design-doc-with-diagram)** — an
-  engineering write-up with an architecture diagram beside the prose.
-- **[Diagram an AWS Architecture](/tutorials/aws-architecture-diagram)** — a cloud
-  architecture with the official provider icon set.
+1. **Make room.** Create a document, and press `Ctrl+Shift+2` for the **Designer** layout, which gives the canvas the window ([Layouts](/guide/make-it-yours#layouts)).
+2. **Place the services.** Choose **Insert icon shape** in the canvas's tool row, search for `CloudFront`, and click it: the icon appears in the middle of your view, so drag it aside. Do the same for `S3`, `API Gateway`, `Lambda` and `DynamoDB`. Add a **Rectangle** labelled `Browser`.
+3. **Connect them.** With the **Connector** (`C`), drag along both paths. Label the key steps, such as `GET /img` and `query`, by choosing **Select** and double-clicking each connector.
+4. **Tidy it.** Select `Browser`, press `Ctrl+Shift+A` to select everything connected, and `Ctrl+Shift+L` to lay it out.
+5. **Share it.** Press `Ctrl+A`, right-click a shape, and choose **Export Selection…** for a PNG for a wiki or a slide, or an SVG to edit further.
+
+The same steps work with the Azure and Google Cloud icons. See [Draw](/guide/draw#shape-libraries) for every library.

@@ -1,125 +1,83 @@
 ---
-title: "Tutorial: A Design Doc with a Diagram Beside It"
-description: A guided, end-to-end walkthrough — write a short design doc and build its architecture diagram in the same DocuShark document.
+title: "Tutorial: A design doc with a diagram"
+description: Write a short design doc and draw its architecture beside it in one DocuShark document, with connectors, auto-layout and a PDF at the end.
 ---
 
-# Tutorial: A Design Doc with a Diagram Beside It
+# Tutorial: A design doc with a diagram
 
-This is the walkthrough that shows off what makes DocuShark different: **prose and
-a diagram in one document, side by side.** In about 15 minutes you'll write a
-short design doc and build the architecture diagram that goes with it — no
-app-switching, no pasted screenshots.
+This tutorial shows what makes DocuShark different: **the writing and the diagram in one document, side by side.** In about fifteen minutes you'll write a short design doc and draw the architecture that goes with it, with no switching between apps and no pasted screenshots.
 
-**What you'll build:** a one-page "URL Shortener" design doc — a written spec on
-the left, a live architecture diagram on the right.
+**You'll build** a one-page "URL Shortener" design doc: a written spec beside a live architecture diagram.
 
-**You'll learn:** prose pages, the Write · Split · Canvas focus, drawing shapes
-and smart connectors, auto-layout, and exporting the result.
+**You'll learn** Write and Split, drawing shapes and connectors, auto-layout, and exporting the result.
 
-**Before you start:** just [open DocuShark](https://app.docushark.app) — no setup
-needed. New here? Skim [How DocuShark Is Organized](/guide/concepts) first.
+## 1. Create the document
 
-## 1. Create and name the document
-
-From the **Documents** home, click **New**. The document opens on an empty
-canvas. Click **Untitled Document** in the toolbar and rename it to
-`URL Shortener — Design`.
+In **Documents**, click **New**. The document opens ready for writing. Type `#`, a space, and `URL Shortener`: DocuShark names the document after that first heading.
 
 ## 2. Write the spec
 
-You'll start in writing mode. If you're not already in it, click **Write** in the
-**Write · Split · Canvas** control in the toolbar.
-
-In the document editor, write a short spec. Type naturally, and use the toolbar
-(or Markdown shortcuts) for structure:
+Write a short spec under the title. Type `##` and a space for each section heading, and `-` and a space for a list:
 
 ```
-# URL Shortener
-
 ## Goal
-Turn long URLs into short, shareable links and redirect visitors quickly.
+Turn long URLs into short, shareable links, and redirect visitors quickly.
 
 ## Requirements
 - Create a short code for any URL
 - Redirect a short code to its original URL
-- Count how many times each link is used
+- Count how often each link is used
 ```
 
-Add a callout to flag an open question — from the toolbar's block menu, insert a
-**block quote** (or type `>`), and note: *"Open question: how long should codes
-be?"*
-
-::: tip
-The document editor is a full rich-text surface — headings, tables, code, LaTeX
-math, and callouts all work. See [Rich Text & Notes](/guide/rich-text-editor).
-:::
+Flag an open question in a callout: choose **Insert → Insert callout** (or type `/callout`) and write *Open question: how long should codes be?* See [Write](/guide/write).
 
 ## 3. Bring in the canvas
 
-Now put the diagram next to the writing. Click **Split** in the
-**Write · Split · Canvas** control. The document editor stays on the left and an
-infinite **canvas** opens on the right — the same document, two views.
+Click **Split** at the top. Your writing stays on the left, and a canvas opens on the right: two views of the same document.
 
 ## 4. Draw the architecture
 
-You'll sketch four boxes: **Browser → API → Database**, with a **Cache** beside
-the API.
+You'll draw four boxes: **Browser**, **API** and **Database** in a row, with a **Cache** beside the API.
 
-1. Press `R` (Rectangle) and drag out a box near the top-left of the canvas.
-   Double-click it and type `Browser`.
-2. Repeat for three more boxes: `API`, `Database`, and `Cache`. Press `R` again
-   before each (or grab it from the toolbar).
-3. Press `V` to return to the Select tool, and drag the boxes into a rough
-   left-to-right row, with `Cache` sitting below `API`.
+1. Choose **Rectangle** in the tool row above the canvas and drag out a box. Double-click it, type `Browser` and press **Enter**.
+2. Draw three more the same way: `API`, `Database` and `Cache`. Once you've clicked the canvas, `R` picks the rectangle too.
+3. Choose **Select** (`V`) and drag the boxes into a rough row, with `Cache` below `API`.
 
-Don't fuss over alignment — step 6 tidies it automatically.
+Don't fuss over alignment; step 6 tidies it.
 
 ## 5. Connect the boxes
 
-1. Press `C` (Connector).
-2. Hover over the **Browser** box until its **connection points** appear as small
-   circles on the edges. Click one, then click a connection point on **API**. The
-   connector routes itself between them.
-3. Connect **API → Database**, and **API → Cache** the same way.
-4. Add labels: click a connector's label area and type — for example `HTTP` on
-   Browser → API, and `cache read` on API → Cache.
+1. Choose **Connector** (`C`).
+2. Drag from **Browser** to **API**. The connector finds its own path, and stays attached when you move either box.
+3. Connect **API** to **Database**, and **API** to **Cache**, the same way.
+4. Choose **Select** (`V`) and double-click a connector to label it: type `HTTPS` on Browser → API and `read` on API → Cache, pressing **Enter** after each.
 
-Move any box (press `V` first) and watch the connectors follow — they stay
-attached. See [Connectors](/guide/connectors) for routing styles.
+See [Connectors](/guide/draw#connectors) for routing styles and arrowheads.
 
 ## 6. Tidy it with auto-layout
 
-Let DocuShark arrange the diagram for you. Select the connected shapes
-(`Ctrl/Cmd+A` selects everything on the page), then open the **command palette**
-with `Ctrl/Cmd+K` and search **"layout"** — run the auto-layout command. The
-boxes snap into a clean, evenly-spaced flow with tidy connector routing.
+Select **Browser**, press `Ctrl+Shift+A` to select everything connected to it, then `Ctrl+Shift+L`. DocuShark arranges the boxes in an even flow from top to bottom and re-routes the connectors. (**Auto-layout selection (left to right)**, in the command palette under `Ctrl+K`, lays it out in a row instead.)
 
 ## 7. Read it as one document
 
-Switch focus back to **Split** (or **Write**) and scroll: your spec and its
-diagram are one thing now. Edit the prose and the diagram is still right there;
-move a box and the writing doesn't budge. Nothing to keep in sync by hand.
+Scroll your writing with the diagram beside it: the spec and its architecture are one thing now. Edit the text and the diagram stays put; move a box and the text doesn't budge. There's nothing to keep in sync by hand.
 
-## 8. Save, share, or export
+## 8. Share it or export it
 
-DocuShark **auto-saves** as you go. To share or hand it off:
+DocuShark saves as you go. To hand the doc on:
 
-- **Share live:** connect the document to a workspace and invite others to edit
-  in real time — see [Collaboration](/guide/collaboration).
-- **Export:** use **Export** for a **PDF** (prose *and* diagram, in order), or
-  **PNG/SVG** of the current canvas. See [Export & Import](/guide/export-import).
+- **Work on it together:** move it into your workspace and share it. See [Share and collaborate](/guide/share).
+- **A PDF:** choose **Tools → Export to PDF…**. It holds the spec and the diagram, page by page.
+- **A picture of the diagram:** click the canvas, press `Ctrl+A`, right-click a box and choose **Export Selection…** for a PNG or SVG.
+
+See [Export and import](/guide/export-import).
 
 ## What you learned
 
-You built a document that holds **both** a written spec and its live diagram —
-the core DocuShark workflow. You used prose pages, the Write · Split · Canvas
-focus, rectangles and smart connectors, auto-layout, and export.
+You built a document that holds both a written spec and its live diagram, the core of working in DocuShark: Write and Split, shapes and connectors, auto-layout, and export.
 
 ## Next steps
 
-- **[Tutorial: Diagram an AWS Architecture](/tutorials/aws-architecture-diagram)**
-  — go deeper on shape libraries and cloud icons.
-- **[Citations & References](/guide/citations)** — cite sources in your spec and
-  generate a bibliography.
-- **[Document Fields](/guide/document-fields)** — reuse values like a service name
-  across the whole document at once.
+- Go further with [shape libraries and cloud icons](/guide/draw#shape-libraries), or [UML and ERD](/guide/draw#uml-and-erd).
+- Keep names and versions consistent with [fields](/guide/write#fields).
+- Already have diagrams in Mermaid, draw.io or Excalidraw? [Import them](/guide/export-import#import).
