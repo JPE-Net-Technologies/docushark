@@ -39,7 +39,7 @@ Both let you choose a background, or none, and how much space to leave around th
 A `.docushark` file holds one whole document, with its images and attached files, ready to open in DocuShark.
 
 - **Export:** in **Documents**, point at a document's card and tick the box that appears; tick others to add them. Then click **Export** in the bar. Each document downloads as its own file, and DocuShark asks first when you've picked several.
-- **Import:** in **Documents**, use the import button beside **New**, or the arrow beside **New** and **Import a document…**. The file opens as a new document, files and all.
+- **Import:** in **Documents**, click **Import**, beside **New**. (On a phone, it's **Import a document…** in the menu beside **New**.) The file opens as a new document, files and all.
 
 To work on a document with someone, [sharing it in your workspace](./share#share-a-document) is usually better than sending a file.
 

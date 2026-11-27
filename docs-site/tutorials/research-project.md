@@ -11,7 +11,7 @@ A good research document keeps everything in one place: the write-up, a diagram 
 
 **You'll learn** fields, citations and a bibliography, a diagram beside your writing, equations, attached files, and showing a diagram inside your text.
 
-![The finished study notebook in Split view: the written report on the left and the study's data and analysis diagram on the right.](/screenshots/example-research-project.png)
+![The finished study notebook in Split view: the written report on the left and the study-design diagram on the right.](/screenshots/example-research-project.png)
 
 ::: tip Want the finished version?
 Download <a href="/examples/music-tempo-recall-study.docushark" download>the notebook as a <code>.docushark</code> file</a> and import it to explore the result, or see all the examples in the [gallery](/tutorials/examples).
