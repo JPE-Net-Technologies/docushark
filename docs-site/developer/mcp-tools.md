@@ -375,7 +375,7 @@ current.
 ```
 
 A runnable end-to-end smoke test of every tool lives in
-[`scripts/mcp-smoke.sh`](https://github.com/JPE-Net-Technologies/docushark/blob/master/scripts/mcp-smoke.sh).
+[`relay/scripts/mcp-smoke.sh`](https://github.com/JPE-Net-Technologies/docushark/blob/master/relay/scripts/mcp-smoke.sh).
 
 ## Per-provider verification
 

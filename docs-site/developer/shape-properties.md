@@ -160,38 +160,28 @@ Cylinder shape.
 
 ## UML Shapes
 
-### Class
+UML and ERD shapes keep their structured content in the shape's `customProperties`. The standard properties above (fill, stroke, label and so on) apply as well.
 
-| Property | Type | Description |
+### Class, Interface, Abstract Class, Enumeration
+
+The types `uml-class`, `uml-interface`, `uml-abstract-class` and `uml-enum` share one layout: a name compartment, then attributes, then methods.
+
+| `customProperties` field | Type | Description |
 |----------|------|-------------|
-| `className` | string | Class name |
-| `stereotype` | string | UML stereotype (e.g., `«interface»`) |
-| `attributes` | Attribute[] | Class attributes |
-| `methods` | Method[] | Class methods |
-| `showAttributes` | boolean | Display attributes section |
-| `showMethods` | boolean | Display methods section |
+| `className` | string | The class name. Falls back to the shape's `label`. |
+| `stereotype` | string | Stereotype text without guillemets, such as `interface`; it's drawn as «interface». |
+| `attributes` | UMLClassMember[] | The attribute compartment. |
+| `methods` | UMLClassMember[] | The method compartment. |
 
-#### Attribute Format
+#### Member format
 
-```json
-{
-  "visibility": "+",  // +, -, #, ~
-  "name": "attributeName",
-  "type": "string",
-  "default": "value"
-}
-```
-
-#### Method Format
+Attributes and methods have the same shape. A method's parameters are part of its `name`, and its `type` is the return type.
 
 ```json
-{
-  "visibility": "+",
-  "name": "methodName",
-  "parameters": [{ "name": "param", "type": "string" }],
-  "returnType": "void"
-}
+{ "visibility": "+", "name": "save(path: string)", "type": "void", "isStatic": false }
 ```
+
+`visibility` is `+` (public), `-` (private), `#` (protected) or `~` (package). Static members are drawn underlined.
 
 ### Actor
 
@@ -207,34 +197,30 @@ Ellipse with centered label.
 
 ## ERD Shapes
 
-### Entity
+### Entity and Weak Entity
 
-| Property | Type | Description |
+The types `erd-entity` and `erd-weak-entity`. A weak entity is its own type, drawn with a double border.
+
+| `customProperties` field | Type | Description |
 |----------|------|-------------|
-| `entityName` | string | Table/entity name |
-| `attributes` | ERDAttribute[] | Entity attributes |
-| `isWeak` | boolean | Weak entity (double border) |
+| `entityTitle` | string | The header text. Falls back to the shape's `label`. |
+| `members` | ERDEntityMember[] | One row per column. |
+| `rowSeparatorEnabled` | boolean | Lines between rows. Default `true`. |
+| `rowSeparatorColor` | string | Defaults to the stroke colour. |
+| `rowBackgroundColor` | string | Row background. |
+| `rowAlternateColor` | string | Background for alternate rows. |
+| `attributePaddingHorizontal` | number | Row padding in pixels. Default `8`. |
+| `attributePaddingVertical` | number | Row padding in pixels. Default `2`. |
 
-#### ERD Attribute Format
+#### Member format
 
 ```json
-{
-  "name": "attribute_name",
-  "type": "VARCHAR(255)",
-  "isPrimaryKey": true,
-  "isForeignKey": false,
-  "isNullable": false
-}
+{ "name": "user_id", "type": "INTEGER", "isPrimaryKey": true }
 ```
 
 ### Relationship
 
-Diamond shape for relationships.
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `relationshipName` | string | Relationship name |
-| `isIdentifying` | boolean | Identifying relationship |
+A diamond (`erd-relationship`) with the standard properties and a label. Cardinality belongs to the connectors: set a connector's type to **ERD** and choose each end.
 
 ## Property Panel Sections
 
