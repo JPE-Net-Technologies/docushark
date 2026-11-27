@@ -1,128 +1,83 @@
 ---
-title: "Tutorial: A Research Project Notebook"
-description: Build a psychology study notebook in DocuShark — prose with real citations, a study-design diagram, a results table with math, an embedded data file, and a concept mind-map.
+title: "Tutorial: A research notebook"
+description: Build a psychology study notebook in DocuShark, with real citations, a study-design diagram, a results table with statistics, the data file, and a concept map.
 ---
 
-# Tutorial: A Research Project Notebook
+# Tutorial: A research notebook
 
-A great DocuShark document for a researcher keeps everything in one place: the
-write-up, the diagram of the design, the data file, and the sources — all
-citable, all in sync. In this walkthrough you'll build a small **psychology study
-notebook** and pick up the features researchers lean on most.
+A good research document keeps everything in one place: the write-up, a diagram of the design, the data, and the sources, all citable and all current. In this tutorial you'll build a small **psychology study notebook** and use the features researchers rely on most. It takes about twenty minutes.
 
-**What you'll build:** a one-document study notebook — a written report with real
-inline citations, a study-design diagram on its own canvas page, a results table
-with a stats formula, an embedded data file, and a concept mind-map.
+**You'll build** a study notebook with a written report and real citations, a study-design diagram, a results table with statistics, the data file, and a concept map of the theory.
 
-**You'll learn:** document fields, **citations** (a reference library + inline
-cites), **linking a diagram** page from your prose, embedded files, math, and a
-**mind-map via Add Group**.
+**You'll learn** fields, citations and a bibliography, a diagram beside your writing, equations, attached files, and showing a diagram inside your text.
 
-**Before you start:** [open DocuShark](https://app.docushark.app) and skim
-[How DocuShark Is Organized](/guide/concepts) if the pieces are new.
-
-![The study notebook in Split view — the written report on the left, the data & analysis pipeline diagram on the right.](/screenshots/example-research-project.png)
+![The finished study notebook in Split view: the written report on the left and the study's data and analysis diagram on the right.](/screenshots/example-research-project.png)
 
 ::: tip Want the finished version?
-Download <a href="/examples/music-tempo-recall-study.docushark" download>this notebook as a <code>.docushark</code></a> and import it to explore the end result, or browse them all in the [Example Gallery](/tutorials/examples).
+Download <a href="/examples/music-tempo-recall-study.docushark" download>the notebook as a <code>.docushark</code> file</a> and import it to explore the result, or see all the examples in the [gallery](/tutorials/examples).
 :::
 
-## 1. Create and title the notebook
+## 1. Create the notebook
 
-From the **Documents** home, click **New** and rename it to your study — e.g.
-`Does Music Tempo Affect Recall?`. Add a couple of **document fields** for values
-you'll reuse: click the **Fields** control and define `Course`, `Lead`, and `n`
-(sample size). Reference them in your prose as <code v-pre>{{Course}}</code> and
-they update everywhere at once. See [Document Fields](/guide/document-fields).
+In **Documents**, click **New**. Type `#`, a space, and the study's title, `Does Music Tempo Affect Recall?`; DocuShark names the document after this first heading.
+
+Add **fields** for values you'll repeat. Choose **Insert → Insert field**, and in **Manage fields** create `course`, `lead` and `n` (the sample size). Insert one anywhere by typing <code v-pre>{{</code> and picking it; change its value later and every place updates. See [Fields](/guide/write#fields).
 
 ## 2. Write the report
 
-In the document editor, write the study up with real structure — headings, a
-**hypothesis** as a block quote, and a numbered **Procedure**:
+Give the report its structure: headings for **Background**, **Method**, **Results** and **Discussion**. State the hypothesis in a callout (**Insert → Insert callout**): *Recall is highest in silence and falls as the tempo rises.* Write the procedure as a numbered list (type `1.` and a space).
 
-```
-# Does Music Tempo Affect Recall?
+## 3. Cite your sources
 
-> Hypothesis (H1): Recall is highest in silence and decreases as tempo rises.
+Don't type the reference list by hand; let DocuShark keep it right.
 
-## Background
-## Method
-## Results
-## Discussion
-```
+1. **Add references.** Paste a paper's DOI into the Background, and DocuShark turns it into a citation and adds the paper to the document's library. To add several at once, choose **Insert → Manage references** and paste them as BibTeX.
+2. **Cite.** Where you make a claim, type `@` and pick the source. The citation appears in the document's style, such as `(Baddeley, 1992)`.
+3. **List them.** Under a **References** heading, choose **Insert → Insert bibliography**. It lists only what you've cited and updates as you write. **Manage references** sets the style: APA, MLA, Chicago or Vancouver.
 
-The editor supports tables, LaTeX math, and callouts — everything a write-up
-needs. See [Rich Text & Notes](/guide/rich-text-editor).
+![A bibliography under a References heading, with a "Cited only / All references" switch above entries formatted in APA, each with its DOI.](/screenshots/citations-bibliography.png)
 
-## 3. Cite your sources properly
+See [Citations](/guide/write#citations).
 
-Don't hand-type a reference list — use DocuShark's citation system so the
-bibliography stays correct.
+## 4. Diagram the study design
 
-1. Open **Citations** and **add a reference** — paste a **DOI** and DocuShark
-   fetches the details, or add it by hand.
-2. In your Background, place an **inline citation** where you make a claim: it
-   shows as `(Author, Year)` and links to the library entry.
-3. Generate the **bibliography** under a References heading — it's built from the
-   library and re-formats itself as you add sources.
+A picture of the design saves paragraphs. Click **Split** at the top to put the canvas beside your writing. Right-click the canvas's page tab, choose **Rename**, and call it `Study Design`.
 
-See [Citations & References](/guide/citations) for DOIs, styles, and bibliographies.
+Draw the flow: *Recruit → Randomly assign → Three tempo conditions → Encode → Recall → Score*. Choose **Rectangle** in the canvas's tool row and drag out a box for each step, double-clicking each to type its label and pressing **Enter**. Then choose **Connector** and drag from each box to the next. Select one box, press `Ctrl+Shift+A` to select the whole chain, and `Ctrl+Shift+L` to lay it out neatly.
 
-![The document's References section — a generated bibliography with a "Cited only / All references" toggle and CSL-formatted entries, each with its DOI, built from the reference library.](/screenshots/citations-bibliography.png)
+In the Method section, point readers to it: *"The Study Design page shows the procedure at a glance."* Because the diagram lives in the document, not in a pasted screenshot, it's never out of date. See [Draw](/guide/draw).
 
-## 4. Diagram the study design — and link to it
+## 5. Report the results
 
-A picture of the design saves paragraphs. Add a **second canvas page** for it:
-click **+** on the page tabs, name it `Study Design`, and sketch the flow —
-*Recruit → randomly assign → three tempo conditions → encode → recall → score*.
-Press `C` for the Connector tool to wire the steps together; DocuShark
-auto-routes them.
-
-Then **link the diagram from your prose** — in the Method section, write a line
-like *"See the Study Design page for the flow at a glance."* Because the diagram
-lives in the same document (not a pasted screenshot), it's always current. See
-[Multi-Page Documents](/guide/multi-page-documents).
-
-## 5. Report results with a table and math
-
-Put your numbers in a table, and write statistics inline as LaTeX — type
-`$F(2, 57) = 8.1,\ p < .01$` and it renders as a real equation. Block equations
-go on their own line between `$$ … $$`.
+Put the numbers in a table (**Insert → Insert table**):
 
 | Condition | Mean recall | SD | n |
 |-----------|-------------|----|----|
 | Silence | 13.4 | 2.6 | 20 |
 | Fast (120 bpm) | 9.8 | 3.1 | 20 |
 
+Write statistics as LaTeX: type `$F(2, 57) = 8.1,\ p < .01$` and it becomes a typeset equation. For an equation on its own line, put `$$` before and after it. See [Equations](/guide/write#equations).
+
 ## 6. Keep the data with the notebook
 
-Drag your **data file** — a CSV of scores, a stimulus PDF — straight onto the
-Study Design canvas. It's embedded in the document and travels with it, so the
-evidence lives next to the analysis. See [Embedded Files](/guide/embedded-files).
+Drag your data file, such as a CSV of scores or the stimulus list as a PDF, onto the Study Design canvas. It becomes a card with a preview that opens in DocuShark, and it travels with the document. To mention it in the text instead, choose **Insert → Attach file** in the Method section. See [Files](/guide/write#files).
 
-## 7. Map the theory with a mind-map
+## 7. Map the theory
 
-To sketch how the ideas connect (*arousal → attention → encoding → recall*),
-right-click on a prose page and choose **Add Group…** to start a **mind-map**
-right in your notes — quick to reshape as your thinking evolves.
+Sketch how the ideas connect on the canvas: four boxes, *Arousal → Attention → Encoding → Recall*, joined with connectors. Select all four and press `Ctrl+G` to group them. With the group selected, open **Properties** (**More** on the bar above it) and type `Theory` under **Label**.
 
-## 8. Read it anywhere — even your phone
+Now show it in the Discussion: right-click there, choose **Insert Group**, and pick **Theory**. A picture of the map appears in your text, and its refresh button updates it after you change the diagram. See [Diagrams in your writing](/guide/write#diagrams).
 
-Your notebook syncs to your workspace, so you can open it on another computer or
-**install DocuShark on your phone** and read it on the bus. Mark it
-[available offline](/guide/offline-and-sync) before a flaky-signal field trip, and
-try the [mobile layout](/guide/mobile-preview) for small screens.
+## 8. Take it with you
+
+If you're signed in, the notebook is in your workspace, so it's on every computer you use; on a phone, it opens in DocuShark's [phone layout](/guide/make-it-yours#phone). Before fieldwork with no signal, click **Make available offline** on its card in Documents. See [Offline](/guide/organize#offline).
 
 ## What you learned
 
-You built a self-contained research notebook: fields, a properly-cited write-up,
-a linked study-design diagram, a results table with math, an embedded data file,
-and a concept mind-map — synced across your devices.
+You built a self-contained research notebook: fields, a cited write-up with a bibliography, a study-design diagram beside the text, a results table with statistics, the data file, and a concept map shown in your writing.
 
 ## Next steps
 
-- **[Tutorial: A Course Curriculum](/tutorials/course-curriculum)** — files as
-  readings, and archiving each term.
-- **[Citations & References](/guide/citations)** — DOIs, styles, and bibliographies.
-- **[Connect an AI Agent](/guide/connect-your-agent)** — have an agent draft the
-  literature review, cited, straight into your notebook.
+- [Export a PDF](/guide/export-import#pdf) with a cover page and a table of contents.
+- [Connect an AI agent](/guide/share#connect-an-ai-agent) to draft a literature review, citations included, straight into the notebook.
+- Browse the [example gallery](/tutorials/examples) for more finished documents.

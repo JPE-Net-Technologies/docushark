@@ -13,8 +13,8 @@ const { sidebarGroups } = useSidebar()
 const area = computed(() => {
   const p = '/' + page.value.relativePath
   if (p.startsWith('/developer/')) return { label: 'Build', link: '/developer/architecture' }
-  if (p.startsWith('/guide/') || p.startsWith('/getting-started/'))
-    return { label: 'Guides', link: '/getting-started/introduction' }
+  if (p.startsWith('/guide/') || p.startsWith('/tutorials/'))
+    return { label: 'Guides', link: '/guide/start-here' }
   return null
 })
 
@@ -39,7 +39,8 @@ const trail = computed(() => {
     <a href="/">Docs</a>
     <span class="sep">/</span>
     <a :href="area.link">{{ area.label }}</a>
-    <template v-if="trail.group">
+    <!-- A group named like its area ("Guides" in Guides) would only repeat it. -->
+    <template v-if="trail.group && trail.group !== area.label">
       <span class="sep">/</span>
       <span>{{ trail.group }}</span>
     </template>

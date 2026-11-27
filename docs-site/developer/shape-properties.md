@@ -128,7 +128,7 @@ Groups also support shadows via `shadowConfig` (see [Shadow](#shadow)).
 
 There is no standalone image shape. Embedded images and files use the **`file`**
 shape (`FileShape`) — dragged onto the canvas — and decorative shape icons use the
-common `iconId` property. See [Embedded Files](/guide/embedded-files).
+common `iconId` property. See [Write → Files](/guide/write#files).
 
 ## Flowchart Shapes
 

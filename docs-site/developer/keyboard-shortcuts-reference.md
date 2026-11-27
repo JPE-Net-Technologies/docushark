@@ -33,7 +33,7 @@ The complete list. For the shortcuts most people actually use day to day — and
 | Pan (scroll) | Scroll wheel (vertical), Shift+scroll (horizontal), or two-finger drag on a trackpad |
 | Pan (drag) | Middle-click + drag (Select tool) |
 
-`Q`/`E` zoom toward the viewport center; scroll/pinch zoom toward the cursor. See [Canvas & Navigation](../guide/canvas-navigation) for the full rundown, including the Linux trackpad-pinch caveat.
+`Q`/`E` zoom toward the viewport center; scroll/pinch zoom toward the cursor. See [Draw → Move around](../guide/draw#move-around) for the full rundown, including the Linux trackpad-pinch caveat.
 
 ## Moving Between Regions
 

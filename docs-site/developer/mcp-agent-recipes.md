@@ -16,7 +16,7 @@ Codex, Cursor, ChatGPT, or your own — rather than learning a new one.
 
 ::: tip New here?
 For a step-by-step setup (with a picker that gives you the exact endpoint URL for your
-workspace), start with the [**Connect an AI Agent**](/guide/connect-your-agent) guide. This
+workspace), start with the [**Connect an AI Agent**](/guide/share#connect-an-ai-agent) guide. This
 page is the deeper reference.
 :::
 

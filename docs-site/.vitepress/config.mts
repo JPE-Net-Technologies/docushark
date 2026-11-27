@@ -1,147 +1,17 @@
 import { defineConfig, type HeadConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 import { generateLlmsTxt } from './plugins/llms'
+import { developerSidebar, guidesSidebar } from './sidebar'
+import { writeRedirects } from './redirects'
 
 const SITE_TITLE = 'DocuShark Docs'
 const SITE_DESCRIPTION =
-  'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.'
+  'Guides and developer references for DocuShark — writing, diagrams and files in one document.'
 
 // Canonical host for the published docs (GitHub Pages, apex CNAME). Used for
 // canonical/og:url tags and JSON-LD. SiteData has no `url` field, so we keep
 // the hostname here as the single source of truth.
 const HOSTNAME = 'https://docs.docushark.app'
-
-// The Guides area spans two folders: /getting-started/ (the onboarding group)
-// and /guide/ (the using-DocuShark group). Both routes share one sidebar,
-// ordered as a product-flow journey: install -> first document -> organize/
-// style -> software engineering diagrams -> collaborate -> import/reference.
-const guidesSidebar = [
-  {
-    text: 'Getting Started',
-    items: [
-      { text: 'Introduction', link: '/getting-started/introduction' },
-      { text: 'Installation', link: '/getting-started/installation' },
-      { text: 'Quick Start', link: '/getting-started/quick-start' },
-      { text: 'Interface Tour', link: '/getting-started/interface-tour' },
-    ],
-  },
-  {
-    text: 'Core Concepts',
-    items: [
-      { text: 'How DocuShark Is Organized', link: '/guide/concepts' },
-    ],
-  },
-  {
-    text: 'Tutorials',
-    items: [
-      { text: 'Example Gallery', link: '/tutorials/examples' },
-      { text: 'A Research Project Notebook', link: '/tutorials/research-project' },
-      { text: 'A Course Curriculum', link: '/tutorials/course-curriculum' },
-      { text: "A Content Creator's Plan", link: '/tutorials/content-creator' },
-      { text: 'A Design Doc with a Diagram', link: '/tutorials/design-doc-with-diagram' },
-      { text: 'Diagram an AWS Architecture', link: '/tutorials/aws-architecture-diagram' },
-    ],
-  },
-  {
-    text: 'Your First Document',
-    items: [
-      { text: 'Canvas & Navigation', link: '/guide/canvas-navigation' },
-      { text: 'Drawing Tools', link: '/guide/drawing-tools' },
-      { text: 'Rich Text & Notes', link: '/guide/rich-text-editor' },
-      { text: 'Connectors', link: '/guide/connectors' },
-      { text: 'Shape Libraries', link: '/guide/shape-libraries' },
-    ],
-  },
-  {
-    text: 'Organize & Style',
-    items: [
-      { text: 'Styling & Themes', link: '/guide/styling' },
-      { text: 'Appearance', link: '/guide/appearance' },
-      { text: 'Layout Modes', link: '/guide/layout-modes' },
-      { text: 'Multi-Page Documents', link: '/guide/multi-page-documents' },
-      { text: 'Document Fields', link: '/guide/document-fields' },
-      { text: 'Citations & References', link: '/guide/citations' },
-      { text: 'Embedded Files', link: '/guide/embedded-files' },
-      { text: 'Collections & Tags', link: '/guide/collections' },
-      { text: 'Version History & Undo', link: '/guide/recovery-and-undo' },
-      { text: 'Offline & Sync', link: '/guide/offline-and-sync' },
-    ],
-  },
-  {
-    text: 'Software Engineering',
-    items: [
-      { text: 'UML & ERD Diagrams', link: '/guide/uml-and-erd' },
-      { text: 'Sequence Diagrams', link: '/guide/sequence-diagrams' },
-    ],
-  },
-  {
-    text: 'Go Further: Collaborate & Connect',
-    items: [
-      { text: 'Collaboration', link: '/guide/collaboration' },
-      { text: 'Sharing & Workspace Access', link: '/guide/sharing-and-access' },
-      { text: 'Connect an AI Agent', link: '/guide/connect-your-agent' },
-      { text: 'Whiteboard & Ideas', link: '/guide/whiteboard' },
-    ],
-  },
-  {
-    text: 'Import, Export & Reference',
-    items: [
-      { text: 'Export & Import', link: '/guide/export-import' },
-      { text: 'Mobile Preview', link: '/guide/mobile-preview' },
-      { text: 'Settings', link: '/guide/settings' },
-      { text: 'Keyboard Shortcuts', link: '/guide/keyboard-shortcuts' },
-    ],
-  },
-]
-
-// The Build area (customer-facing label "Build"; routes stay under /developer/).
-// Scoped to the two jobs we want OSS devs doing: Extend (shapes/tools/UI/plugins)
-// and Integrate (REST/MCP consumption, hand-rolled clients). The engine core +
-// relay CRDT/sync internals are readable AGPL but not a documented extension
-// surface — see the "extension surface vs engine core" note in architecture.md.
-const developerSidebar = [
-  {
-    text: 'Get Set Up',
-    items: [
-      { text: 'How the Engine Fits Together', link: '/developer/architecture' },
-      { text: 'Project Setup', link: '/developer/project-setup' },
-      { text: 'Contributing', link: '/developer/contributing' },
-      // Not officially supported yet — see the page's own warning banner.
-      { text: 'Self-Hosting (Future)', link: '/developer/self-hosting' },
-    ],
-  },
-  {
-    text: 'Extend DocuShark',
-    items: [
-      { text: 'Creating Custom Shapes', link: '/developer/creating-shapes' },
-      { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
-      { text: 'Building UI Features', link: '/developer/plugin-development' },
-      { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
-      { text: 'Shape Properties', link: '/developer/shape-properties' },
-      { text: 'Utility Modules', link: '/developer/utilities' },
-      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
-    ],
-  },
-  {
-    text: 'Integrate & Build Clients',
-    items: [
-      { text: 'REST API', link: '/developer/rest-api' },
-      { text: 'MCP Tools', link: '/developer/mcp-tools' },
-      { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
-      { text: 'App Token Format', link: '/developer/token-format' },
-      { text: 'Wire Protocol & Clients', link: '/developer/collaboration-protocol' },
-      { text: 'Webhooks', link: '/developer/webhooks' },
-      { text: 'Token Revocation', link: '/developer/revocation' },
-      { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
-    ],
-  },
-  {
-    text: 'Reference',
-    items: [
-      { text: 'Roadmap', link: '/developer/roadmap' },
-    ],
-  },
-]
 
 // `transformHead` receives the source markdown path (e.g. "guide/connectors.md",
 // "index.md"). We derive two things from it:
@@ -165,7 +35,7 @@ function routeKeyOf(page: string): string {
   return `/${page.replace(/\.md$/, '')}`
 }
 
-// Convert a sidebar link ("/getting-started/introduction") to its canonical
+// Convert a sidebar link ("/guide/start-here") to its canonical
 // absolute URL, matching the sitemap's ".html" form so breadcrumb ancestor
 // items stay consistent with the leaf's canonical URL.
 function linkToUrl(link: string): string {
@@ -182,19 +52,17 @@ function resolveBreadcrumb(
   let area: { label: string; link: string; sidebar: typeof guidesSidebar } | null = null
   if (route.startsWith('/developer/')) {
     area = { label: 'Build', link: '/developer/architecture', sidebar: developerSidebar }
-  } else if (
-    route.startsWith('/guide/') ||
-    route.startsWith('/getting-started/') ||
-    route.startsWith('/tutorials/')
-  ) {
-    area = { label: 'Guides', link: '/getting-started/introduction', sidebar: guidesSidebar }
+  } else if (route.startsWith('/guide/') || route.startsWith('/tutorials/')) {
+    area = { label: 'Guides', link: '/guide/start-here', sidebar: guidesSidebar }
   }
   if (!area) return null
 
   for (const grp of area.sidebar) {
     for (const item of grp.items) {
       if (item.link === route) {
-        return { areaLabel: area.label, areaLink: area.link, group: grp.text, title: item.text }
+        // A group named like its area ("Guides" in Guides) would only repeat it.
+        const group = grp.text === area.label ? '' : grp.text
+        return { areaLabel: area.label, areaLink: area.link, group, title: item.text }
       }
     }
   }
@@ -205,7 +73,7 @@ function resolveBreadcrumb(
 export default withMermaid(
   defineConfig({
     title: 'DocuShark',
-    description: 'DocuShark — diagramming and docs in one offline-first editor',
+    description: 'DocuShark — writing, diagrams and files in one document',
     // Served from the apex domain docs.docushark.app, so assets are root-relative.
     // (Was '/docushark/' for the old github.io project-path host — JP-314.)
     base: '/',
@@ -216,11 +84,11 @@ export default withMermaid(
       ['meta', { property: 'og:locale', content: 'en_US' }],
       ['meta', { property: 'og:type', content: 'website' }],
       ['meta', { property: 'og:title', content: 'DocuShark Docs' }],
-      ['meta', { property: 'og:description', content: 'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.' }],
+      ['meta', { property: 'og:description', content: 'Guides and developer references for DocuShark — writing, diagrams and files in one document.' }],
       ['meta', { property: 'og:image', content: 'https://docs.docushark.app/docushark-badge.png' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:title', content: 'DocuShark Docs' }],
-      ['meta', { name: 'twitter:description', content: 'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.' }],
+      ['meta', { name: 'twitter:description', content: 'Guides and developer references for DocuShark — writing, diagrams and files in one document.' }],
       ['meta', { name: 'twitter:image', content: 'https://docs.docushark.app/docushark-badge.png' }],
     ],
 
@@ -242,6 +110,8 @@ export default withMermaid(
           { title: 'Build', items: developerSidebar.flatMap((g) => g.items) },
         ],
       })
+      // Pages that were merged or renamed (DSK-254) answer at their old URLs.
+      writeRedirects(siteConfig.outDir, HOSTNAME)
     },
 
     // Per-page <head> augmentation, emitted into the static HTML at build time:
@@ -269,7 +139,7 @@ export default withMermaid(
             name: 'DocuShark Docs',
             url: `${HOSTNAME}/`,
             description:
-              'Guides and developer references for DocuShark — diagramming and docs in one offline-first editor.',
+              'Guides and developer references for DocuShark — writing, diagrams and files in one document.',
             publisher: {
               '@type': 'Organization',
               name: 'JPE-Net Technologies',
@@ -322,14 +192,13 @@ export default withMermaid(
 
       nav: [
         { text: 'Home', link: '/' },
-        { text: 'Guides', link: '/getting-started/introduction', activeMatch: '/getting-started/|/guide/|/tutorials/' },
+        { text: 'Guides', link: '/guide/start-here', activeMatch: '/guide/|/tutorials/' },
         { text: 'Build', link: '/developer/architecture', activeMatch: '/developer/' },
         { text: 'Website', link: 'https://docushark.app' },
         { text: 'Open DocuShark', link: 'https://app.docushark.app' },
       ],
 
       sidebar: {
-        '/getting-started/': guidesSidebar,
         '/guide/': guidesSidebar,
         '/tutorials/': guidesSidebar,
         '/developer/': developerSidebar,

@@ -72,6 +72,20 @@ cargo check --manifest-path relay/Cargo.toml
 cargo test --manifest-path relay/Cargo.toml
 ```
 
+## Build the Desktop App {#build-the-desktop-app}
+
+Signed installers aren't published yet, so building from source is how to get the desktop app. With the prerequisites above installed, run `bun run tauri:build`. The first build takes a few minutes while Rust compiles its dependencies. The installers land in:
+
+| Platform | Output location |
+|----------|-----------------|
+| macOS    | `src-tauri/target/release/bundle/dmg/` and `macos/` |
+| Windows  | `src-tauri/target/release/bundle/nsis/` and `msi/` |
+| Linux    | `src-tauri/target/release/bundle/appimage/` and `deb/` |
+
+::: info
+The macOS `.app` you build is unsigned. On first launch, right-click it and choose **Open**, then **Open** again in the dialog, to get past Gatekeeper.
+:::
+
 ## Project Layout
 
 ```

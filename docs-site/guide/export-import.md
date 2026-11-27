@@ -1,160 +1,69 @@
 ---
-title: Export & Import
-description: Export DocuShark diagrams to PNG, SVG, PDF, or Markdown; import from Mermaid, draw.io, and Excalidraw.
+title: Export and import
+description: Export a document as a PDF, a picture or a .docushark file, back up everything, and import diagrams from Mermaid, draw.io and Excalidraw.
 ---
 
-# Export & Import
+# Export and import
 
-DocuShark supports multiple ways to export your diagrams and share your work.
+| To get | Do this |
+|---|---|
+| A PDF of the whole document | **Tools → Export to PDF…** |
+| A picture (PNG or SVG) of a diagram | Select the shapes, right-click, and choose **Export Selection…** |
+| The editable document as one file | Select it in **Documents** and click **Export** |
+| A copy of everything, for a new computer | **Settings → Backup & Restore** |
+| Shapes from Mermaid, draw.io or Excalidraw | **Tools → Import diagram…** |
 
-## Export Formats
+## PDF {#pdf}
 
-### PNG (Raster Image)
+**Tools → Export to PDF…** prints the whole document: every prose and canvas page in order, with the formatting, tables, equations, images, embedded diagrams, code and task lists. Fields show their values, and the [document font](./write#document-font) is embedded, so the PDF looks the same wherever it's opened.
 
-Best for: Presentations, documents, web pages, quick sharing
+The dialog sets:
 
-**How to export:**
+- **Page size** (A4, Letter, A3 or Tabloid) and **orientation**.
+- **Image quality:** Standard (72 DPI), High (150 DPI) or Print (300 DPI).
+- **Margins**, **page numbers**, a **table of contents**, and a **PDF outline**, the bookmarks a PDF reader shows beside the pages.
+- A **cover page** with a title, version, author, date, description and your logo.
+- How diagrams appear, including whether they keep the canvas's dark background in the dark theme.
 
-1. Right-click on the canvas or selection → **Export**, or use the export dialog
-2. Configure options:
-   - **Scale**: 1x, 2x, 3x (higher = better quality)
-   - **Background**: Transparent, white, or canvas color
-   - **Selection only**: Export just the selected shapes
-3. Click **Export** and choose a save location
+## Pictures: PNG and SVG {#images}
 
-| Option | Description |
-|--------|-------------|
-| Scale | Output resolution multiplier |
-| Background | Transparency or solid color |
-| Padding | Extra space around content |
-| Selection | Entire document or selection only |
+Select the shapes you want (`Ctrl+A` selects the whole page), right-click one, and choose **Export Selection…**. Then pick:
 
-### SVG (Vector Graphics)
+- **PNG**, a picture for an email, a slide or a document. **Scale** sets the resolution; 2× suits most screens, 3× suits print.
+- **SVG**, which keeps shapes sharp at any size and text as real text. Use it for websites, or to edit the diagram further in a tool such as Inkscape or Illustrator.
 
-Best for: Scalable graphics, web embedding, editing in other tools
+Both let you choose a background, or none, and how much space to leave around the shapes. Only canvas shapes are exported; for your writing, use the PDF.
 
-SVG export preserves:
-- Vector shapes (infinite scaling without quality loss)
-- Text as actual text (searchable, editable)
-- Styles and colors
-- Group hierarchy
+## .docushark files {#docushark-files}
 
-::: tip
-SVG is ideal when you need to embed diagrams in websites or edit the output in tools like Inkscape or Illustrator.
-:::
+A `.docushark` file holds one whole document, with its images and attached files, ready to open in DocuShark.
 
-### PDF (Documents)
+- **Export:** in **Documents**, point at a document's card and tick the box that appears; tick others to add them. Then click **Export** in the bar. Each document downloads as its own file, and DocuShark asks first when you've picked several.
+- **Import:** in **Documents**, use the import button beside **New**, or the arrow beside **New** and **Import a document…**. The file opens as a new document, files and all.
 
-Export your rich text and diagrams together as a polished PDF:
+To work on a document with someone, [sharing it in your workspace](./share#share-a-document) is usually better than sending a file.
 
-- **Multi-page export** — all rich text pages and canvas diagram pages in order
-- Page sizes: A4, Letter, A3, Tabloid (portrait or landscape)
-- Configurable margins and page numbers
-- Optional **cover page** with logo, title, version, author, date, and description
-- Full rich text rendering: headings, formatting, tables, LaTeX math, images, embedded diagram groups, code blocks, task lists, and more
-- The document's font, embedded in the file, so the PDF looks the same wherever it's opened
+## Back up everything {#backup}
 
-Configure PDF defaults in **Settings → PDF Export**.
+**Settings → Backup & Restore** saves everything on this device to one `.docushark-backup` file: your local documents, their images and files, your settings, style profiles, recent colours, shape and icon libraries, and panel layouts. Choose what to include, check the size, and click **Export Backup**. Documents in your workspace are kept there, not in the backup.
 
-### JSON (Native Format)
+To restore, import the backup, see what it holds, and choose to **Merge** it with what's already here or **Replace** everything. Make a backup before you move to a new computer.
 
-Best for: Backups, version control, moving between instances
+## Import {#import}
 
-The JSON format contains all shapes, pages, rich text content, and metadata. It's DocuShark's native format.
+**Diagrams** from other tools arrive as real, editable shapes and connectors, not as a flat picture:
 
-::: warning
-JSON export does **not** include embedded file blobs (PDFs, images, etc.). For a complete export with all files, use the .docushark archive format below.
-:::
+| From | Files |
+|---|---|
+| Excalidraw | `.excalidraw` |
+| draw.io | `.drawio` |
+| Mermaid | `.mmd` and `.mermaid` (flowcharts) |
 
-### .docushark Archive
+Choose **Tools → Import diagram…**, drop the file onto the canvas, or paste Mermaid text straight onto it. DocuShark lays out the result and joins the connectors to the shapes' edges, so it lands tidy. If the source uses something DocuShark can't convert yet, such as a Mermaid sequence diagram, the import still finishes and a short report lists what was left out.
 
-Best for: Sharing complete documents with all dependencies
+Everything else has its own way in:
 
-The `.docushark` format bundles your document with all referenced blobs (embedded images, PDFs, spreadsheets, icons) into a single file. Nothing is lost.
-
-**Exporting:**
-- Right-click in the document browser → **Export as .docushark**
-- Or use the export option from the context menu
-
-**Importing:**
-- Use the import dialog (same place as JSON import)
-- Select the `.docushark` file — a new document is created with all its blobs
-
-## Full Application Backup
-
-For transferring your entire DocuShark setup to another machine, or for peace of mind:
-
-### Creating a Backup
-
-Go to **Settings → Backup/Restore**:
-
-1. Choose what to include: documents, blobs, settings, shape libraries, style profiles, color palettes
-2. Review the estimated backup size
-3. Click **Export Backup**
-
-The backup saves as a `.docushark-backup` archive.
-
-### Restoring from Backup
-
-1. Go to **Settings → Backup/Restore**
-2. Click **Import Backup** and select the archive
-3. Preview what will be imported
-4. Choose to **merge** with existing data or **replace** entirely
-5. Resolve any conflicts (duplicate documents or profiles)
-
-::: tip
-Create a backup before major changes, OS upgrades, or when moving to a new computer.
-:::
-
-## Import
-
-### Diagrams from Other Tools
-
-Already have diagrams elsewhere? DocuShark imports them so you can keep working on
-a real canvas — shapes, text, and connections come across as native, editable
-objects (not flat images).
-
-| Source | What it reads |
-|--------|---------------|
-| **Excalidraw** | `.excalidraw` JSON — shapes, text, and groups |
-| **draw.io** | `.drawio` XML — shapes and connectors |
-| **Mermaid** | Flowchart / graph syntax |
-
-Choose the format in the import dialog and pick your file. Imported diagrams run
-through a shared pipeline that lays out the result and binds connectors to the
-nearest shape edges, so the diagram lands tidy rather than as a pile of overlapping
-shapes.
-
-::: tip Import report
-If a source uses something DocuShark doesn't map yet (for example, a Mermaid
-sequence or class diagram, which the flowchart importer doesn't cover), the import
-finishes and shows a short **warnings report** listing what was skipped — your
-import never fails silently.
-:::
-
-### JSON (DocuShark Documents)
-
-1. Open **Settings → Documents**
-2. Click **Import**
-3. Select the `.json` file
-
-### .docushark Archives
-
-Same import flow — the file picker accepts both `.json` and `.docushark` files.
-
-### Images
-
-Images can be embedded in the rich text document editor via the image upload button, or dragged onto the canvas as embedded files.
-
-## Quick Reference
-
-| Use Case | Recommended Format |
-|----------|-------------------|
-| Email attachment | PNG (2x scale) |
-| Documentation | SVG or PNG |
-| Web embedding | SVG |
-| Printing | SVG or PNG (3x) |
-| Rich text docs | PDF |
-| Sharing with collaborators | .docushark archive |
-| Full backup | .docushark-backup |
-| Version control (Git) | JSON |
+- **Documents:** `.docushark` files, as [above](#docushark-files).
+- **Images and other files:** attach them in your writing or drop them onto the canvas ([Write → Files](./write#files)).
+- **Notion pages:** mirror them into a workspace document ([Organize → Pages from Notion](./organize#mirrored-pages)).
+- **Text from Word, Google Docs or the web:** paste it ([Write → Copy and paste](./write#copy-and-paste)).
