@@ -52,30 +52,31 @@ export const developerSidebar = [
     text: 'Extend DocuShark',
     items: [
       { text: 'Creating Custom Shapes', link: '/developer/creating-shapes' },
+      { text: 'Shape Properties', link: '/developer/shape-properties' },
       { text: 'Creating Custom Tools', link: '/developer/creating-tools' },
       { text: 'Building UI Features', link: '/developer/plugin-development' },
       { text: 'Creating Prose Helpers', link: '/developer/creating-prose-helpers' },
-      { text: 'Shape Properties', link: '/developer/shape-properties' },
       { text: 'Utility Modules', link: '/developer/utilities' },
-      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
     ],
   },
   {
-    text: 'Integrate & Build Clients',
+    // DSK-254: REST, MCP and recipes, tokens and webhooks; the policies follow.
+    text: 'Integrate',
     items: [
       { text: 'REST API', link: '/developer/rest-api' },
+      { text: 'Wire Protocol & Clients', link: '/developer/collaboration-protocol' },
       { text: 'MCP Tools', link: '/developer/mcp-tools' },
       { text: 'AI Agents (MCP) & Recipes', link: '/developer/mcp-agent-recipes' },
       { text: 'App Token Format', link: '/developer/token-format' },
-      { text: 'Wire Protocol & Clients', link: '/developer/collaboration-protocol' },
-      { text: 'Webhooks', link: '/developer/webhooks' },
       { text: 'Token Revocation', link: '/developer/revocation' },
-      { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
+      { text: 'Webhooks', link: '/developer/webhooks' },
     ],
   },
   {
-    text: 'Reference',
+    text: 'Policies & Reference',
     items: [
+      { text: 'Deprecation Policy', link: '/developer/deprecation-policy' },
+      { text: 'Keyboard Shortcuts Reference', link: '/developer/keyboard-shortcuts-reference' },
       { text: 'Roadmap', link: '/developer/roadmap' },
     ],
   },
