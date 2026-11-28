@@ -38,6 +38,8 @@ import { useThemeStore } from '../store/themeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import './PDFExportDialog.css';
 import { documentFont } from '../fonts/documentFont';
+import { PAGE_SETTING, resolvePageSetup, setPageSetup } from '../paper/pageSetup';
+import { useDocumentSettingsStore } from '../store/documentSettingsStore';
 
 export interface PDFExportDialogProps {
   isOpen: boolean;
@@ -131,10 +133,13 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
         perDoc,
       );
       setFilename(initialOptions.filename);
-      setPageSize(initialOptions.pageSize);
-      setOrientation(initialOptions.orientation);
+      // The page setup is the document's, shared with Paper Mode (DSK-48): its
+      // page setting, else these saved export settings, else the locale's paper.
+      const page = resolvePageSetup(useDocumentSettingsStore.getState().settings[PAGE_SETTING], perDoc);
+      setPageSize(page.size);
+      setOrientation(page.orientation);
       setQuality(initialOptions.quality);
-      setMargins(initialOptions.margins);
+      setMargins(page.margins);
       setShowPageNumbers(initialOptions.showPageNumbers);
       setPageNumberFormat(initialOptions.pageNumberFormat);
       setIncludeTableOfContents(initialOptions.includeTableOfContents ?? true);
@@ -194,6 +199,8 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
       if (currentDocumentId) {
         saveDocumentPdfSettings(currentDocumentId, buildPdfSettingsSnapshot());
       }
+      // The page setup goes back to the document, so Paper Mode shows these pages.
+      setPageSetup({ size: pageSize, orientation, margins });
 
       // Gather all rich text pages in order
       const rtPagesState = useRichTextPagesStore.getState();
@@ -382,9 +389,10 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
   const handleSaveForDocument = useCallback(() => {
     if (!currentDocumentId) return;
     saveDocumentPdfSettings(currentDocumentId, buildPdfSettingsSnapshot());
+    setPageSetup({ size: pageSize, orientation, margins });
     setSavedFeedback('saved');
     setTimeout(() => setSavedFeedback(null), 2000);
-  }, [currentDocumentId, buildPdfSettingsSnapshot]);
+  }, [currentDocumentId, buildPdfSettingsSnapshot, pageSize, orientation, margins]);
 
   // Drop the document's PDF settings entirely so the next open reseeds
   // from factory defaults. Useful when the user wants to start over.
