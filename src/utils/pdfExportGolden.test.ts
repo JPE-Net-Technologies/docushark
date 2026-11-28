@@ -207,10 +207,13 @@ async function outlineOf(pdf: PDFDocument, items: RawOutlineItem[] | null): Prom
 
 /** The bytes with the creation date and file id blanked: the rest is deterministic. */
 function stableBytes(bytes: Uint8Array): Uint8Array {
-  const text = new TextDecoder('latin1').decode(bytes)
+  // Node's latin1 maps each byte to one character and back unchanged. (A
+  // TextDecoder 'latin1' is windows-1252, which rewrites bytes 0x80-0x9F and so
+  // corrupted the compressed streams in the dumped files.)
+  const text = Buffer.from(bytes).toString('latin1')
     .replace(/\/CreationDate \(D:[^)]*\)/g, '/CreationDate (D:0)')
     .replace(/\/ID \[ ?<[0-9A-Fa-f]+> ?<[0-9A-Fa-f]+> ?\]/g, '/ID [<0><0>]');
-  return Uint8Array.from(text, (char) => char.charCodeAt(0));
+  return new Uint8Array(Buffer.from(text, 'latin1'));
 }
 
 async function readBack(bytes: Uint8Array): Promise<GoldenDoc> {

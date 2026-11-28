@@ -165,9 +165,24 @@ export function parseColor(color: string): [number, number, number] | null {
  * while `seg` provides the font styling (bold, italic, code, size scale).
  */
 function measureTextWidth(ctx: PDFRenderContext, seg: TextSegment, text: string, fontSize: number, defaultStyle: string): number {
+  const { name, style } = segmentFont(ctx, seg, defaultStyle);
+  const key = `${name}\u0000${style}\u0000${fontSize * seg.fontSizeScale}\u0000${text}`;
+  const cached = widthCache.get(key);
+  if (cached !== undefined) return cached;
   applySegmentFont(ctx, seg, fontSize, defaultStyle);
-  return ctx.doc.getTextWidth(text);
+  const width = ctx.doc.getTextWidth(text);
+  if (widthCache.size >= WIDTH_CACHE_LIMIT) widthCache.clear();
+  widthCache.set(key, width);
+  return width;
 }
+
+/**
+ * Measured widths, by font, style, size and text (DSK-252). A width depends on
+ * nothing else, and a layout measures the same words over and over, so the
+ * export and every re-layout share it. Cleared when it gets large.
+ */
+const widthCache = new Map<string, number>();
+const WIDTH_CACHE_LIMIT = 50_000;
 
 /**
  * Split a string into character-bounded pieces that each fit within
@@ -204,23 +219,35 @@ export function breakOversizedWord(
   return pieces;
 }
 
+/** The font a segment is set in: its family name and style. */
+function segmentFont(ctx: PDFRenderContext, seg: TextSegment, defaultStyle: string): { name: string; style: string } {
+  if (seg.code) return { name: PDF_FONT_MONO, style: 'normal' };
+  let style = defaultStyle;
+  if (seg.bold && seg.italic) style = 'bolditalic';
+  else if (seg.bold) style = 'bold';
+  else if (seg.italic) style = 'italic';
+  return { name: ctx.textFont, style };
+}
+
 /**
  * Apply a segment's font style to jsPDF.
  */
 function applySegmentFont(ctx: PDFRenderContext, seg: TextSegment, fontSize: number, defaultStyle: string): void {
-  const { doc } = ctx;
-  const actualSize = fontSize * seg.fontSizeScale;
-  doc.setFontSize(actualSize);
+  ctx.doc.setFontSize(fontSize * seg.fontSizeScale);
+  const { name, style } = segmentFont(ctx, seg, defaultStyle);
+  ctx.doc.setFont(name, style);
+}
 
-  if (seg.code) {
-    doc.setFont(PDF_FONT_MONO, 'normal');
-  } else {
-    let style = defaultStyle;
-    if (seg.bold && seg.italic) style = 'bolditalic';
-    else if (seg.bold) style = 'bold';
-    else if (seg.italic) style = 'italic';
-    doc.setFont(ctx.textFont, style);
-  }
+/**
+ * Whether two words are drawn alike, so they can go out as one text run.
+ * Linked words stay separate: each keeps its own link area, as before.
+ */
+function sameRunStyle(a: TextSegment, b: TextSegment): boolean {
+  return a.link === undefined && b.link === undefined
+    && a.bold === b.bold && a.italic === b.italic && a.code === b.code
+    && a.underline === b.underline && a.strike === b.strike
+    && a.color === b.color && a.highlight === b.highlight
+    && a.fontSizeScale === b.fontSizeScale && a.yOffset === b.yOffset;
 }
 
 /**
@@ -339,8 +366,18 @@ export function renderSegmentedText(
       lineX = startX + availableWidth - line.width;
     }
 
-    let cursorX = lineX;
+    // Neighbouring words with the same style go out as one text run (DSK-252):
+    // one font change, one colour and one text operator instead of one per
+    // word and space. jsPDF doesn't kern, so the glyphs land where they did.
+    const runs: Array<{ text: string; seg: TextSegment }> = [];
     for (const chunk of line.chunks) {
+      const last = runs[runs.length - 1];
+      if (last && sameRunStyle(last.seg, chunk.seg)) last.text += chunk.text;
+      else runs.push({ text: chunk.text, seg: chunk.seg });
+    }
+
+    let cursorX = lineX;
+    for (const chunk of runs) {
       const seg = chunk.seg;
       applySegmentFont(ctx, seg, fontSize, defaultStyle);
 
