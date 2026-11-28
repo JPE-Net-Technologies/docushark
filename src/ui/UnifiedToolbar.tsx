@@ -37,6 +37,7 @@ import { useAutoSave } from '../hooks/useAutoSave';
 import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
+import { PaperModeToggle } from './layout/PaperModeToggle';
 import { useActiveLayoutMode } from './layout/useLayout';
 import { isGuestSession } from '../guest/guestSession';
 import { refreshIfNothingConnected, useIntegrationHubStore } from '../store/integrationHubStore';
@@ -343,6 +344,7 @@ export function UnifiedToolbar({
       <div className="unified-toolbar-right">
         <ToolbarGroup label="View" className="unified-toolbar-view">
           {activeLayout === 'relaxed' && <RelaxedFocusControl />}
+          <PaperModeToggle />
           <LayoutSelector onOpenLayoutSettings={onOpenLayoutSettings} compact={mobileActive} />
         </ToolbarGroup>
 

@@ -25,7 +25,7 @@ Pages break where they would in a printed book:
 
 The dialog sets:
 
-- **Page size** (A4, Letter, A3 or Tabloid) and **orientation**.
+- **Page size** (A4, Letter, A3 or Tabloid) and **orientation**. These and the margins are the document's page setup, also in **Aa** on the ribbon, where [Paper Mode](./write#paper-mode) shows the pages they make.
 - **Image quality:** Standard (72 DPI), High (150 DPI) or Print (300 DPI).
 - **Margins**, **page numbers**, a **table of contents**, and a **PDF outline**, the bookmarks a PDF reader shows beside the pages.
 - A **cover page** with a title, version, author, date, description and your logo.

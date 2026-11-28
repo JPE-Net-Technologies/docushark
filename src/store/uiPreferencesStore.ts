@@ -164,6 +164,8 @@ export interface UIPreferencesState {
    * App-level, not per document — the fact doesn't change per document.
    */
   viewOnlyNoticeDismissed: boolean;
+  /** Paper Mode: the prose shown as the PDF's pages (DSK-48). Per device. */
+  paperMode: boolean;
   /** Layout manager slice — modes, per-doc memory, per-mode overrides, chrome. */
   layout: LayoutState;
   /** Appearance slice — accent + motion (theme is in `themeStore`). */
@@ -230,6 +232,8 @@ export interface UIPreferencesActions {
   markInstallAppHintSeen: () => void;
   /** Permanently dismiss the "View only" notice (JP-464). */
   dismissViewOnlyNotice: () => void;
+  /** Turn Paper Mode on or off (DSK-48). */
+  setPaperMode: (paperMode: boolean) => void;
   /** Accept (or clear) the experimental mobile-preview layout. */
   setMobilePreviewAccepted: (accepted: boolean) => void;
   /** Force the desktop layout on a touch device (mobile-preview opt-out). */
@@ -375,6 +379,7 @@ const initialState: UIPreferencesState = {
   storageInfoToastSeen: false,
   installAppHintSeen: false,
   viewOnlyNoticeDismissed: false,
+  paperMode: false,
   layout: initialLayoutState,
   appearancePrefs: { ...initialAppearancePrefs },
   collabIndicatorPos: null,
@@ -534,6 +539,8 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
       markInstallAppHintSeen: () => set({ installAppHintSeen: true }),
 
       dismissViewOnlyNotice: () => set({ viewOnlyNoticeDismissed: true }),
+
+      setPaperMode: (paperMode) => set({ paperMode }),
 
       setMobilePreviewAccepted: (accepted) => set({ mobilePreviewAccepted: accepted }),
       setForceDesktopSite: (force) => set({ forceDesktopSite: force }),
@@ -705,6 +712,7 @@ export const useUIPreferencesStore = create<UIPreferencesState & UIPreferencesAc
         storageInfoToastSeen: state.storageInfoToastSeen,
         installAppHintSeen: state.installAppHintSeen,
         viewOnlyNoticeDismissed: state.viewOnlyNoticeDismissed,
+        paperMode: state.paperMode,
         layout: state.layout,
         appearancePrefs: state.appearancePrefs,
         collabIndicatorPos: state.collabIndicatorPos,

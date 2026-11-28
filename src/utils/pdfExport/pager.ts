@@ -25,8 +25,8 @@ export type BreakAt =
   | { kind: 'line'; path: number[]; blockId?: string; line: number; inline?: InlinePosition }
   /** A table row; `header` header rows are drawn again above it. */
   | { kind: 'row'; path: number[]; row: number; header?: number }
-  /** A line inside a code block. */
-  | { kind: 'codeLine'; path: number[]; blockId?: string; line: number }
+  /** A line inside a code block (a wrapped line), and where it starts in the code's text. */
+  | { kind: 'codeLine'; path: number[]; blockId?: string; line: number; offset: number }
   /** The start of a prose page, a diagram page, or the first page after the cover. */
   | { kind: 'section'; section: 'prose' | 'diagram' | 'afterCover'; index: number };
 

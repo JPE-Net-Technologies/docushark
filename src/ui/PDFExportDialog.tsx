@@ -17,12 +17,11 @@ import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
 import { createInitialPDFOptions } from '../store/pdfExportStore';
-import { isRichTextEmpty, RICH_TEXT_VERSION } from '../types/RichText';
+import { isRichTextEmpty } from '../types/RichText';
 import { LogoPicker } from './LogoPicker';
 import { BlobStorage } from '../storage/BlobStorage';
 import type { BlobMetadata } from '../storage/BlobTypes';
 import { formatFileSize } from '../utils/byteSize';
-import { generateJSON } from '@tiptap/core';
 import { extensions as tiptapExtensions } from './TiptapEditor';
 import { getTiptapEditor } from './TiptapEditor';
 import type {
@@ -38,6 +37,9 @@ import { useThemeStore } from '../store/themeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import './PDFExportDialog.css';
 import { documentFont } from '../fonts/documentFont';
+import { collectPdfPages } from '../paper/collectPdfPages';
+import { PAGE_SETTING, resolvePageSetup, setPageSetup } from '../paper/pageSetup';
+import { useDocumentSettingsStore } from '../store/documentSettingsStore';
 
 export interface PDFExportDialogProps {
   isOpen: boolean;
@@ -131,10 +133,13 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
         perDoc,
       );
       setFilename(initialOptions.filename);
-      setPageSize(initialOptions.pageSize);
-      setOrientation(initialOptions.orientation);
+      // The page setup is the document's, shared with Paper Mode (DSK-48): its
+      // page setting, else these saved export settings, else the locale's paper.
+      const page = resolvePageSetup(useDocumentSettingsStore.getState().settings[PAGE_SETTING], perDoc);
+      setPageSize(page.size);
+      setOrientation(page.orientation);
       setQuality(initialOptions.quality);
-      setMargins(initialOptions.margins);
+      setMargins(page.margins);
       setShowPageNumbers(initialOptions.showPageNumbers);
       setPageNumberFormat(initialOptions.pageNumberFormat);
       setIncludeTableOfContents(initialOptions.includeTableOfContents ?? true);
@@ -194,6 +199,8 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
       if (currentDocumentId) {
         saveDocumentPdfSettings(currentDocumentId, buildPdfSettingsSnapshot());
       }
+      // The page setup goes back to the document, so Paper Mode shows these pages.
+      setPageSetup({ size: pageSize, orientation, margins });
 
       // Gather all rich text pages in order
       const rtPagesState = useRichTextPagesStore.getState();
@@ -204,38 +211,7 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
         rtPagesState.updatePageContent(rtPagesState.activePageId, editor.getHTML());
       }
 
-      // Re-read after save
-      const rtPages = useRichTextPagesStore.getState();
-      const richTextPages: PDFRichTextPage[] = [];
-
-      for (const pageId of rtPages.pageOrder) {
-        const page = rtPages.pages[pageId];
-        if (!page) continue;
-
-        if (pageId === rtPages.activePageId && editor) {
-          // Active page: use Tiptap JSON directly from editor (most accurate)
-          richTextPages.push({
-            id: page.id,
-            name: page.name,
-            content: {
-              content: editor.getJSON(),
-              version: RICH_TEXT_VERSION,
-            },
-          });
-        } else {
-          // Non-active pages: convert HTML to Tiptap JSON via generateJSON
-          const htmlContent = page.content || '<p></p>';
-          const json = generateJSON(htmlContent, tiptapExtensions);
-          richTextPages.push({
-            id: page.id,
-            name: page.name,
-            content: {
-              content: json,
-              version: RICH_TEXT_VERSION,
-            },
-          });
-        }
-      }
+      const richTextPages: PDFRichTextPage[] = collectPdfPages(editor ?? null);
 
       // Check if all pages are empty
       const hasContent = richTextPages.some((p) => !isRichTextEmpty(p.content));
@@ -382,9 +358,10 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
   const handleSaveForDocument = useCallback(() => {
     if (!currentDocumentId) return;
     saveDocumentPdfSettings(currentDocumentId, buildPdfSettingsSnapshot());
+    setPageSetup({ size: pageSize, orientation, margins });
     setSavedFeedback('saved');
     setTimeout(() => setSavedFeedback(null), 2000);
-  }, [currentDocumentId, buildPdfSettingsSnapshot]);
+  }, [currentDocumentId, buildPdfSettingsSnapshot, pageSize, orientation, margins]);
 
   // Drop the document's PDF settings entirely so the next open reseeds
   // from factory defaults. Useful when the user wants to start over.
