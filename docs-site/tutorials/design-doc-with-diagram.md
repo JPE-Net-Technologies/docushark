@@ -67,7 +67,7 @@ Scroll your writing with the diagram beside it: the spec and its architecture ar
 DocuShark saves as you go. To hand the doc on:
 
 - **Work on it together:** move it into your workspace and share it. See [Share and collaborate](/guide/share).
-- **A PDF:** choose **Tools → Export to PDF…**. It holds the spec and the diagram, page by page.
+- **A PDF:** choose **Share → Export to PDF…**. It holds the spec and the diagram, page by page.
 - **A picture of the diagram:** click the canvas, press `Ctrl+A`, right-click a box and choose **Export Selection…** for a PNG or SVG.
 
 See [Export and import](/guide/export-import).

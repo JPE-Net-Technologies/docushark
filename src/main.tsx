@@ -11,6 +11,7 @@ import './shapes/import/registerImportAdapters';
 // registry, so they appear in the Tools grid and the palette. Reads live hub
 // state at render time, so this only wires the source — nothing is fetched here.
 import { registerIntegrationActions } from './services/integrationActions';
+import { registerShareActions } from './services/shareActions';
 import { refreshHubOnFocus } from './store/integrationHubStore';
 
 // The app has started: every static import above loaded. The boot watchdog in
@@ -20,6 +21,7 @@ import { refreshHubOnFocus } from './store/integrationHubStore';
 (window as Window & { __dsBooted?: boolean }).__dsBooted = true;
 
 registerIntegrationActions();
+registerShareActions();
 // Reload the integration hub when the editor regains focus, once it has loaded
 // (DSK-194): connections are made on the account site, in another tab.
 refreshHubOnFocus();

@@ -12,4 +12,5 @@ export type ShortcutCategory =
   | 'Navigation'
   | 'Editing'
   | 'File'
+  | 'Share'
   | 'View';

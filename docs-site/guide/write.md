@@ -156,7 +156,7 @@ Some browsers don't let a menu read the clipboard. If **Paste** in the right-cli
 
 ## Paper Mode: see the printed pages {#paper-mode}
 
-**Paper**, beside **Write · Split · Canvas** at the top, shows your writing as the pages of its PDF while you keep writing: the page size, the margins, where each page breaks, and the page numbers. It's there in the Relaxed layout while your writing is shown (Write or Split), in a window wide enough for a page, and DocuShark remembers it on that device.
+**Paper**, a switch beside **Write · Split · Canvas** at the top, shows your writing as the pages of its PDF while you keep writing: the page size, the margins, where each page breaks, and the page numbers. It's there in the Relaxed layout while your writing is shown (Write or Split), in a window wide enough for a page, and DocuShark remembers it on that device. While it's on, **PDF** beside it opens [Export to PDF](./export-import#pdf).
 
 The page setup is in **Aa** at the end of **Home**:
 

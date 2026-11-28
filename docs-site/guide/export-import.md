@@ -7,15 +7,15 @@ description: Export a document as a PDF, a picture or a .docushark file, back up
 
 | To get | Do this |
 |---|---|
-| A PDF of the whole document | **Tools → Export to PDF…** |
+| A PDF of the whole document | **Share → Export to PDF…** |
 | A picture (PNG or SVG) of a diagram | Select the shapes, right-click, and choose **Export Selection…** |
-| The editable document as one file | Select it in **Documents** and click **Export** |
+| The editable document as one file | **Share → Download a copy**, or select it in **Documents** and click **Export** |
 | A copy of everything, for a new computer | **Settings → Backup & Restore** |
 | Shapes from Mermaid, draw.io or Excalidraw | **Tools → Import diagram…** |
 
 ## PDF {#pdf}
 
-**Tools → Export to PDF…** prints the whole document: every prose and canvas page in order, with the formatting, tables, equations, images, embedded diagrams, code and task lists. Fields show their values, and the [document font](./write#document-font) is embedded, so the PDF looks the same wherever it's opened.
+**Share → Export to PDF…** (also in **Tools**, and **PDF** beside **Paper** while [Paper Mode](./write#paper-mode) is on) prints the whole document: every prose and canvas page in order, with the formatting, tables, equations, images, embedded diagrams, code and task lists. Fields show their values, and the [document font](./write#document-font) is embedded, so the PDF looks the same wherever it's opened.
 
 Pages break where they would in a printed book:
 
@@ -44,7 +44,7 @@ Both let you choose a background, or none, and how much space to leave around th
 
 A `.docushark` file holds one whole document, with its images and attached files, ready to open in DocuShark.
 
-- **Export:** in **Documents**, point at a document's card and tick the box that appears; tick others to add them. Then click **Export** in the bar. Each document downloads as its own file, and DocuShark asks first when you've picked several.
+- **Export:** **Share → Download a copy** saves the open document as a file. To export several, in **Documents**, point at a document's card and tick the box that appears; tick others to add them. Then click **Export** in the bar. Each document downloads as its own file, and DocuShark asks first when you've picked several.
 - **Import:** in **Documents**, click **Import**, beside **New**. (On a phone, it's **Import a document…** in the menu beside **New**.) The file opens as a new document, files and all.
 
 To work on a document with someone, [sharing it in your workspace](./share#share-a-document) is usually better than sending a file.

@@ -31,7 +31,7 @@
  * this panel and the server can no longer drift apart silently.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { ModalShell } from '../components/ModalShell';
 import { webClient, type WorkspaceMember } from '../../api/webClient';
@@ -47,6 +47,8 @@ import './AccessPanel.css';
 export interface AccessPanelProps {
   scope: AccessScope;
   documentId: string | null;
+  /** A step to bring into view on open (Share → Publish a link, DSK-257). */
+  focus?: 'publish' | null;
   onClose: () => void;
 }
 
@@ -60,12 +62,13 @@ interface RungProps {
   summary: string;
   granting: boolean;
   muted?: boolean;
+  rungRef?: React.Ref<HTMLLIElement>;
   children?: React.ReactNode;
 }
 
-function Rung({ name, summary, granting, muted = false, children }: RungProps) {
+function Rung({ name, summary, granting, muted = false, rungRef, children }: RungProps) {
   return (
-    <li className={`access-rung${muted ? ' access-rung--muted' : ''}`}>
+    <li ref={rungRef} className={`access-rung${muted ? ' access-rung--muted' : ''}`}>
       <div className="access-rung__spine" aria-hidden="true">
         <span className={`access-rung__node${granting ? ' access-rung__node--on' : ''}`} />
       </div>
@@ -80,7 +83,7 @@ function Rung({ name, summary, granting, muted = false, children }: RungProps) {
   );
 }
 
-export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
+export function AccessPanel({ scope, documentId, focus = null, onClose }: AccessPanelProps) {
   const entries = useDocumentRegistry((s) => s.entries);
   const record = documentId ? entries[documentId]?.record : undefined;
   const remote = record && record.type === 'remote' ? (record as RemoteDocument) : undefined;
@@ -113,6 +116,12 @@ export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
   useEffect(() => {
     void loadRoster();
   }, [loadRoster]);
+
+  // Opened to publish: bring that step into view once it's there.
+  const publishRef = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (focus === 'publish') publishRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [focus, remote, loading]);
 
   const me = useMemo(() => roster.find((m) => m.role === 'owner'), [roster]);
   // Only `owner` — `WorkspaceRole` is owner | member | viewer. The relay also
@@ -206,6 +215,7 @@ export function AccessPanel({ scope, documentId, onClose }: AccessPanelProps) {
             name="Anyone with the link"
             summary={'Publish a read-only snapshot to the web'}
             granting={false}
+            rungRef={publishRef}
           >
             {/* Publishing is the widest grant on the ladder — the rung itself
                 reports live/stale/off state and owns all publish actions. */}
@@ -225,10 +235,11 @@ export function AccessPanelHost() {
   const isOpen = useAccessPanelStore((s) => s.isOpen);
   const scope = useAccessPanelStore((s) => s.scope);
   const documentId = useAccessPanelStore((s) => s.documentId);
+  const focus = useAccessPanelStore((s) => s.focus);
   const close = useAccessPanelStore((s) => s.close);
 
   if (!isOpen) return null;
-  return <AccessPanel scope={scope} documentId={documentId} onClose={close} />;
+  return <AccessPanel scope={scope} documentId={documentId} focus={focus} onClose={close} />;
 }
 
 export default AccessPanel;

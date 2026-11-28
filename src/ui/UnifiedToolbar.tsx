@@ -38,6 +38,7 @@ import { opener } from '../platform/opener';
 import { LayoutSelector } from './layout/LayoutSelector';
 import { RelaxedFocusControl } from './layout/RelaxedFocusControl';
 import { PaperModeToggle } from './layout/PaperModeToggle';
+import { ShareMenu } from './share/ShareMenu';
 import { useActiveLayoutMode } from './layout/useLayout';
 import { isGuestSession } from '../guest/guestSession';
 import { refreshIfNothingConnected, useIntegrationHubStore } from '../store/integrationHubStore';
@@ -349,6 +350,9 @@ export function UnifiedToolbar({
         </ToolbarGroup>
 
         <ToolbarGroup label="Actions" className="unified-toolbar-actions">
+          {/* DSK-257: share the open document from here. A phone gets the same
+              actions as the Share group in Tools; a guest has nothing to share. */}
+          {!mobileActive && !guest && <ShareMenu />}
           {/* A panel, not a menu: `DropdownMenu` is a role="menu" with
               roving tabindex whose children must be menu items, so a tile
               grid inside it would break its keyboard model. Deliberately

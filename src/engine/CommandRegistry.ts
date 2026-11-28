@@ -96,7 +96,7 @@ import { cycleFocusRegion, focusRegion, isRegionShown } from '../ui/layout/focus
  * binding is already answered by `keys`, and a second way to say it would drift
  * from the first.
  */
-export type ActionSurface = 'palette' | 'tools' | 'phoneTools' | 'canvasMenu';
+export type ActionSurface = 'palette' | 'tools' | 'phoneTools' | 'canvasMenu' | 'shareMenu';
 
 /**
  * Extra commands contributed by feature areas, keyed by source id.
@@ -202,8 +202,9 @@ export interface Command {
    * Where this command is offered. Defaults to the palette only, which is what
    * every command did before surfaces existed — opting into `'tools'` is what
    * puts a command in the Tools grid, `'phoneTools'` in that grid on a phone
-   * only, for what a desktop has its own button for (DSK-222), and
-   * `'canvasMenu'` in the menu a right-click on empty canvas opens (DSK-213).
+   * only, for what a desktop has its own button for (DSK-222),
+   * `'canvasMenu'` in the menu a right-click on empty canvas opens (DSK-213),
+   * and `'shareMenu'` in the top bar's Share menu (DSK-257).
    */
   surfaces?: readonly ActionSurface[];
 }
@@ -338,13 +339,15 @@ function buildCommands(): Command[] {
     },
 
     // --- Export (PDF) --- the dialog lives in UnifiedToolbar's local state, so
-    // the palette opens it by event, mirroring the import bridge above.
+    // the palette opens it by event, mirroring the import bridge above. It's a
+    // way to share the document, so it sits with sharing (DSK-257); the rest of
+    // that group comes from `src/services/shareActions.ts`.
     {
       id: 'file.exportPdf',
       label: 'Export to PDF…',
-      category: 'File',
+      category: 'Share',
       icon: FileDown,
-      surfaces: ['palette', 'tools'],
+      surfaces: ['palette', 'tools', 'shareMenu'],
       execute: () => window.dispatchEvent(new CustomEvent('docushark:open-pdf-export')),
     },
 
@@ -637,6 +640,15 @@ export function getToolsActions(phone = false): Command[] {
  */
 export function getCanvasMenuCommands(): Command[] {
   return getAllCommands().filter((c) => !c.reserved && isOnSurface(c, 'canvasMenu'));
+}
+
+/**
+ * Commands for the top bar's Share menu (DSK-257), in catalogue order. Like the
+ * canvas menu, it lists them all and greys out those that can't run now, so
+ * sharing stays visible where it isn't possible yet, with the reason beside it.
+ */
+export function getShareMenuCommands(): Command[] {
+  return getAllCommands().filter((c) => !c.reserved && isOnSurface(c, 'shareMenu'));
 }
 
 /** Commands the user can run from the palette (executable, non-reserved). */

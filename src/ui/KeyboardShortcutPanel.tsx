@@ -51,7 +51,7 @@ export function KeyboardShortcutPanel({ isOpen, onClose }: KeyboardShortcutPanel
   const grouped = getShortcutsByCategory();
   const lowerFilter = filter.toLowerCase();
 
-  const categories: ShortcutCategory[] = ['Tools', 'Navigation', 'Editing', 'File', 'View'];
+  const categories: ShortcutCategory[] = ['Tools', 'Navigation', 'Editing', 'File', 'Share', 'View'];
 
   return (
     <div className="shortcut-panel__overlay" onClick={onClose}>
