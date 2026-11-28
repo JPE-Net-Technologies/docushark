@@ -102,7 +102,9 @@ function boxBase(el: ExElement) {
   };
 }
 
-const FONT_FAMILY: Record<number, string> = { 1: 'sans-serif', 2: 'sans-serif', 3: 'monospace' };
+// Excalidraw's hand-drawn, normal and code fonts, as bundled fonts (DSK-246);
+// `sans-serif` follows the document font.
+const FONT_FAMILY: Record<number, string> = { 1: 'Caveat, cursive', 2: 'sans-serif', 3: "'JetBrains Mono', monospace" };
 
 /** Decode a `data:<mime>;base64,<data>` URL to a Blob (jsdom-safe, no fetch). */
 function dataUrlToBlob(dataUrl: string): Blob {

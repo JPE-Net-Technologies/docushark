@@ -8,6 +8,7 @@ import { render, screen, fireEvent, cleanup, act, within } from '@testing-librar
 
 const h = vi.hoisted(() => ({
   inTable: false,
+  headingLevel: null as number | null,
   image: null as null | { inGallery: boolean; canLeft: boolean; canRight: boolean },
   canUndo: true,
   canRedo: false,
@@ -21,7 +22,8 @@ const h = vi.hoisted(() => ({
 vi.mock('../store/documentRegistry', () => ({ useActiveDocReadOnly: () => false }));
 vi.mock('./TiptapEditorContext', () => ({
   useTiptapEditor: () => ({
-    isActive: (name: unknown) => name === 'table' && h.inTable,
+    isActive: (name: unknown, attrs?: { level?: number }) =>
+      (name === 'table' && h.inTable) || (name === 'heading' && attrs?.level === h.headingLevel),
     on: (event: string, handler: () => void) => h.listeners.set(event, handler),
     off: vi.fn(),
     can: () => ({ chain: () => ({ focus: () => ({ run: () => true }) }) }),
@@ -42,7 +44,7 @@ vi.mock('./editorCommands', async (importOriginal) => ({
   canRedo: () => h.canRedo,
 }));
 
-import { DocumentEditorToolbar } from './DocumentEditorToolbar';
+import { DocumentEditorToolbar, HOME_GROUP_ORDER } from './DocumentEditorToolbar';
 import { SLASH_COMMANDS } from '../tiptap/slashCommands';
 
 /** The editor changed: the ribbon re-reads it on each transaction. */
@@ -52,6 +54,7 @@ const selected = () => screen.getAllByRole('tab').find((t) => t.getAttribute('ar
 
 beforeEach(() => {
   h.inTable = false;
+  h.headingLevel = null;
   h.image = null;
   h.canUndo = true;
   h.canRedo = false;
@@ -60,6 +63,40 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+describe('the Home tab', () => {
+  it('lays its groups out in the one declared order, most used first', () => {
+    render(<DocumentEditorToolbar />);
+    const groups = screen.getByRole('tabpanel').querySelectorAll<HTMLElement>('.document-editor-toolbar-group');
+    expect([...groups].map((group) => group.dataset['group'])).toEqual([...HOME_GROUP_ORDER]);
+  });
+
+  it('shows the text style as a short "Text" or "H2", named in full for screen readers', () => {
+    render(<DocumentEditorToolbar />);
+    const style = screen.getByRole('button', { name: 'Text style: Text' });
+    expect(style.textContent).toBe('Text');
+    h.headingLevel = 2;
+    editorChanged();
+    expect(screen.getByRole('button', { name: 'Text style: Heading 2' }).textContent).toBe('H2');
+  });
+});
+
+describe('the Document menu on Home', () => {
+  it('comes last, so in a narrow panel it folds into More tools before any formatting', () => {
+    render(<DocumentEditorToolbar />);
+    const groups = screen.getByRole('tabpanel').querySelectorAll<HTMLElement>('.document-editor-toolbar-group');
+    const last = groups[groups.length - 1]!;
+    expect(within(last).getByRole('button', { name: /^Document settings/ })).toBeTruthy();
+    expect(within(last).queryAllByRole('button')).toHaveLength(1);
+  });
+
+  it('leaves the text style beside the formatting, not a font box', () => {
+    render(<DocumentEditorToolbar />);
+    const groups = screen.getByRole('tabpanel').querySelectorAll<HTMLElement>('.document-editor-toolbar-group');
+    expect(within(groups[1]!).getByRole('button', { name: 'Bold' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Document font' })).toBeNull();
+  });
+});
 
 describe('the ribbon (DSK-200, DSK-27)', () => {
   it('starts with undo and redo, each enabled only when it can run', () => {

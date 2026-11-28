@@ -97,19 +97,55 @@
   overflow: visible;
 }
 
-/* The dropped-down rows' panel: it starts under the first row, so the first
- * row stays part of the ribbon, and its shadow falls only downward. */
+/* The dropped-down rows' panel reads as "…"'s menu, not a second ribbon: it
+ * sits just under the first row, which stays part of the ribbon, with a menu's
+ * surface, border, corners and shadow. */
 .ribbon-strip[data-open] .ribbon-strip__content::before {
   content: '';
   position: absolute;
   z-index: -1;
-  inset: var(--ribbon-row-height) calc(-1 * var(--space-2)) 0;
+  inset: calc(var(--ribbon-row-height) + 2px) calc(-1 * var(--space-2)) 0;
   border: 1px solid var(--border-color);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
   box-shadow: var(--shadow-lg);
-  clip-path: inset(0 -24px -24px -24px);
+}
+
+/* Room inside that menu: the folded rows sit a little apart. The first row
+ * doesn't move, since only the gaps between rows change. */
+.ribbon-strip[data-open] .ribbon-panel-content {
+  row-gap: var(--space-3);
+}
+
+/* A thin rule between the folded groups (useRibbonOverflow marks them), but
+ * never at the start of a folded row. */
+.ribbon-strip[data-open] .document-editor-toolbar-group[data-folded]:not([data-row-start]) {
+  position: relative;
+}
+.ribbon-strip[data-open] .document-editor-toolbar-group[data-folded]:not([data-row-start])::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: calc(var(--space-3) / -2);
+  width: 1px;
+  background: var(--border-color);
+}
+
+/* "…" holds a control that applies to the selection (a list, an alignment, a
+ * link): a dot says so, rather than the ribbon hiding the state of your text. */
+.ribbon-more[data-active-hidden] {
+  position: relative;
+}
+.ribbon-more[data-active-hidden]::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
 }
 
 /* Keeps its place while there is nothing to show, so showing it never
@@ -492,4 +528,29 @@
 .ribbon-readonly__dismiss:hover {
   opacity: 1;
   background: var(--bg-hover);
+}
+
+/* The text style as a compact "Text" / "H2" at button height, not a 132px box:
+ * the menu it opens names each style in full. */
+.rich-select-trigger.text-style-trigger {
+  min-width: 44px;
+  height: 32px;
+  gap: 2px;
+  padding: 0 var(--space-1);
+  border-color: transparent;
+  background: transparent;
+  font-size: var(--font-size-base);
+}
+.rich-select-trigger.text-style-trigger:hover,
+.rich-select-trigger.text-style-trigger[data-state='open'] {
+  border-color: transparent;
+  background: var(--bg-hover);
+  box-shadow: none;
+}
+.rich-select-trigger.text-style-trigger:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+.text-style-token {
+  font-weight: 600;
+  line-height: 1;
 }

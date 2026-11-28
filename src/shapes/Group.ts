@@ -225,6 +225,7 @@ export const groupHandler: GroupShapeHandler = {
       boxWidth: 1000,
       boxHeight: fontSize * 2,
       fontSize,
+      fontFamily: shape.labelFontFamily,
       color: labelColor,
       background: labelBackground,
       backgroundRound: true,

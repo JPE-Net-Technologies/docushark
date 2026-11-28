@@ -4,31 +4,37 @@
  * rows down over the page. The first row never moves, and nothing remounts:
  * the hidden rows are the same controls, clipped.
  *
- * Resting the pointer on "…" opens the rows, and leaving them closes them
- * after a grace period. A click pins them open until a second click, Escape,
- * or a press elsewhere in the app; a press inside a menu or dialog one of the
- * controls opened (they render outside the app root) leaves them open.
- * Tabbing onto a hidden control opens them while focus stays in the ribbon.
+ * A click on "…" opens the rows until a second click, Escape, or a press
+ * elsewhere in the app; a press inside a menu or dialog one of the controls
+ * opened (they render outside the app root) leaves them open. Passing over "…"
+ * does nothing, so reaching for Find beside it never drops the rows over the
+ * page. Tabbing onto a hidden control opens them while focus stays in the ribbon.
+ *
+ * The groups that folded carry `data-folded` (and `data-row-start` where a
+ * folded row begins), so the open panel can draw separators between groups, and
+ * `hiddenActive` says whether a folded control applies to the selection, so "…"
+ * can show that the ribbon is hiding the state of your text.
  */
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
-  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react';
 
-/** How long the pointer rests on "…" before the rows open. */
-export const HOVER_OPEN_MS = 150;
-/** How long the rows stay open after the pointer leaves them. */
-export const HOVER_CLOSE_MS = 250;
 
 /** The ribbon's clusters, which wrap as whole units. */
 const GROUP_SELECTOR = '.document-editor-toolbar-group';
 
-type OpenMode = 'hover' | 'focus' | 'pinned';
+/** A control showing that it applies to the selection, such as an active list button. */
+const ACTIVE_SELECTOR = '.document-editor-toolbar-btn.active';
+/** An active control in a group that folded out of the first row. */
+const HIDDEN_ACTIVE_SELECTOR = `${GROUP_SELECTOR}[data-folded] ${ACTIVE_SELECTOR}`;
+
+type OpenMode = 'focus' | 'pinned';
 
 /** The bottom of the first row: the first laid-out group's (a hidden tab's have no size). */
 function firstRowBottom(strip: HTMLElement): number | null {
@@ -57,6 +63,29 @@ export function wrapsPastFirstRow(strip: HTMLElement): boolean {
 }
 
 /**
+ * Mark the groups that wrapped below the first row (`data-folded`) and those that
+ * begin a folded row (`data-row-start`). Returns whether any group folded.
+ */
+export function markFoldedGroups(strip: HTMLElement): boolean {
+  const bottom = firstRowBottom(strip);
+  const left = strip.getBoundingClientRect().left;
+  let overflowing = false;
+  for (const group of strip.querySelectorAll<HTMLElement>(GROUP_SELECTOR)) {
+    const box = group.getBoundingClientRect();
+    const folded = bottom !== null && box.height > 0 && box.top >= bottom - 1;
+    group.toggleAttribute('data-folded', folded);
+    group.toggleAttribute('data-row-start', folded && box.left - left < 2);
+    overflowing ||= folded;
+  }
+  return overflowing;
+}
+
+/** Whether a folded group holds a control that applies to the selection. */
+export function hiddenActiveIn(strip: HTMLElement): boolean {
+  return strip.querySelector(HIDDEN_ACTIVE_SELECTOR) !== null;
+}
+
+/**
  * @param stripRef The element holding the tab panels, clipped to one row.
  * @param toolbarRef The whole ribbon: presses inside it never close the rows.
  * @param tabKey The active tab: a new tab is measured afresh and starts closed.
@@ -67,22 +96,20 @@ export function useRibbonOverflow(
   tabKey: unknown,
 ) {
   const [overflowing, setOverflowing] = useState(false);
+  const [hiddenActive, setHiddenActive] = useState(false);
   const [mode, setMode] = useState<OpenMode | null>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const open = overflowing && mode !== null;
-
-  const clearTimer = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-  }, []);
 
   // Measure on any size change: the panel's width, and each tab panel's own
   // height, which changes when its groups wrap differently.
   useEffect(() => {
     const strip = stripRef.current;
     if (!strip) return undefined;
-    const measure = () => setOverflowing(wrapsPastFirstRow(strip));
+    const measure = () => {
+      setOverflowing(markFoldedGroups(strip));
+      setHiddenActive(hiddenActiveIn(strip));
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(strip);
@@ -90,11 +117,17 @@ export function useRibbonOverflow(
     return () => observer.disconnect();
   }, [stripRef, tabKey]);
 
+  // Which controls are active changes with the selection, not the size: re-read
+  // it after each render of the ribbon. Classes only, no layout, so it costs
+  // nothing while typing.
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (strip) setHiddenActive(hiddenActiveIn(strip));
+  });
+
   useEffect(() => {
     setMode(null);
   }, [tabKey]);
-
-  useEffect(() => clearTimer, [clearTimer]);
 
   // While open, Escape and presses elsewhere in the app close the rows.
   useEffect(() => {
@@ -131,42 +164,21 @@ export function useRibbonOverflow(
     return () => toolbar.removeEventListener('focusout', onFocusOut);
   }, [mode, toolbarRef]);
 
-  const closeAfterGrace = useCallback(() => {
-    clearTimer();
-    timer.current = setTimeout(() => setMode((current) => (current === 'hover' ? null : current)), HOVER_CLOSE_MS);
-  }, [clearTimer]);
+  const toggle = useCallback(() => setMode((current) => (current === 'pinned' ? null : 'pinned')), []);
 
-  // Hover belongs to a mouse or a pen: a touch press fires these events too,
-  // then a click.
   const moreProps = {
     ref: moreRef,
     'aria-expanded': open,
-    onClick: () => {
-      clearTimer();
-      setMode((current) => (current === 'pinned' ? null : 'pinned'));
-    },
-    onPointerEnter: (event: ReactPointerEvent) => {
-      if (event.pointerType === 'touch') return;
-      clearTimer();
-      if (mode === null) timer.current = setTimeout(() => setMode('hover'), HOVER_OPEN_MS);
-    },
-    onPointerLeave: (event: ReactPointerEvent) => {
-      if (event.pointerType !== 'touch') closeAfterGrace();
-    },
+    'data-active-hidden': (overflowing && hiddenActive) || undefined,
+    onClick: toggle,
   };
 
   const stripProps = {
-    onPointerEnter: (event: ReactPointerEvent) => {
-      if (event.pointerType !== 'touch') clearTimer();
-    },
-    onPointerLeave: (event: ReactPointerEvent) => {
-      if (event.pointerType !== 'touch') closeAfterGrace();
-    },
     onFocus: (event: FocusEvent) => {
       const strip = stripRef.current;
       if (mode === null && strip && overflowing && isBelowFirstRow(event.target, strip)) setMode('focus');
     },
   };
 
-  return { overflowing, open, moreProps, stripProps };
+  return { overflowing, open, hiddenActive: overflowing && hiddenActive, moreProps, stripProps };
 }

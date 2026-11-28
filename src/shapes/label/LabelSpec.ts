@@ -46,7 +46,7 @@ export interface LabelSpec {
   placement: LabelPlacement;
   /** Fraction of width/height usable for text (rect/ellipse use 0.85). */
   insetRatio?: { w: number; h: number };
-  /** Font family. Default 'sans-serif'. */
+  /** Font family. Default 'sans-serif', which follows the document font (DSK-246). */
   fontFamily?: string;
   /** Default font size when the shape carries no explicit `labelFontSize`. */
   defaultFontSize: number;

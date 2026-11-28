@@ -4,6 +4,7 @@ import { Vec2 } from '../math/Vec2';
 import { Camera } from '../engine/Camera';
 import { useInlineLabelEditor, getEditTarget, readField } from './useInlineLabelEditor';
 import './TextEditor.css';
+import { canvasFont } from '../fonts/canvasFont';
 
 export interface TextEditorProps {
   camera: Camera | null;
@@ -68,7 +69,8 @@ export function TextEditor({ camera }: TextEditorProps) {
       ? `${(shape.width * camera.zoom) / 2}px ${(shape.height * camera.zoom) / 2}px`
       : 'center center',
     fontSize: `${fontSize}px`,
-    fontFamily: isTextShape ? shape.fontFamily : 'sans-serif',
+    // The font the shape draws in, so the text doesn't jump on commit (DSK-246).
+    fontFamily: canvasFont(isTextShape ? shape.fontFamily : (shape as { labelFontFamily?: string }).labelFontFamily),
     minWidth: `${minWidth}px`,
     minHeight: `${minHeight}px`,
     textAlign: target.align,

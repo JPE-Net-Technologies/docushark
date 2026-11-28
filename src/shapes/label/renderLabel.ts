@@ -20,6 +20,7 @@ import { isLatexText, renderLatexText } from '../../utils/textUtils';
 import { getMeasurer } from './measureCache';
 import { layoutLabel } from './layoutLabel';
 import type { LabelSpec, LabelOverflow } from './LabelSpec';
+import { canvasFont } from '../../fonts/canvasFont';
 
 export interface LabelRenderInput {
   /** The label text. */
@@ -34,6 +35,8 @@ export interface LabelRenderInput {
   boxHeight: number;
   /** Resolved font size (shape's `labelFontSize` or the spec default). */
   fontSize: number;
+  /** The shape's own label font (`labelFontFamily`); absent follows the document font (DSK-246). */
+  fontFamily?: string | undefined;
   /** Resolved text color (AUTO already resolved by the caller). */
   color: string;
   /** Optional outline drawn around the glyphs (legibility on busy backgrounds). */
@@ -120,7 +123,7 @@ export function renderLabel(ctx: CanvasRenderingContext2D, input: LabelRenderInp
   const insetH = spec.insetRatio?.h ?? 1;
   const maxWidth = boxWidth * insetW;
   const maxHeight = boxHeight * insetH;
-  const fontFamily = spec.fontFamily ?? 'sans-serif';
+  const fontFamily = canvasFont(input.fontFamily ?? spec.fontFamily);
 
   ctx.save();
   ctx.translate(input.offsetX, input.offsetY);

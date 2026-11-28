@@ -215,20 +215,101 @@ export class RelayDocumentAccessRevokedError extends Error {
 }
 
 /**
+ * Keep the unsynced work on a document the relay now refuses (DSK-13). Its
+ * newest copy goes to Trash as a stranded document, the same place an
+ * access-revoked document's copy goes in `strandOrDemoteDeletedDoc`. Restoring
+ * it there makes a personal copy under a new id (`trashStore.asPersonalCopy`),
+ * so it never collides with the workspace's copy it came from. Then the
+ * document's queued saves are dropped, since every replay would be refused, and
+ * its bookkeeping and offline cache go, so a later list refresh can't strand an
+ * older snapshot over this one (Trash is keyed by document id).
+ *
+ * The copy comes from the offline cache, which holds the full body: an offline
+ * edit is cached in full before its save is queued. The queued body itself is
+ * never the source, because it withholds the prose of pages created offline
+ * (`serializeDocForRest`).
+ *
+ * A document the registry holds as local is the user's own and never moves:
+ * the open copy of a revoked document is demoted to a local document under the
+ * same id. Only its stale workspace saves are dropped, since they can only be
+ * refused, and the local document already holds what they carried.
+ *
+ * Returns false, changing nothing, when no readable copy exists.
+ */
+export async function strandRevokedWork(docId: string): Promise<boolean> {
+  const registry = useDocumentRegistry.getState();
+  if (registry.isLocalDocument(docId)) {
+    getSyncStateManager().discardPending(docId);
+    return true;
+  }
+  const workspaceId = activeWorkspaceId();
+  const meta = useRelayDocumentStore.getState().relayDocuments[docId];
+  const copy =
+    (await RelayDocumentCache.get(workspaceId, docId).catch(() => null)) ??
+    useRelayDocumentStore.getState().documentCache[docId] ??
+    registry.getDocumentContent(docId) ??
+    null;
+  if (!copy) return false;
+
+  const origin: TrashOrigin = { relayId: useConnectionStore.getState().host?.address ?? 'unknown' };
+  if (meta?.ownerId) origin.ownerId = meta.ownerId;
+  if (meta?.modifiedAt) origin.lastSyncedAt = meta.modifiedAt;
+  useTrashStore.getState().trashStranded(copy, origin);
+  getSyncStateManager().discardPending(docId);
+  registry.removeDocument(docId);
+  useRelayDocumentStore.setState((state) => {
+    const { [docId]: _dropped, ...documentCache } = state.documentCache;
+    const { [docId]: _meta, ...relayDocuments } = state.relayDocuments;
+    return { documentCache, relayDocuments };
+  });
+  await RelayDocumentCache.remove(workspaceId, docId).catch(() => {
+    /* best-effort: Trash holds the copy now */
+  });
+  useNotificationStore
+    .getState()
+    .info(
+      `You no longer have access to “${copy.name}”. Your unsaved changes are in Trash, where you can restore them as a personal copy.`,
+    );
+  return true;
+}
+
+/**
+ * A queued save's replay failed. The offline queue's provider calls this,
+ * wired in App.tsx, which keeps the REST push itself (JP-423's write boundary).
+ *
+ * A 403 means the workspace now refuses the document, so no replay can ever
+ * succeed (DSK-13). This is the common way to meet a revocation with unsynced
+ * work: the edits made the offline copy fresher than anything the server lists,
+ * so opening the document serves that copy and never sees the 403. The work
+ * goes to Trash instead. An open document is left to the collaboration layer,
+ * which demotes or strands it itself. Any other error is left to the queue's
+ * retries.
+ */
+export async function handleReplayFailure(docId: string, error: unknown): Promise<void> {
+  if (!(error instanceof RelayError) || !error.isForbidden) return;
+  if (usePersistenceStore.getState().currentDocumentId === docId) return;
+  await strandRevokedWork(docId);
+}
+
+/**
  * Forget a document the relay now denies: drop it from the registry so it stops
  * being listed, and drop its offline copy so a stale snapshot can't resurrect
  * the title on the next boot.
  *
  * **Unsynced work is never destroyed.** A share can be revoked while the holder
  * is offline with edits still queued, and purging the cache would silently take
- * those with it — the one outcome that is worse than a stale row. When there are
- * pending changes the bytes stay put and the caller is told; losing access to
- * the server's copy is not permission to delete the user's own writing.
+ * those with it — the one outcome that is worse than a stale row. Losing access
+ * to the server's copy is not permission to delete the user's own writing.
+ *
+ * With pending changes, the work goes to Trash through `strandRevokedWork`
+ * (DSK-13). Only when no readable copy exists are the cached bytes kept as
+ * they are.
  */
 async function forgetDeniedDocument(docId: string): Promise<void> {
-  const registry = useDocumentRegistry.getState();
   const hasUnsynced = getSyncStateManager().hasPendingChanges(docId);
+  if (hasUnsynced && (await strandRevokedWork(docId))) return;
 
+  const registry = useDocumentRegistry.getState();
   registry.removeDocument(docId);
   useRelayDocumentStore.setState((state) => {
     const { [docId]: _dropped, ...documentCache } = state.documentCache;
@@ -237,6 +318,7 @@ async function forgetDeniedDocument(docId: string): Promise<void> {
   });
 
   if (hasUnsynced) {
+    // No readable copy anywhere: keep whatever is cached and say so.
     useNotificationStore
       .getState()
       .error(

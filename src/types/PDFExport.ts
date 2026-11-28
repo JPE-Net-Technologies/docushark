@@ -111,6 +111,8 @@ export interface PDFExportOptions {
   includeTableOfContents?: boolean;
   /** Add PDF reader bookmarks/outline from heading hierarchy (defaults to true) */
   includePdfOutline?: boolean;
+  /** The document's font, a CSS font-family list (DSK-246). Absent: the default. */
+  fontFamily?: string;
 }
 
 /**

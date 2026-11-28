@@ -82,8 +82,17 @@ export default defineConfig({
         // .mjs covers the pdf.js worker (emitted as pdf.worker.min.mjs, ~1.2 MB)
         // so offline PDF rendering in the installed PWA doesn't stall on a
         // network fetch for the worker.
-        globPatterns: ['**/*.{js,mjs,css,html,woff,woff2}'],
-        globIgnores: ['**/dictionaries/**', '**/icons/**'],
+        // Fonts (DSK-246): every document font's WOFF2, so documents render
+        // offline, and the default family's TTFs (Inter, plus JetBrains Mono's
+        // regular for code), so a default document exports a PDF offline. The
+        // interface's InterVariable and other families' TTFs are cached at
+        // first use instead (runtimeCaching below).
+        globPatterns: [
+          '**/*.{js,mjs,css,html,woff,woff2}',
+          'assets/Inter-*.ttf',
+          'assets/JetBrainsMono-Regular-*.ttf',
+        ],
+        globIgnores: ['**/dictionaries/**', '**/icons/**', '**/InterVariable-*.woff2'],
         // Purge precache entries from prior builds when the new SW activates, so
         // a stale tab can't keep serving (or 404-ing on) old hashed chunks after
         // a deploy. Pairs with the `vite:preloadError` reload in registerPwa.ts.
@@ -103,6 +112,15 @@ export default defineConfig({
         ],
         // Doc data syncs over WebSocket (which SWs can't intercept) and REST to
         // the relay; we deliberately add no runtime caching for those.
+        runtimeCaching: [
+          {
+            // Font files not precached, kept once fetched. Their names carry a
+            // content hash, so a cached copy is never stale.
+            urlPattern: ({ url }) => /\/assets\/[^/]+\.(?:ttf|woff2)$/.test(url.pathname),
+            handler: 'CacheFirst',
+            options: { cacheName: 'docushark-fonts', expiration: { maxEntries: 40 } },
+          },
+        ],
       },
     }),
   ],

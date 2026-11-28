@@ -17,7 +17,7 @@ const { page } = useData()
 const area = computed(() => {
   const p = '/' + page.value.relativePath
   if (p.startsWith('/developer/')) return 'developer'
-  if (p.startsWith('/guide/') || p.startsWith('/getting-started/')) return 'guide'
+  if (p.startsWith('/guide/') || p.startsWith('/tutorials/')) return 'guide'
   return 'home'
 })
 const pill = computed(() =>

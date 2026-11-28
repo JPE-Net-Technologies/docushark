@@ -249,6 +249,15 @@ export class SyncStateManager {
   }
 
   /**
+   * Drop every queued operation for a document (DSK-13). Only for a document
+   * the relay now refuses, once its content has been kept somewhere else: its
+   * saves would otherwise be rejected on every replay, forever.
+   */
+  discardPending(documentId: string): void {
+    this.queue.removeByDocumentId(documentId);
+  }
+
+  /**
    * Get pending operation count.
    */
   getPendingCount(): number {

@@ -20,6 +20,7 @@ import { getRenderContext, type RenderContext } from '../engine/RenderContext';
 import { renderLabel } from './label/renderLabel';
 import { CONNECTOR_LABEL_SPEC, CONNECTOR_LABEL_MAX_WIDTH } from './label/specs';
 import type { LabelOverflow } from './label/LabelSpec';
+import { canvasFont } from '../fonts/canvasFont';
 
 /**
  * The colour runs along one leg of a connector: the whole leg in the stroke's
@@ -935,7 +936,8 @@ function renderConnectorLabel(
   offsetX: number = 0,
   offsetY: number = 0,
   overflow?: LabelOverflow,
-  strokeColor?: string
+  strokeColor?: string,
+  fontFamily?: string
 ): void {
   // Background tri-state, resolved here so the label engine stays generic:
   //   undefined            → legacy default white pill (with subtle border)
@@ -964,6 +966,7 @@ function renderConnectorLabel(
     boxWidth: CONNECTOR_LABEL_MAX_WIDTH,
     boxHeight: fontSize * 6,
     fontSize,
+    fontFamily,
     color,
     textStroke,
     background: pillColor,
@@ -1089,7 +1092,7 @@ function computeConnectorLabelBox(
 
   const { point } = getPointAlongPath(points, shape.labelPosition ?? 0.5);
   const labelFontSize = shape.labelFontSize ?? 12;
-  ctx.font = `${labelFontSize}px sans-serif`;
+  ctx.font = `${labelFontSize}px ${canvasFont(shape.labelFontFamily)}`;
   const textWidth = ctx.measureText(shape.label).width;
   const cx = point.x + (shape.labelOffsetX ?? 0);
   const cy = point.y + (shape.labelOffsetY ?? 0);
@@ -1278,7 +1281,7 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       const color = resolveStrokeAtPoint(rawColor, point, shape.id) ?? rawColor;
 
       ctx.save();
-      ctx.font = `${fontSize}px sans-serif`;
+      ctx.font = `${fontSize}px ${canvasFont(shape.labelFontFamily)}`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'bottom';
       ctx.fillStyle = color;
@@ -1309,7 +1312,7 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
       const guardText = `[${shape.guardCondition}]`;
 
       ctx.save();
-      ctx.font = `${fontSize}px sans-serif`;
+      ctx.font = `${fontSize}px ${canvasFont(shape.labelFontFamily)}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
 
@@ -1360,7 +1363,7 @@ export const connectorHandler: ShapeHandler<ConnectorShape> = {
     const offsetX = shape.labelOffsetX ?? 0;
     const offsetY = shape.labelOffsetY ?? 0;
 
-    renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor);
+    renderConnectorLabel(ctx, shape.label, point, fontSize, color, backgroundColor, offsetX, offsetY, shape.labelOverflow, shape.labelStrokeColor, shape.labelFontFamily);
 
     ctx.restore();
   },

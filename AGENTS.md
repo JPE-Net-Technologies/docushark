@@ -246,6 +246,7 @@ Shape library tiers: basic shapes (Rectangle, Ellipse, Line, Text, Connector, Gr
 - **Top-level order**: `shapeOrder` holds only what's drawn at the top level; a group's children are drawn through its `childIds`. An order from outside the store (a shared document, a snapshot) goes through `resolveDrawOrder`, which draws every shape exactly once. Don't compare an incoming order with the current one: undoing a group legitimately adds to it.
 - **Incoming shapes**: a shape from the Y.Doc replaces the store's copy (`replaceShape`), never merges. It is one whole value there, so a field it has lost is simply absent, and a merge would keep that field and write it back with the next edit.
 - **Input handling**: InputHandler normalizes mouse/touch/pen. Handle pointer capture on down, release on up. Prevent default on wheel events.
+- **Prose attribute renderers**: an extension attribute's `renderHTML` returns a fresh object with fixed keys, such as `{ 'data-x': String(value) }`, never a value taken from the document. Tiptap 2's `mergeAttributes` turns an own `__proto__` key into inherited DOM attributes, `onerror` included (GHSA-cp6q-959q-f8rh, fixed only in Tiptap 3). `src/tiptap/attributeRenderers.test.ts` checks every renderer.
 
 ## MCP (Model Context Protocol) Integration
 
@@ -301,13 +302,13 @@ Active and future work is tracked in the project's internal board, not in this r
 
 ## Keeping docs-site Current
 
-`docs-site/` (VitePress) is published, public documentation — treat it as part of the feature, not an afterthought. When a change adds, renames, moves, or removes user-facing behavior (a Settings tab, a shortcut, a guide-level workflow), update the relevant `docs-site/guide/` or `docs-site/getting-started/` page in the **same PR**. UI copy and settings structure drift fast — grep `docs-site/` for the old name before renaming or relocating anything customer-visible, and don't assume an existing doc page is still accurate just because it exists.
+`docs-site/` (VitePress) is published, public documentation — treat it as part of the feature, not an afterthought. When a change adds, renames, moves, or removes user-facing behavior (a Settings tab, a shortcut, a guide-level workflow), update the relevant `docs-site/guide/` page in the **same PR**. The guide is one page per job (Start here, Write, Draw, Organize, Share and collaborate, Make it yours, Export and import, Keyboard shortcuts) and each reads top to bottom, so add a section to the page a feature belongs to rather than a new page. If a page or section moves, keep its old URL working in `docs-site/.vitepress/redirects.ts`; `scripts/docs-guides.test.ts` checks every link, anchor and redirect. UI copy and settings structure drift fast — grep `docs-site/` for the old name before renaming or relocating anything customer-visible, and don't assume an existing doc page is still accurate just because it exists.
 
 The **Build** section (`docs-site/developer/`, customer-facing label "Build") is the same deal for **developers**: when a change adds, renames, or removes an **extension surface** (a shape/tool/UI-panel API — `ShapeRegistry`, `ToolManager`, `PanelExtensions`) or a **public API** surface (a REST route, an MCP tool, a token/wire-protocol field), update the matching `docs-site/developer/` page in the **same PR**, and grep `docs-site/developer/` for a renamed symbol before you rename it. The Build section is scoped to **extend + integrate**; engine-core and relay CRDT/sync *internals* are deliberately **not** a documented extension surface, so a change there updates AGENTS.md + the OSS Spec, **not** Build. Where a Build reference page is a hand-maintained duplicate of a `relay/docs/*` source (the MCP tool list, token format), a drift-guard test pins it — keep both in sync or the guard fails CI.
 
 Where content can be derived from source instead of hand-maintained (shape/icon catalogs, tool lists, anything enumerable in code), prefer a VitePress build-time data loader (see `docs-site/guide/shape-libraries.data.ts`) over a hand-written page — hand-maintained reference content goes stale silently and nobody notices until a reader does.
 
-Customer-facing docs (`guide/`, `getting-started/`) use product terminology only — e.g. "workspace," never "relay" (the internal sync-server component name; that belongs in `developer/` only, where it's the correct technical term). Self-hosting/deployment content lives under `docs-site/developer/self-hosting.md`, explicitly labeled **Future** (not officially supported) — don't reintroduce it as an aside in `guide/` or `getting-started/` pages.
+Customer-facing docs (`guide/`, `tutorials/`) use product terminology only — e.g. "workspace," never "relay" (the internal sync-server component name; that belongs in `developer/` only, where it's the correct technical term). Self-hosting/deployment content lives under `docs-site/developer/self-hosting.md`, explicitly labeled **Future** (not officially supported) — don't reintroduce it as an aside in `guide/` or `tutorials/` pages.
 
 ## UI Layout
 
@@ -426,3 +427,18 @@ when the first non-core panel needs it (YAGNI today).
 
 Plugin extensibility for shape libraries etc. still lives at
 `/src/plugins/PanelExtensions.ts`.
+
+### The prose ribbon: where a new tool goes
+
+The writing ribbon (`src/ui/DocumentEditorToolbar.tsx`) is one row at icon-button height. In a narrow panel its groups wrap, whole, from the end into **More tools** (`…`, opened by a click; `src/ui/useRibbonOverflow.ts`), so a group's position is also its fold priority: the most used come first and the rarest last. The Home tab's order is one list, `HOME_GROUP_ORDER`, so a custom order can replace it later.
+
+| A tool that… | Goes in |
+|---|---|
+| formats the selection or its block | Home, as an icon button in the group it belongs to (and the selection bubble if it's used constantly) |
+| adds something to the document | Insert and the `/` menu, both built from the catalogue in `src/tiptap/slashCommands.ts` |
+| works on a table, an image or another selected object | that object's contextual tab |
+| changes the whole document (its font, page size, margins) | the Document menu, **Aa**, last on Home (`src/ui/DocumentMenu.tsx`), as a headed section |
+| changes the view (Paper Mode on or off, focus) | the top bar, beside Write · Split · Canvas, not the ribbon |
+| reviews (comments, suggestions, an assistant) | a Review tab, once there are three such tools |
+
+Keep every control at button height: a dropdown shows a short token (**Text**, **H2**, **Aa**) and opens a menu that names its choices in full. Toolbar buttons mark their state with the `active` class, which is what lets `…` show a dot when a folded control applies to the selection.

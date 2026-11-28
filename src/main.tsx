@@ -34,6 +34,12 @@ import './platform/adaptiveBudget';
 // Mirror the persisted appearance prefs (accent + motion) onto the document at
 // boot, before first paint — see applyAppearance (Abstraction A).
 import './ui/appearance/applyAppearance';
+// The bundled fonts: registered (nothing fetched until used), and the document
+// font published to CSS (DSK-246).
+import { registerBundledFonts } from './fonts/registerFonts';
+import './fonts/applyDocumentFont';
+
+registerBundledFonts();
 
 function mountApp(authCallbackConsumed: boolean): void {
   const root = document.getElementById('root');

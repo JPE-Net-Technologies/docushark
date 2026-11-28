@@ -43,6 +43,7 @@ import { useThemeStore, type ThemePreference } from '../../store/themeStore';
 import {
   useUIPreferencesStore,
   type Density,
+  type AppFont,
   type CaretStyle,
   type SpellcheckMode,
   type ProseBackground,
@@ -91,6 +92,11 @@ const MOTION_OPTIONS = [
   { value: 'full' as const, label: 'Full', title: 'Always show interface animations' },
 ];
 
+const APP_FONT_OPTIONS = [
+  { value: 'system' as const, label: 'System', title: "Your operating system's interface font" },
+  { value: 'inter' as const, label: 'Inter', title: 'The bundled Inter, the same on every computer' },
+];
+
 const DENSITY_OPTIONS = [
   { value: 'compact' as const, label: 'Compact', title: 'Tighter spacing — fit more on screen' },
   { value: 'normal' as const, label: 'Normal', title: 'Default spacing' },
@@ -126,6 +132,8 @@ export function AppearanceSettings() {
   const setMotion = useUIPreferencesStore((s) => s.setMotion);
   const density = useUIPreferencesStore((s) => s.appearancePrefs.density);
   const setDensity = useUIPreferencesStore((s) => s.setDensity);
+  const appFont = useUIPreferencesStore((s) => s.appearancePrefs.appFont);
+  const setAppFont = useUIPreferencesStore((s) => s.setAppFont);
   const uiScale = useUIPreferencesStore((s) => s.appearancePrefs.uiScale);
   const setUiScale = useUIPreferencesStore((s) => s.setUiScale);
   const proseBackground = useUIPreferencesStore((s) => s.appearancePrefs.proseBackground);
@@ -349,6 +357,16 @@ export function AppearanceSettings() {
           max={100}
           step={5}
           hint="0 hides the grid entirely."
+        />
+
+        <SegmentedTile
+          icon={Type}
+          label="Interface font"
+          ariaLabel="Interface font"
+          value={appFont}
+          onValueChange={(v: AppFont) => setAppFont(v)}
+          options={APP_FONT_OPTIONS}
+          hint="Menus and panels. A document's own font is chosen in the ribbon."
         />
 
         <SegmentedTile

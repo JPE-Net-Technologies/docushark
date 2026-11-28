@@ -28,10 +28,10 @@ function openSearch() {
             <span class="kbd"><kbd>⌘</kbd><kbd>K</kbd></span>
           </button>
           <div class="hero-actions">
-            <a class="btn btn-primary" :href="withBase('/getting-started/introduction')">Get Started
+            <a class="btn btn-primary" :href="withBase('/guide/start-here')">Get Started
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
             </a>
-            <a class="btn btn-ghost" :href="withBase('/getting-started/quick-start')">Take the 5-minute tour</a>
+            <a class="btn btn-ghost" :href="withBase('/guide/start-here#first-document')">Your first document in five minutes</a>
           </div>
         </div>
         <div class="hero-art"><div class="hero-badge"><img :src="badge" alt="DocuShark" /></div></div>
@@ -52,35 +52,37 @@ function openSearch() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
             </div>
             <h3>New to DocuShark</h3>
-            <p>Start at the very beginning — what DocuShark is, how to install it, and a five-minute tour to your first diagram.</p>
+            <p>What DocuShark is, how to open it, your first document in five minutes, and the few ideas everything else builds on.</p>
             <div class="area-links">
-              <a :href="withBase('/getting-started/introduction')">Introduction <span class="arr">→</span></a>
-              <a :href="withBase('/getting-started/installation')">Installation <span class="arr">→</span></a>
-              <a :href="withBase('/getting-started/quick-start')">Quick Start <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-here')">Start here <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-here#first-document')">Your first document <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-here#how-it-fits-together')">How it fits together <span class="arr">→</span></a>
             </div>
           </article>
           <article class="area-card">
             <div class="area-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><circle cx="17.5" cy="6.5" r="3.5"/><path d="M6.5 14 3 21h7z"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 13v8"/><path d="M12 3v3"/><path d="M4 6a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h13a2 2 0 0 0 1.152-.365l3.424-2.317a1 1 0 0 0 0-1.635l-3.424-2.318A2 2 0 0 0 17 6z"/></svg>
             </div>
-            <h3>Draw &amp; diagram</h3>
-            <p>Get hands-on with the canvas — drawing tools, smart connectors, and ready-made shape libraries for any kind of diagram.</p>
+            <h3>Start with what you do</h3>
+            <p>A short path through DocuShark for your kind of work, a few steps each, in the order you'll need them.</p>
             <div class="area-links">
-              <a :href="withBase('/guide/drawing-tools')">Drawing Tools <span class="arr">→</span></a>
-              <a :href="withBase('/guide/connectors')">Connectors <span class="arr">→</span></a>
-              <a :href="withBase('/guide/shape-libraries')">Shape Libraries <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-with-what-you-do#research')">Research <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-with-what-you-do#engineering')">Engineering <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-with-what-you-do#personal')">Personal <span class="arr">→</span></a>
+              <a :href="withBase('/guide/start-with-what-you-do#ai-agents')">AI agents <span class="arr">→</span></a>
             </div>
           </article>
           <article class="area-card">
             <div class="area-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 19v-2a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v2"/><circle cx="9.5" cy="8" r="3"/><path d="M21 19v-2a3 3 0 0 0-2.2-2.9M16 5.1a3 3 0 0 1 0 5.8"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
             </div>
-            <h3>Write &amp; collaborate</h3>
-            <p>Mix rich text with your diagrams, invite your team to edit live, and send the finished thing anywhere you need it.</p>
+            <h3>The guide</h3>
+            <p>One page for each job, from writing and drawing to sharing and exporting, each readable top to bottom.</p>
             <div class="area-links">
-              <a :href="withBase('/guide/rich-text-editor')">Rich Text Editor <span class="arr">→</span></a>
-              <a :href="withBase('/guide/collaboration')">Collaboration <span class="arr">→</span></a>
-              <a :href="withBase('/guide/export-import')">Export &amp; Import <span class="arr">→</span></a>
+              <a :href="withBase('/guide/write')">Write <span class="arr">→</span></a>
+              <a :href="withBase('/guide/draw')">Draw <span class="arr">→</span></a>
+              <a :href="withBase('/guide/share')">Share and collaborate <span class="arr">→</span></a>
+              <a :href="withBase('/guide/make-it-yours')">Make it yours <span class="arr">→</span></a>
             </div>
           </article>
         </div>
@@ -159,7 +161,7 @@ function openSearch() {
           <article class="feature">
             <div class="feat-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 8h12l-3-3M20 16H8l3 3"/></svg></div>
             <h3>Import &amp; export</h3>
-            <p>Bring diagrams in from Mermaid, draw.io, and Excalidraw. Send them out as PNG, SVG, PDF, or Markdown bundles.</p>
+            <p>Bring diagrams in from Mermaid, draw.io and Excalidraw. Send your work out as a PDF, a PNG or SVG picture, or a <code>.docushark</code> file.</p>
           </article>
         </div>
       </div>
@@ -192,10 +194,10 @@ function openSearch() {
           <div>
             <h4>Guide</h4>
             <ul>
-              <li><a :href="withBase('/getting-started/introduction')">Introduction</a></li>
-              <li><a :href="withBase('/getting-started/quick-start')">Quick Start</a></li>
-              <li><a :href="withBase('/guide/shape-libraries')">Shape Libraries</a></li>
-              <li><a :href="withBase('/guide/collaboration')">Collaboration</a></li>
+              <li><a :href="withBase('/guide/start-here')">Start here</a></li>
+              <li><a :href="withBase('/guide/start-with-what-you-do')">Start with what you do</a></li>
+              <li><a :href="withBase('/guide/draw')">Draw</a></li>
+              <li><a :href="withBase('/guide/share')">Share and collaborate</a></li>
             </ul>
           </div>
           <div>
@@ -219,7 +221,7 @@ function openSearch() {
         </div>
         <div class="foot-bottom">
           <span>© 2026 JPE-Net Technologies · AGPL-3.0</span>
-          <span>dev.docushark.app</span>
+          <span>docs.docushark.app</span>
         </div>
       </div>
     </footer>

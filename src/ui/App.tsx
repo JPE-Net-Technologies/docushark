@@ -60,11 +60,11 @@ import {
 } from '../store/persistenceStore';
 import { restoreCloudSession, notifyCloudSessionExpired } from '../api/restoreCloudSession';
 import { ensureSignInResumed } from '../api/resumeInterruptedSignIn';
-import { useDocumentStore } from '../store/documentStore';
 import { initConnectionNotifications } from '../store/connectionStore';
 import { registerTokenRefresher } from '../api/tokenRefresh';
 import { createCloudTokenRefresher } from '../api/cloudTokenRefresher';
-import { useRelayDocumentStore, isCloudSignedIn } from '../store/relayDocumentStore';
+import { useRelayDocumentStore, isCloudSignedIn, handleReplayFailure } from '../store/relayDocumentStore';
+import { rebuildConnectorRoutes } from '../engine/selectionLayout';
 import { registerRelayListAutoRefresh } from '../services/relayListAutoRefresh';
 import { useTrashStore } from '../store/trashStore';
 import { ensureDocBlobsLocal } from '../store/offlineAvailability';
@@ -123,7 +123,6 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Get rebuild function from document store
-  const rebuildAllConnectorRoutes = useDocumentStore((state) => state.rebuildAllConnectorRoutes);
 
   // Custom chrome opt-in — drives both the in-app TitleBar render and the
   // Tauri native-decoration toggle synced below. Gated to the desktop shell:
@@ -258,12 +257,8 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
     setIsSettingsOpen(false);
   }, []);
 
-  // Rebuild all connector routes callback
-  const handleRebuildConnectors = useCallback(() => {
-    if (rebuildAllConnectorRoutes) {
-      rebuildAllConnectorRoutes();
-    }
-  }, [rebuildAllConnectorRoutes]);
+  // Rebuild all connector routes: its own history step, like every command.
+  const handleRebuildConnectors = useCallback(() => rebuildConnectorRoutes(), []);
 
   // Collapse handler for document editor panel — writes through to the layout
   // store so the change is scoped to the active layout's overrides and
@@ -367,10 +362,18 @@ function App({ authCallbackConsumed = false }: { authCallbackConsumed?: boolean 
     // while offline get replayed to the relay on reconnect (JP-106). The
     // manager auto-processes its queue when the connection becomes
     // authenticated; we give it a provider that pushes via the relay store.
+    // A save the workspace refuses (access revoked) moves to Trash instead of
+    // failing forever (DSK-13, `handleReplayFailure`).
     const syncManager = getSyncStateManager({ autoProcessOnReconnect: true });
     syncManager.setProvider({
-      saveDocument: (doc, expectedVersion) =>
-        useRelayDocumentStore.getState().saveToHost(doc, expectedVersion),
+      saveDocument: async (doc, expectedVersion) => {
+        try {
+          return await useRelayDocumentStore.getState().saveToHost(doc, expectedVersion);
+        } catch (e) {
+          await handleReplayFailure(doc.id, e);
+          throw e;
+        }
+      },
       deleteDocument: (id) => useRelayDocumentStore.getState().deleteFromHost(id),
       isReady: () =>
         useConnectionStore.getState().status === 'authenticated' &&

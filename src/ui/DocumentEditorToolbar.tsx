@@ -27,7 +27,7 @@
  * it last synced, and carries Refresh, Open and Detach.
  */
 
-import { Fragment, useState, useEffect, useCallback, useId, useMemo, useRef, type ChangeEvent } from 'react';
+import { Fragment, useState, useEffect, useCallback, useId, useMemo, useRef, type ChangeEvent, type ReactNode } from 'react';
 import { formatCombo } from '../engine/keybindings';
 import { createPortal } from 'react-dom';
 import {
@@ -55,13 +55,14 @@ import { SearchReplacePanel } from './SearchReplacePanel';
 import { ToolbarDropdown } from './ToolbarDropdown';
 import { ColorPicker, type ColorSpecial } from './color/ColorPicker';
 import { RichSelect } from './components/RichSelect';
-import { TEXT_STYLE_ITEMS, applyTextStyle, textStyleOf, type TextStyle } from './proseTextStyle';
+import { TEXT_STYLE_ITEMS, TEXT_STYLE_SHORT, applyTextStyle, textStyleOf, type TextStyle } from './proseTextStyle';
 import { InsertLinkDialog } from './InsertLinkDialog';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
 import { isGuestSession } from '../guest/guestSession';
 import { ICON } from './icons';
 import './DocumentEditorToolbar.css';
 import { tip } from './TooltipLayer';
+import { DocumentMenu } from './DocumentMenu';
 
 /** Home and Insert are always there; Table and Image only in their context. */
 type PlainTab = 'home' | 'insert';
@@ -80,6 +81,16 @@ const INSERT_ACTIVE_NODE: Partial<Record<string, string>> = { code: 'codeBlock' 
  * every editing control already says.
  */
 const VIEW_ONLY_NOTICE_MS = 30_000;
+
+/**
+ * The Home tab's groups, most used first. The order is also the fold order: in a
+ * narrow panel, groups wrap from the end into More tools, so the rarest go last
+ * and the Document menu ("Aa", settings for the whole document) folds first.
+ * The order is one list so that a custom order, a user preference, can replace it
+ * later. See "The prose ribbon: where a new tool goes" in AGENTS.md.
+ */
+export const HOME_GROUP_ORDER = ['style', 'inline', 'blocks', 'link', 'colour', 'script', 'align', 'document'] as const;
+export type HomeGroup = (typeof HOME_GROUP_ORDER)[number];
 
 export function DocumentEditorToolbar() {
   const editor = useTiptapEditor();
@@ -300,6 +311,7 @@ export function DocumentEditorToolbar() {
 
   const isActive = (type: string, attrs?: Record<string, unknown>) =>
     editor?.isActive(type, attrs) ?? false;
+  const textStyle = textStyleOf(editor);
 
   /**
    * One Insert control per registry command. Some keep richer controls: the
@@ -394,6 +406,160 @@ export function DocumentEditorToolbar() {
     return <MirrorBanner pageId={activePageId} mirror={activeMirror} />;
   }
 
+  // The Home tab's groups, each named. HOME_GROUP_ORDER (top of this file) lays them out.
+  const homeGroups: Record<HomeGroup, ReactNode> = {
+    // Text style: a compact "Text" / "H2" at button height, opening a list with each entry drawn as its level.
+    style: (
+    <div data-group="style" className="document-editor-toolbar-group">
+      <RichSelect<TextStyle>
+        value={textStyle}
+        onChange={(value) => editor && applyTextStyle(editor, value)}
+        items={TEXT_STYLE_ITEMS}
+        hoverOpen
+        ariaLabel={`Text style: ${TEXT_STYLE_ITEMS.find((item) => item.value === textStyle)?.label ?? 'Text'}`}
+        className="text-style-trigger"
+        trigger={
+          <>
+            <span className="text-style-token">{TEXT_STYLE_SHORT[textStyle]}</span>
+            <svg className="rich-select-chevron" width="10" height="10" viewBox="0 0 12 12" aria-hidden="true">
+              <path fill="currentColor" d="M2 4l4 4 4-4" />
+            </svg>
+          </>
+        }
+      />
+    </div>
+    ),
+    // Text formatting
+    inline: (
+    <div data-group="inline" className="document-editor-toolbar-group">
+      <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} {...tip('Bold', formatCombo('Mod+B'))} aria-label="Bold">
+        <Bold {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} {...tip('Italic', formatCombo('Mod+I'))} aria-label="Italic">
+        <Italic {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} {...tip('Underline', formatCombo('Mod+U'))} aria-label="Underline">
+        <Underline {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} {...tip('Strikethrough')} aria-label="Strikethrough">
+        <Strikethrough {...ICON} />
+      </button>
+    </div>
+    ),
+    // Lists & Blockquote
+    blocks: (
+    <div data-group="blocks" className="document-editor-toolbar-group">
+      <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} {...tip('Bullet List')} aria-label="Bullet list">
+        <List {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} {...tip('Numbered List')} aria-label="Numbered list">
+        <ListOrdered {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} {...tip('Task List')} aria-label="Task list">
+        <ListTodo {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} {...tip('Block Quote')} aria-label="Block quote">
+        <TextQuote {...ICON} />
+      </button>
+    </div>
+    ),
+    // Link: its own group, so the lists before it stay a small unit.
+    link: (
+    <div data-group="link" className="document-editor-toolbar-group">
+      <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} {...tip('Insert / Edit Link')} aria-label="Insert or edit link">
+        <Link {...ICON} />
+      </button>
+    </div>
+    ),
+    // Color controls
+    colour: (
+    <div data-group="colour" className="document-editor-toolbar-group">
+      <ToolbarDropdown
+        trigger={<span className="color-btn-icon">A<span className="color-underline" style={{ background: 'var(--text-primary)' }} /></span>}
+        isOpen={showColorPicker === 'text'}
+        onToggle={() => setShowColorPicker(showColorPicker === 'text' ? null : 'text')}
+        onClose={() => setShowColorPicker(null)}
+        triggerClassName="document-editor-toolbar-btn"
+        title="Text Color"
+      >
+        {/* Contrast is measured against white: a document's legibility
+            that matters is on the printed/exported page, which is white
+            regardless of the app's current theme. */}
+        <ColorPicker
+          value={textColor}
+          onChange={handleSetTextColor}
+          preset="canvas"
+          specials={textColorSpecials}
+          contrastAgainst="#ffffff"
+          compact
+        />
+      </ToolbarDropdown>
+
+      <ToolbarDropdown
+        trigger={<span className="highlight-btn-icon"><Highlighter {...ICON} /></span>}
+        isOpen={showColorPicker === 'highlight'}
+        onToggle={() => setShowColorPicker(showColorPicker === 'highlight' ? null : 'highlight')}
+        onClose={() => setShowColorPicker(null)}
+        triggerClassName="document-editor-toolbar-btn"
+        title="Highlight"
+      >
+        {/* Highlight sits *behind* body text, so contrast is measured
+            against black — the colour that has to stay readable on it. */}
+        <ColorPicker
+          value={highlightColor}
+          onChange={handleSetHighlight}
+          preset="highlight"
+          specials={highlightSpecials}
+          contrastAgainst="#000000"
+          compact
+        />
+      </ToolbarDropdown>
+
+      <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} {...tip('Clear Formatting')} aria-label="Clear formatting">
+        <RemoveFormatting {...ICON} />
+      </button>
+    </div>
+    ),
+    // Subscript/Superscript
+    script: (
+    <div data-group="script" className="document-editor-toolbar-group">
+      <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} {...tip('Subscript')} aria-label="Subscript">
+        <Subscript {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} {...tip('Superscript')} aria-label="Superscript">
+        <Superscript {...ICON} />
+      </button>
+    </div>
+    ),
+    // Text Alignment
+    align: (
+    <div data-group="align" className="document-editor-toolbar-group">
+      <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} {...tip('Align Left')} aria-label="Align left">
+        <AlignLeft {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} {...tip('Align Center')} aria-label="Align center">
+        <AlignCenter {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} {...tip('Align Right')} aria-label="Align right">
+        <AlignRight {...ICON} />
+      </button>
+      <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} {...tip('Justify')} aria-label="Justify">
+        <AlignJustify {...ICON} />
+      </button>
+    </div>
+    ),
+    // Settings for the whole document (its font, DSK-246), not the selection. Last on purpose: groups wrap from the end into More tools, so this folds before any formatting does.
+    document: (
+    <div
+      data-group="document"
+      className="document-editor-toolbar-group document-editor-toolbar-group--document"
+      {...tip('Document', undefined, 'Settings for the whole document, such as its font. Shapes use the document font too, unless they have their own.')}
+    >
+      <DocumentMenu />
+    </div>
+    ),
+  };
+
   return (
     <div className="document-editor-toolbar" ref={toolbarRef}>
       <div className="ribbon-row">
@@ -427,131 +593,9 @@ export function DocumentEditorToolbar() {
         {/* === HOME TAB === */}
         {activeTab === 'home' && (
           <div className="ribbon-panel-content" role="tabpanel">
-            {/* Heading dropdown — rich select, each entry styled as its level */}
-            <div className="document-editor-toolbar-group">
-              <RichSelect<TextStyle>
-                value={textStyleOf(editor)}
-                onChange={(value) => editor && applyTextStyle(editor, value)}
-                items={TEXT_STYLE_ITEMS}
-                hoverOpen
-                ariaLabel="Text style"
-                minWidth={132}
-              />
-            </div>
-
-
-            {/* Text formatting */}
-            <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bold') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBold(editor)} {...tip('Bold', formatCombo('Mod+B'))} aria-label="Bold">
-                <Bold {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('italic') ? 'active' : ''}`} onClick={() => editor && cmd.toggleItalic(editor)} {...tip('Italic', formatCombo('Mod+I'))} aria-label="Italic">
-                <Italic {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('underline') ? 'active' : ''}`} onClick={() => editor && cmd.toggleUnderline(editor)} {...tip('Underline', formatCombo('Mod+U'))} aria-label="Underline">
-                <Underline {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('strike') ? 'active' : ''}`} onClick={() => editor && cmd.toggleStrike(editor)} {...tip('Strikethrough')} aria-label="Strikethrough">
-                <Strikethrough {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Subscript/Superscript */}
-            <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('subscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSubscript(editor)} {...tip('Subscript')} aria-label="Subscript">
-                <Subscript {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('superscript') ? 'active' : ''}`} onClick={() => editor && cmd.toggleSuperscript(editor)} {...tip('Superscript')} aria-label="Superscript">
-                <Superscript {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Color controls */}
-            <div className="document-editor-toolbar-group">
-              <ToolbarDropdown
-                trigger={<span className="color-btn-icon">A<span className="color-underline" style={{ background: 'var(--text-primary)' }} /></span>}
-                isOpen={showColorPicker === 'text'}
-                onToggle={() => setShowColorPicker(showColorPicker === 'text' ? null : 'text')}
-                onClose={() => setShowColorPicker(null)}
-                triggerClassName="document-editor-toolbar-btn"
-                title="Text Color"
-              >
-                {/* Contrast is measured against white: a document's legibility
-                    that matters is on the printed/exported page, which is white
-                    regardless of the app's current theme. */}
-                <ColorPicker
-                  value={textColor}
-                  onChange={handleSetTextColor}
-                  preset="canvas"
-                  specials={textColorSpecials}
-                  contrastAgainst="#ffffff"
-                  compact
-                />
-              </ToolbarDropdown>
-
-              <ToolbarDropdown
-                trigger={<span className="highlight-btn-icon"><Highlighter {...ICON} /></span>}
-                isOpen={showColorPicker === 'highlight'}
-                onToggle={() => setShowColorPicker(showColorPicker === 'highlight' ? null : 'highlight')}
-                onClose={() => setShowColorPicker(null)}
-                triggerClassName="document-editor-toolbar-btn"
-                title="Highlight"
-              >
-                {/* Highlight sits *behind* body text, so contrast is measured
-                    against black — the colour that has to stay readable on it. */}
-                <ColorPicker
-                  value={highlightColor}
-                  onChange={handleSetHighlight}
-                  preset="highlight"
-                  specials={highlightSpecials}
-                  contrastAgainst="#000000"
-                  compact
-                />
-              </ToolbarDropdown>
-
-              <button className="document-editor-toolbar-btn" onClick={() => editor && cmd.clearFormatting(editor)} {...tip('Clear Formatting')} aria-label="Clear formatting">
-                <RemoveFormatting {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Lists & Blockquote */}
-            <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${isActive('bulletList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBulletList(editor)} {...tip('Bullet List')} aria-label="Bullet list">
-                <List {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('orderedList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleOrderedList(editor)} {...tip('Numbered List')} aria-label="Numbered list">
-                <ListOrdered {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('taskList') ? 'active' : ''}`} onClick={() => editor && cmd.toggleTaskList(editor)} {...tip('Task List')} aria-label="Task list">
-                <ListTodo {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('blockquote') ? 'active' : ''}`} onClick={() => editor && cmd.toggleBlockquote(editor)} {...tip('Block Quote')} aria-label="Block quote">
-                <TextQuote {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${isActive('link') ? 'active' : ''}`} onClick={() => editor && setShowLinkDialog(true)} {...tip('Insert / Edit Link')} aria-label="Insert or edit link">
-                <Link {...ICON} />
-              </button>
-            </div>
-
-
-            {/* Text Alignment */}
-            <div className="document-editor-toolbar-group">
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'left' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'left')} {...tip('Align Left')} aria-label="Align left">
-                <AlignLeft {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'center' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'center')} {...tip('Align Center')} aria-label="Align center">
-                <AlignCenter {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'right' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'right')} {...tip('Align Right')} aria-label="Align right">
-                <AlignRight {...ICON} />
-              </button>
-              <button className={`document-editor-toolbar-btn ${editor?.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} onClick={() => editor && cmd.setTextAlign(editor, 'justify')} {...tip('Justify')} aria-label="Justify">
-                <AlignJustify {...ICON} />
-              </button>
-            </div>
+            {HOME_GROUP_ORDER.map((group) => (
+              <Fragment key={group}>{homeGroups[group]}</Fragment>
+            ))}
           </div>
         )}
 
@@ -736,8 +780,8 @@ export function DocumentEditorToolbar() {
           className={`document-editor-toolbar-btn ribbon-more${overflow.open ? ' active' : ''}`}
           data-shown={overflow.overflowing || undefined}
           aria-controls={stripId}
-          aria-label="More tools"
-          {...tip('More tools')}
+          aria-label={overflow.hiddenActive ? 'More tools, some applying to the selection' : 'More tools'}
+          {...tip(overflow.hiddenActive ? 'More tools: some apply to the selection' : 'More tools')}
           {...overflow.moreProps}
         >
           <Ellipsis {...ICON} />

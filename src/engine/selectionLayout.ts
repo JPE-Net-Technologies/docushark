@@ -9,6 +9,9 @@
  * - `autoLayoutSelection` tidies the selected shapes with the shared Sugiyama
  *   auto-layout; one history entry, applied through the document store (which
  *   reroutes connectors), matching the alignment commands' pattern.
+ * - `rebuildConnectorRoutes` re-seats every connector on the page; one history
+ *   entry, the same pattern. (Page-wide rather than selection-scoped, but the
+ *   same kind of layout command.)
  */
 
 import { useSessionStore } from '../store/sessionStore';
@@ -47,4 +50,16 @@ export function autoLayoutSelection(direction: GraphDirection = 'TB'): void {
   if (ids.length < 2) return;
   pushHistory('Auto-layout');
   useDocumentStore.getState().autoLayoutShapes(ids, { direction });
+}
+
+/**
+ * Rebuild every connector route on the page: the canvas toolbar's "Rebuild all
+ * connector routes". Like every other command, it opens its own history step
+ * first. Without one, undo after a rebuild restored the step before it, so it
+ * also reverted the edit made just before; in a collaborative document, the
+ * rebuild's writes didn't close an undo step of their own.
+ */
+export function rebuildConnectorRoutes(): void {
+  pushHistory('Rebuild connector routes');
+  useDocumentStore.getState().rebuildAllConnectorRoutes();
 }

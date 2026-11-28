@@ -209,6 +209,14 @@
   --control-height-xl: calc(2.25rem * var(--density-mult));  /* 36px */
 }
 
+/* Interface font (Settings > Appearance, DSK-246): the bundled Inter, as its
+   variable build, which has every weight the chrome uses. Documents have their
+   own font (`--doc-font`). */
+:root[data-app-font='inter'] {
+  --font-sans: InterVariable, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
+    'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+}
+
 /* --- Semantic: DARK (navy-native; elevation = lighter navy, not black) --- */
 [data-theme="dark"] {
   color-scheme: dark;

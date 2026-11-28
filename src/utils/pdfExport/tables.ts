@@ -4,7 +4,6 @@
  */
 
 import type { JSONContent } from '@tiptap/core';
-import { PDF_FONT_SANS } from './fonts';
 import { checkPageBreak, type PDFRenderContext } from './context';
 import { PDF_STYLE } from './style';
 import { extractSegmentsDeep, extractText, parseColor, renderSegmentedText } from './text';
@@ -181,7 +180,7 @@ function computeTableLayout(ctx: PDFRenderContext, node: JSONContent): TableLayo
 
       const text = extractText(gc.node);
       ctx.doc.setFontSize(fontSize);
-      ctx.doc.setFont(PDF_FONT_SANS, gc.isHeader ? 'bold' : 'normal');
+      ctx.doc.setFont(ctx.textFont, gc.isHeader ? 'bold' : 'normal');
       const wrappedLines = ctx.doc.splitTextToSize(text, Math.max(cellContentWidth, 5));
       const neededHeight = wrappedLines.length * lineH + PDF_STYLE.tableCellPadding * 2;
 
@@ -300,7 +299,7 @@ export async function renderTable(ctx: PDFRenderContext, node: JSONContent): Pro
   }
 
   // Reset
-  ctx.doc.setFont(PDF_FONT_SANS, 'normal');
+  ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
   ctx.y += 4;

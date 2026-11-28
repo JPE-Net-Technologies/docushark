@@ -37,6 +37,7 @@ const BASE = {
   opacity: 0.5,
   cornerRadius: 4,
   labelFontSize: 11,
+  labelFontFamily: "'Source Serif 4', serif",
   labelColor: '#303030',
   fontSize: 15,
   fontFamily: 'serif',
@@ -155,9 +156,8 @@ describe('every property a profile sets has a row to mark', () => {
   const NO_ROW: Record<string, string[]> = {
     // Groups draw their background colour and border, not these.
     group: ['fill', 'stroke', 'strokeWidth'],
-    // Lines have no arrow controls, and text has no font control yet.
+    // Lines have no arrow controls.
     line: ['startArrow', 'endArrow'],
-    text: ['fontFamily'],
     // The single-icon fields, which a shape with an icon list doesn't use.
     'rectangle with icons': ['iconId', 'iconSize', 'iconPadding', 'iconColor', 'iconPosition', 'iconDisplayMode', 'iconBadge'],
     'library shape with icons': ['iconId', 'iconSize', 'iconPadding', 'iconColor', 'iconPosition', 'iconDisplayMode', 'iconBadge'],

@@ -144,6 +144,7 @@ export const lineHandler: ShapeHandler<LineShape> = {
         boxWidth: Math.max(lineLength, 60),
         boxHeight: labelFontSize * 2,
         fontSize: labelFontSize,
+        fontFamily: shape.labelFontFamily,
         color: shape.labelColor || stroke || '#000000',
         background: shape.labelBackground,
         offsetX: shape.labelOffsetX || 0,
