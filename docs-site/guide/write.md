@@ -154,6 +154,27 @@ Each file can be up to 50 MB. In a shared document, files sync to everyone, with
 Some browsers don't let a menu read the clipboard. If **Paste** in the right-click menu doesn't work, paste with the keyboard.
 :::
 
+## Paper Mode: see the printed pages {#paper-mode}
+
+**Paper**, beside **Write · Split · Canvas** at the top, shows your writing as the pages of its PDF while you keep writing: the page size, the margins, where each page breaks, and the page numbers. It's there in the Relaxed layout while your writing is shown (Write or Split), in a window wide enough for a page, and DocuShark remembers it on that device.
+
+The page setup is in **Aa** at the end of **Home**:
+
+- **Page size:** Letter, A4, A3 or Tabloid.
+- **Orientation:** portrait or landscape.
+- **Margins:** Normal (20 mm), Narrow (12.7 mm) or Wide (25.4 mm). Margins set to other values in **Export to PDF** show as **Custom**.
+
+The setup belongs to the document, so everyone working in a shared document sees the same pages, and [Export to PDF](./export-import#pdf) uses it too. Until you choose, a document uses the paper of its last PDF export, or else the usual paper where you are: Letter in the United States, Canada, Mexico, the Philippines and much of Latin America, A4 everywhere else.
+
+The pages are the PDF's own. Text is set in the PDF's fonts and sizes, so its lines wrap where the PDF's do, and the pages break exactly where the PDF's will: a heading moves to the next page with its text, and long code blocks and tables continue on the next page. Each page shows the number the PDF prints, counting the cover and the table of contents when the export adds them. When you edit, the pages catch up a moment after you stop typing.
+
+A few things differ from the PDF:
+
+- Diagrams that the PDF embeds aren't shown, so when an export adds them, the PDF's page numbers differ. A note above the pages says so.
+- A table's header row isn't drawn again at the top of each new page, as it is in the PDF.
+- A table row taller than a page isn't split between pages.
+- The pages are shown at their real size, with no zoom. In a narrow window, such as Split, scroll sideways to see a whole page.
+
 ## More than one page {#pages}
 
 A document can hold several prose pages, each with its own tab. Adding, renaming, colouring and nesting pages is covered in [Organize](./organize#pages).
