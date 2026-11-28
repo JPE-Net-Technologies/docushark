@@ -129,14 +129,37 @@ export function PageTabStrip({
     setOverflowing(el.scrollWidth - el.clientWidth > 1);
   }, []);
 
+  // The tab showing the open page, for the resize observer, which outlives a render.
+  const shownIdRef = useRef(stopId);
+  shownIdRef.current = itemShowing(items, activeId);
+
+  /** Scroll the row, and only the row, until the open page's tab is in view. */
+  const revealShown = useCallback(() => {
+    const row = scrollRef.current;
+    const id = shownIdRef.current;
+    if (!row || !id) return;
+    const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
+    const tab = row.querySelector<HTMLElement>(`[data-page-id="${escaped}"]`);
+    if (!tab) return;
+    const t = tab.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    if (t.left < r.left) row.scrollLeft -= r.left - t.left;
+    else if (t.right > r.right) row.scrollLeft += Math.min(t.right - r.right, t.left - r.left);
+  }, []);
+
   useLayoutEffect(() => {
     recompute();
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(recompute);
+    // A row that changes width (a phone turned, a panel opened, a font
+    // loaded) keeps the open page's tab in view (DSK-260).
+    const ro = new ResizeObserver(() => {
+      recompute();
+      revealShown();
+    });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [recompute, items]);
+  }, [recompute, revealShown, items]);
 
   // Keep the active tab visible.
   useEffect(() => {
@@ -232,9 +255,14 @@ export function PageTabStrip({
     <div
       ref={rootRef}
       className={`page-tab-strip ${isTouch ? 'page-tab-strip--touch' : ''} ${className ?? ''}`.replace(/\s+/g, ' ').trim()}
-      aria-label={ariaLabel}
     >
-      <div className="page-tab-strip-scroll" ref={scrollRef} role="tablist" onKeyDown={handleKeyDown}>
+      <div
+        className="page-tab-strip-scroll"
+        ref={scrollRef}
+        role="tablist"
+        aria-label={ariaLabel}
+        onKeyDown={handleKeyDown}
+      >
         {items.map((item, index) => renderTab(item, index, { tabIndex: item.id === stopId ? 0 : -1 }))}
       </div>
 

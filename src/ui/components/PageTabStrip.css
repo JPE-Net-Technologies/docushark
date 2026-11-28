@@ -209,6 +209,32 @@
   transform: none;
 }
 
+/* A tab is never wider than its row, so the open tab's ⋯ stays in reach on a
+ * phone: the name gives way first, and the hover card has it in full. */
+.page-tab-strip [data-page-id] {
+  max-width: 100%;
+}
+
+.page-tab-strip .inline-tab-name,
+.page-tab-strip .rich-text-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A phone's row can't spare the room: the add button is "+" alone there, and
+ * still says what it adds on hover and to a screen reader. */
+@media (max-width: 640px) {
+  .page-tab-strip-add--labelled {
+    width: 26px;
+    padding: 0;
+  }
+
+  .page-tab-strip-add--labelled .page-tab-strip-add-label {
+    display: none;
+  }
+}
+
 /* On touch, tabs and the add button are Apple's minimum target, 44 px, and a
  * tab's ⋯ is always shown on the open one (DSK-260). The tabs' own classes
  * (.rich-text-tab, .inline-tab) keep their padding. */

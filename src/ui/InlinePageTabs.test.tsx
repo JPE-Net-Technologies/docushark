@@ -35,6 +35,10 @@ const lastToast = () => {
 describe('the diagram tabs', () => {
   it('call a default-named diagram "Diagram N" and keep a chosen name', () => {
     render(<InlinePageTabs />);
+    expect(screen.getByRole('tablist', { name: 'Diagram pages' })).toBeTruthy();
+    // A tab names itself. Chrome gave these tabs no name from their content,
+    // though jsdom computes one, so the attribute is what's pinned here.
+    expect(tabs().map((t) => t.getAttribute('aria-label'))).toEqual(['Diagram 1', 'Flow']);
     expect(tabs().map((t) => t.querySelector('.inline-tab-name')?.textContent)).toEqual(['Diagram 1', 'Flow']);
   });
 
@@ -42,6 +46,19 @@ describe('the diagram tabs', () => {
     render(<InlinePageTabs />);
     openMenuOf('Flow');
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Duplicate', 'Delete page']);
+  });
+
+  it('open the menu from the keyboard, under the tab, and come back to the tab on Escape', () => {
+    render(<InlinePageTabs />);
+    tabNamed('Flow').focus();
+    fireEvent.keyDown(tabNamed('Flow'), { key: 'F10', shiftKey: true });
+    expect(screen.getByRole('menuitem', { name: 'Delete page' })).toBeTruthy();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(tabNamed('Flow'));
+
+    fireEvent.keyDown(tabNamed('Flow'), { key: 'ContextMenu' });
+    expect(screen.getByRole('menuitem', { name: 'Delete page' })).toBeTruthy();
   });
 
   it('open the same menu from a right-click', () => {
@@ -83,6 +100,15 @@ describe('the diagram tabs', () => {
     fireEvent.change(again, { target: { value: 'Data model' } });
     fireEvent.keyDown(again, { key: 'Enter' });
     expect(usePageStore.getState().pages[first]?.name).toBe('Data model');
+    // The keys carry on from the tab, not from the page body.
+    expect(document.activeElement).toBe(tabNamed('Data model'));
+
+    fireEvent.keyDown(tabNamed('Data model'), { key: 'F2' });
+    const third = screen.getByLabelText('Page name');
+    fireEvent.change(third, { target: { value: 'Discarded' } });
+    fireEvent.keyDown(third, { key: 'Escape' });
+    expect(usePageStore.getState().pages[first]?.name).toBe('Data model');
+    expect(document.activeElement).toBe(tabNamed('Data model'));
   });
 
   it('duplicate opens the copy', () => {

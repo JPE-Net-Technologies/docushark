@@ -215,10 +215,21 @@ export function DropdownMenu({
     [isControlled, onOpenChange],
   );
 
+  // A menu opened at a point has no trigger to go back to. It returns focus to
+  // whatever had it as the menu opened: a page tab after Shift+F10, say.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (!open || trigger !== undefined) return;
+    const active = document.activeElement;
+    returnFocusRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+  }, [open, trigger]);
+
   const closeAll = useCallback(
     (refocusTrigger: boolean) => {
       setOpenNotify(false);
-      if (refocusTrigger) triggerRef.current?.focus();
+      if (!refocusTrigger) return;
+      if (triggerRef.current) triggerRef.current.focus();
+      else if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus({ preventScroll: true });
     },
     [setOpenNotify],
   );

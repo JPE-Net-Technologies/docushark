@@ -48,6 +48,15 @@ describe('pageLabel', () => {
     expect(pageLabel('canvas', '')).toBe('Diagram');
   });
 
+  it('names a copy of a default-named page as a copy of its label', () => {
+    expect(pageLabel('canvas', 'Canvas p.2 (Copy)')).toBe('Diagram 2 (Copy)');
+    expect(pageLabel('canvas', 'Canvas p.2 (Copy) (Copy)')).toBe('Diagram 2 (Copy) (Copy)');
+    expect(pageLabel('prose', 'Prose p.3 (Copy)', 'Overview')).toBe('Overview (Copy)');
+    // A chosen name's copy keeps the stored name.
+    expect(pageLabel('canvas', 'Flow (Copy)')).toBe('Flow (Copy)');
+    expect(pageLabel('canvas', 'Flow (Copy) (Copy)')).toBe('Flow (Copy) (Copy)');
+  });
+
   it('clips a long heading as document names are clipped', () => {
     const long = 'A heading that runs on well past the length a tab could ever show in full';
     expect(pageLabel('prose', 'Prose p.4', long).endsWith('…')).toBe(true);

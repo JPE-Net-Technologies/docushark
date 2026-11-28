@@ -26,7 +26,7 @@ import { factsLine, pageFacts } from './pages/pageFacts';
 import { PageMenu, pageMenuEntries, type PageMenuAnchor } from './pages/PageMenu';
 import { usePageHoverCard } from './pages/PageHoverCard';
 import { useLongPress } from './pages/useLongPress';
-import { menuAnchorFor } from './pages/menuAnchor';
+import { isMenuKey, menuAnchorBelow, menuAnchorFor } from './pages/menuAnchor';
 
 /** Kind glyph distinguishing a canvas (diagram) page from a prose page. */
 const canvasKindIcon = <Icon icon={Shapes} size={13} className="page-tab-kind-icon" />;
@@ -48,6 +48,7 @@ export function InlinePageTabs() {
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   const labelOf = useCallback((pageId: string) => pageLabel('canvas', pages[pageId]?.name ?? ''), [pages]);
 
@@ -113,8 +114,11 @@ export function InlinePageTabs() {
 
   const handleEditKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+      // Back to the tab once the field has gone, so the keys carry on from there.
+      returnFocusRef.current = e.currentTarget.closest<HTMLElement>('[role="tab"]');
       if (e.key === 'Enter') commitRename();
-      else if (e.key === 'Escape') {
+      else {
         setEditingPageId(null);
         setEditValue('');
       }
@@ -122,11 +126,14 @@ export function InlinePageTabs() {
     [commitRename]
   );
 
-  // Focus input when editing
+  // Focus the field when renaming starts, and the tab again when it ends by key.
   useEffect(() => {
     if (editingPageId && editInputRef.current) {
       editInputRef.current.focus();
       editInputRef.current.select();
+    } else if (!editingPageId && returnFocusRef.current) {
+      returnFocusRef.current.focus();
+      returnFocusRef.current = null;
     }
   }, [editingPageId]);
 
@@ -167,6 +174,8 @@ export function InlinePageTabs() {
               data-page-id={item.id}
               // The strip is a tablist; its tabs say so, and which is shown (DSK-194).
               role="tab"
+              // The tab's name is its label alone, not the ⋯ inside it too.
+              aria-label={item.label}
               aria-selected={isActive}
               aria-haspopup="menu"
               tabIndex={tab.tabIndex}
@@ -179,9 +188,16 @@ export function InlinePageTabs() {
                 openMenu(menuAnchorFor(e, item.id));
               }}
               onKeyDown={(e) => {
-                if (e.key === 'F2' && e.target === e.currentTarget) {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === 'F2') {
                   e.preventDefault();
                   startRename(item.id);
+                } else if (isMenuKey(e) && !readOnly) {
+                  // Opened here rather than left to the browser, which raises
+                  // no contextmenu for these keys on a Mac; preventDefault
+                  // stops a second one where it would.
+                  e.preventDefault();
+                  openMenu(menuAnchorBelow(e.currentTarget, item.id));
                 }
               }}
               onPointerEnter={hover.onPointerEnter}

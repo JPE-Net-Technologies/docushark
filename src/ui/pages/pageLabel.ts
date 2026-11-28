@@ -40,11 +40,22 @@ export function hasDefaultName(name: string, kind: PageKind): boolean {
   return name.trim() === '' || defaultPageNumber(name, kind) !== null;
 }
 
+/** What Duplicate appends to a page's stored name. */
+const COPY_SUFFIX = ' (Copy)';
+
 /**
  * The label for a page: its chosen name; else its first heading; else
- * "Page N" / "Diagram N" from its default name.
+ * "Page N" / "Diagram N" from its default name. A copy of a default-named
+ * page reads as a copy of that label ("Diagram 2 (Copy)"), not as the
+ * stored "Canvas p.2 (Copy)".
  */
 export function pageLabel(kind: PageKind, name: string, heading?: string | null): string {
+  if (name.endsWith(COPY_SUFFIX)) {
+    const base = name.slice(0, -COPY_SUFFIX.length);
+    if (base.trim() !== '' && (hasDefaultName(base, kind) || base.endsWith(COPY_SUFFIX))) {
+      return `${pageLabel(kind, base, heading)}${COPY_SUFFIX}`;
+    }
+  }
   if (!hasDefaultName(name, kind)) return name;
   const fromHeading = heading ? nameFromText(heading) : null;
   if (fromHeading) return fromHeading;

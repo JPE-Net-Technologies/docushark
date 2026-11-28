@@ -43,7 +43,7 @@ import { mirrorPageMenuEntries, PageMenu, pageMenuEntries, type PageMenuAnchor }
 import { usePageHoverCard } from './pages/PageHoverCard';
 import { useLongPress } from './pages/useLongPress';
 import { useProsePageHeadings } from './pages/useProsePageHeadings';
-import { menuAnchorFor } from './pages/menuAnchor';
+import { isMenuKey, menuAnchorBelow, menuAnchorFor } from './pages/menuAnchor';
 import './RichTextTabBar.css';
 
 interface RichTextTabBarProps {
@@ -85,6 +85,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   );
 
   const editInputRef = useRef<HTMLInputElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const familyFlyoutRef = useRef<HTMLDivElement>(null);
   const [adjustedFlyoutPos, setAdjustedFlyoutPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -129,11 +130,14 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [familyFlyout]);
 
-  // Focus input when editing starts
+  // Focus the field when renaming starts, and the tab again when it ends by key.
   useEffect(() => {
     if (editingPageId && editInputRef.current) {
       editInputRef.current.focus();
       editInputRef.current.select();
+    } else if (!editingPageId && returnFocusRef.current) {
+      returnFocusRef.current.focus();
+      returnFocusRef.current = null;
     }
   }, [editingPageId]);
 
@@ -161,9 +165,12 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   }, [editingPageId, editingName, labelOf, renamePage]);
 
   const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== 'Escape') return;
+    // Back to the tab once the field has gone, so the keys carry on from there.
+    returnFocusRef.current = e.currentTarget.closest<HTMLElement>('[role="tab"]');
     if (e.key === 'Enter') {
       commitRename();
-    } else if (e.key === 'Escape') {
+    } else {
       setEditingPageId(null);
       setEditingName('');
     }
@@ -334,6 +341,8 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
               // (DSK-194). A family's tab counts as selected while one of its
               // subpages is the page shown.
               role="tab"
+              // The tab's name is what it shows, not the buttons inside it too.
+              aria-label={activeChild ? `${item.label} › ${labelOf(activeChild)}` : item.label}
               aria-selected={isActive}
               aria-haspopup="menu"
               tabIndex={tab.tabIndex}
@@ -347,9 +356,16 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                 openMenu(menuAnchorFor(e, item.id));
               }}
               onKeyDown={(e) => {
-                if (e.key === 'F2' && e.target === e.currentTarget) {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === 'F2') {
                   e.preventDefault();
                   startRename(item.id);
+                } else if (isMenuKey(e) && !readOnly) {
+                  // Opened here rather than left to the browser, which raises
+                  // no contextmenu for these keys on a Mac; preventDefault
+                  // stops a second one where it would.
+                  e.preventDefault();
+                  openMenu(menuAnchorBelow(e.currentTarget, item.id));
                 }
               }}
               onPointerEnter={hover.onPointerEnter}

@@ -44,7 +44,13 @@ afterEach(cleanup);
 describe('the writing tabs', () => {
   it('name a default-named page from its first heading and keep a chosen name', () => {
     render(<RichTextTabBar />);
-    expect(screen.getByRole('tablist').closest('[aria-label]')?.getAttribute('aria-label')).toBe('Writing pages');
+    expect(screen.getByRole('tablist', { name: 'Writing pages' })).toBeTruthy();
+    // A tab names itself: Chrome gave these tabs no name from their content.
+    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))).toEqual([
+      'Overview',
+      'Requirements',
+      'Page 3',
+    ]);
     expect(tabNames()).toEqual(['Overview', 'Requirements', 'Page 3']);
   });
 
@@ -85,6 +91,22 @@ describe('the writing tabs', () => {
     const { notifications } = useNotificationStore.getState();
     act(() => notifications[notifications.length - 1]!.onAction!());
     expect(tabNames()).toEqual(['Overview', 'Requirements', 'Page 3']);
+  });
+
+  it('rename with F2, then carry on from the tab', () => {
+    render(<RichTextTabBar />);
+    const tab = () => screen.getByRole('tab', { name: 'Page 3' });
+    fireEvent.keyDown(tab(), { key: 'F2' });
+    fireEvent.keyDown(screen.getByLabelText('Page name'), { key: 'Escape' });
+    expect(prose().pages['p3']?.name).toBe('Prose p.3');
+    expect(document.activeElement).toBe(tab());
+
+    fireEvent.keyDown(tab(), { key: 'F2' });
+    const input = screen.getByLabelText('Page name');
+    fireEvent.change(input, { target: { value: 'Data model' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(prose().pages['p3']?.name).toBe('Data model');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Data model' }));
   });
 
   it('say what the add button adds', () => {
