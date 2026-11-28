@@ -25,9 +25,7 @@ import { renderFigure, renderGallery, renderImage } from './media';
 import { pdfNodeRenderers } from './registry';
 import { renderTable } from './tables';
 
-pdfNodeRenderers.register('heading', (ctx, node) => {
-  renderHeading(ctx, node);
-});
+pdfNodeRenderers.register('heading', (ctx, node, listLevel) => renderHeading(ctx, node, listLevel));
 
 pdfNodeRenderers.register('paragraph', (ctx, node, listLevel) => {
   renderParagraph(ctx, node, listLevel);

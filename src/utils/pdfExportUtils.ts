@@ -6,8 +6,13 @@
  * Renders inline formatting (bold, italic, underline, strikethrough, color,
  * highlight, inline code), text alignment, tables, task lists, and LaTeX math.
  *
- * This file is the entry point: `exportToPdf` puts the document together, and
- * the pieces live in `./pdfExport/` (DSK-242):
+ * This file is the entry point: `exportToPdf` lays the document out and adds
+ * the furniture, and the pieces live in `./pdfExport/` (DSK-242, DSK-252):
+ * - `layout.ts`: the layout itself, shared with `paginate.ts`, which runs it on
+ *   a `MeasureDoc` (`doc.ts`) to find where the pages break without writing a
+ *   PDF, and lays out again from an edited block (Paper Mode).
+ * - `pager.ts`: every page break and what opens the new page; `keep.ts`: keeping
+ *   a heading with the start of what follows.
  * - `context.ts`: the render context, the page types and the page-break check;
  *   `style.ts`: sizes, spacing and colours.
  * - `text.ts` and `tables.ts`: layout of styled text and of tables.
@@ -25,38 +30,21 @@
 import { jsPDF } from 'jspdf';
 import type { RichTextContent } from '../types/RichText';
 import { pdfFontFor, registerPDFFonts } from './pdfExport/fonts';
-import { PDFExportOptions, getPageDimensions } from '../types/PDFExport';
-import type { ImageCompression } from 'jspdf';
-import type { PDFQuality } from '../types/PDFExport';
-import { renderAllDiagramPages } from './pdfExport/canvas';
-import type { PDFCanvasPage, PDFRenderContext, PDFRichTextPage } from './pdfExport/context';
+import type { PDFExportOptions } from '../types/PDFExport';
+import type { PDFCanvasPage, PDFRichTextPage } from './pdfExport/context';
 import {
   addPageNumbers,
   buildPdfOutline,
   insertTableOfContents,
-  renderCoverPage,
   resolveDeferredHeadingLinks,
 } from './pdfExport/furniture';
-import { loadBlobAsDataUrl, loadEmbeddedImages } from './pdfExport/images';
-import { renderNode } from './pdfExport/registry';
-// Registers a renderer for every node type.
-import './pdfExport/nodes';
+import { layOut, layoutOf, wantsContents, type PdfLayout } from './pdfExport/layout';
 
 export { extractBibliographyEntries } from './pdfExport/blocks';
 export { warnUnhandledNodes } from './pdfExport/nodes';
 export { distributeColumnWidths } from './pdfExport/tables';
 export { breakOversizedWord, extractSegments, parseColor } from './pdfExport/text';
 export type { PDFCanvasPage, PDFRichTextPage } from './pdfExport/context';
-
-/**
- * Map PDF quality setting to jsPDF image compression level.
- * All levels use DEFLATE (lossless) - higher = more compression effort.
- */
-const QUALITY_TO_COMPRESSION: Record<PDFQuality, ImageCompression> = {
-  standard: 'FAST',   // Quick export, slightly larger files
-  high: 'MEDIUM',     // Balanced (default)
-  print: 'SLOW',      // Best compression for smallest files
-};
 
 /**
  * Export rich text content to PDF.
@@ -80,8 +68,20 @@ export async function exportToPdf(
   richTextPages?: PDFRichTextPage[],
   canvasPages?: PDFCanvasPage[]
 ): Promise<Blob> {
-  const { width, height } = getPageDimensions(options.pageSize, options.orientation);
+  return (await exportToPdfWithLayout(options, richTextContent, themeBackground, richTextPages, canvasPages)).blob;
+}
 
+/**
+ * `exportToPdf`, also returning where its pages broke: the same layout
+ * `paginate` computes without writing a PDF (DSK-252).
+ */
+export async function exportToPdfWithLayout(
+  options: PDFExportOptions,
+  richTextContent: RichTextContent,
+  themeBackground?: string,
+  richTextPages?: PDFRichTextPage[],
+  canvasPages?: PDFCanvasPage[]
+): Promise<{ blob: Blob; layout: PdfLayout }> {
   // Create PDF document. Compressed: jsPDF otherwise writes every content
   // stream and embedded font raw, about four times the size (DSK-250).
   const doc = new jsPDF({
@@ -95,111 +95,14 @@ export async function exportToPdf(
   // to replace jsPDF's built-in helvetica/courier which cause þÿ artifacts
   const textFont = await registerPDFFonts(doc, pdfFontFor(options.fontFamily));
 
-  // Determine the list of rich text pages to render
-  const pagesToRender: PDFRichTextPage[] = richTextPages && richTextPages.length > 0
-    ? richTextPages
-    : [{ name: 'Document', content: richTextContent }];
-
-  // Load all embedded images from all pages
-  const images = new Map<string, string>();
-  for (const page of pagesToRender) {
-    const pageImages = await loadEmbeddedImages(page.content.content);
-    for (const [key, value] of pageImages) {
-      images.set(key, value);
-    }
-  }
-
-  // Load cover page logo if needed
-  let logoDataUrl: string | null = null;
-  if (options.coverPage.enabled && options.coverPage.logoBlobId) {
-    logoDataUrl = await loadBlobAsDataUrl(options.coverPage.logoBlobId);
-  }
-
-  // Calculate content area
-  const contentWidth = width - options.margins.left - options.margins.right;
-
-  // Create render context
-  const ctx: PDFRenderContext = {
-    doc,
-    textFont,
-    y: options.margins.top,
-    pageWidth: width,
-    pageHeight: height,
-    contentWidth,
-    marginLeft: options.margins.left,
-    marginRight: options.margins.right,
-    marginTop: options.margins.top,
-    marginBottom: options.margins.bottom,
-    pageNumber: 1,
-    totalPages: 1, // Will be updated later
-    showPageNumbers: options.showPageNumbers,
-    pageNumberFormat: options.pageNumberFormat,
-    images,
-    imageCompression: QUALITY_TO_COMPRESSION[options.quality],
-    pageIdToPdfPage: {},
-    collectedHeadings: [],
-    currentPageHeadingIndex: 0,
-    currentPageId: undefined,
-    deferredHeadingLinks: [],
-  };
-
-  // Render cover page if enabled
-  if (options.coverPage.enabled) {
-    await renderCoverPage(ctx, options.coverPage, logoDataUrl);
-    doc.addPage();
-    ctx.pageNumber++;
-    ctx.y = options.margins.top;
-  }
-
-  // Render diagrams after cover page if position is 'after-cover'
-  if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'after-cover') {
-    await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
-  }
-
-  // Render diagrams before content if position is 'before-content'
-  if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'before-content') {
-    await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
-  }
-
-  // Render all rich text pages
-  for (let i = 0; i < pagesToRender.length; i++) {
-    const page = pagesToRender[i]!;
-
-    // Add a page break before each rich text page (except the first)
-    if (i > 0) {
-      doc.addPage();
-      ctx.pageNumber++;
-      ctx.y = ctx.marginTop;
-    }
-
-    // Record where this app page lives in the PDF (for internal link resolution)
-    if (page.id) {
-      ctx.pageIdToPdfPage[page.id] = ctx.pageNumber;
-    }
-    ctx.currentPageId = page.id;
-    ctx.currentPageHeadingIndex = 0;
-
-    // (Page/tab names are intentionally not printed — pages are separated by the
-    // hard page break above, not a per-page title heading.)
-
-    // Render document content for this page
-    if (page.content.content.content) {
-      for (const node of page.content.content.content) {
-        await renderNode(ctx, node, 0);
-      }
-    }
-  }
-
-  // Render diagrams after content if position is 'after-content'
-  if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'after-content') {
-    await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
-  }
+  // The cover, the diagrams and every prose page, drawn.
+  const ctx = await layOut(doc, textFont, { options, richTextContent, themeBackground, richTextPages, canvasPages });
+  const layout = layoutOf(options, ctx);
 
   // Insert ToC pages after the cover (or at the very front if no cover) and shift heading pages
-  const wantToc = options.includeTableOfContents !== false && ctx.collectedHeadings.length > 0;
   let tocInsertedCount = 0;
-  if (wantToc) {
-    tocInsertedCount = insertTableOfContents(ctx, options.coverPage.enabled);
+  if (wantsContents(options, ctx)) {
+    tocInsertedCount = insertTableOfContents(ctx, doc, options.coverPage.enabled);
   }
   // ToC insertion shifts every recorded PDF page number by `tocInsertedCount`.
   // Apply that shift to deferred-link source pages too so we write to the right page.
@@ -214,7 +117,7 @@ export async function exportToPdf(
 
   // Build PDF outline / bookmarks from collected headings
   if (options.includePdfOutline !== false && ctx.collectedHeadings.length > 0) {
-    buildPdfOutline(ctx);
+    buildPdfOutline(ctx, doc);
   }
 
   // Store total pages
@@ -227,5 +130,5 @@ export async function exportToPdf(
   }
 
   // Return as blob
-  return doc.output('blob');
+  return { blob: doc.output('blob'), layout };
 }

@@ -9,6 +9,7 @@ import { formatFileSize } from '../byteSize';
 import { parseHeadingHref } from '../headingLinks';
 import { NAMED_COLORS } from '../color';
 import { checkPageBreak, type PDFRenderContext, type TextSegment } from './context';
+import { type BreakAt, type InlinePosition, withBlockId } from './pager';
 import { PDF_STYLE } from './style';
 
 /**
@@ -20,10 +21,12 @@ export function extractSegments(node: JSONContent): TextSegment[] {
   const segments: TextSegment[] = [];
   if (!node.content) return segments;
 
-  for (const child of node.content) {
+  for (let source = 0; source < node.content.length; source++) {
+    const child = node.content[source]!;
     if (child.type === 'text') {
       const marks = child.marks || [];
       const seg: TextSegment = {
+        source,
         text: child.text || '',
         bold: marks.some((m) => m.type === 'bold'),
         italic: marks.some((m) => m.type === 'italic'),
@@ -62,6 +65,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       segments.push(seg);
     } else if (child.type === 'hardBreak') {
       segments.push({
+        source,
         text: '\n',
         bold: false, italic: false, underline: false, strike: false, code: false,
         color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -72,6 +76,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       const label = (child.attrs?.['label'] as string | undefined) || '';
       if (label) {
         segments.push({
+          source,
           text: label,
           bold: false, italic: false, underline: false, strike: false, code: false,
           color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -83,6 +88,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       const label = (child.attrs?.['label'] as string | undefined) || '';
       if (label) {
         segments.push({
+          source,
           text: label,
           bold: false, italic: false, underline: false, strike: false, code: false,
           color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -97,6 +103,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       const rawSize = Number(child.attrs?.['fileSize'] ?? 0);
       const size = Number.isFinite(rawSize) && rawSize > 0 ? ` (${formatFileSize(rawSize)})` : '';
       segments.push({
+        source,
         text: `${name}${size}`,
         bold: false, italic: true, underline: false, strike: false, code: false,
         color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -158,9 +165,24 @@ export function parseColor(color: string): [number, number, number] | null {
  * while `seg` provides the font styling (bold, italic, code, size scale).
  */
 function measureTextWidth(ctx: PDFRenderContext, seg: TextSegment, text: string, fontSize: number, defaultStyle: string): number {
+  const { name, style } = segmentFont(ctx, seg, defaultStyle);
+  const key = `${name}\u0000${style}\u0000${fontSize * seg.fontSizeScale}\u0000${text}`;
+  const cached = widthCache.get(key);
+  if (cached !== undefined) return cached;
   applySegmentFont(ctx, seg, fontSize, defaultStyle);
-  return ctx.doc.getTextWidth(text);
+  const width = ctx.doc.getTextWidth(text);
+  if (widthCache.size >= WIDTH_CACHE_LIMIT) widthCache.clear();
+  widthCache.set(key, width);
+  return width;
 }
+
+/**
+ * Measured widths, by font, style, size and text (DSK-252). A width depends on
+ * nothing else, and a layout measures the same words over and over, so the
+ * export and every re-layout share it. Cleared when it gets large.
+ */
+const widthCache = new Map<string, number>();
+const WIDTH_CACHE_LIMIT = 50_000;
 
 /**
  * Split a string into character-bounded pieces that each fit within
@@ -197,23 +219,35 @@ export function breakOversizedWord(
   return pieces;
 }
 
+/** The font a segment is set in: its family name and style. */
+function segmentFont(ctx: PDFRenderContext, seg: TextSegment, defaultStyle: string): { name: string; style: string } {
+  if (seg.code) return { name: PDF_FONT_MONO, style: 'normal' };
+  let style = defaultStyle;
+  if (seg.bold && seg.italic) style = 'bolditalic';
+  else if (seg.bold) style = 'bold';
+  else if (seg.italic) style = 'italic';
+  return { name: ctx.textFont, style };
+}
+
 /**
  * Apply a segment's font style to jsPDF.
  */
 function applySegmentFont(ctx: PDFRenderContext, seg: TextSegment, fontSize: number, defaultStyle: string): void {
-  const { doc } = ctx;
-  const actualSize = fontSize * seg.fontSizeScale;
-  doc.setFontSize(actualSize);
+  ctx.doc.setFontSize(fontSize * seg.fontSizeScale);
+  const { name, style } = segmentFont(ctx, seg, defaultStyle);
+  ctx.doc.setFont(name, style);
+}
 
-  if (seg.code) {
-    doc.setFont(PDF_FONT_MONO, 'normal');
-  } else {
-    let style = defaultStyle;
-    if (seg.bold && seg.italic) style = 'bolditalic';
-    else if (seg.bold) style = 'bold';
-    else if (seg.italic) style = 'italic';
-    doc.setFont(ctx.textFont, style);
-  }
+/**
+ * Whether two words are drawn alike, so they can go out as one text run.
+ * Linked words stay separate: each keeps its own link area, as before.
+ */
+function sameRunStyle(a: TextSegment, b: TextSegment): boolean {
+  return a.link === undefined && b.link === undefined
+    && a.bold === b.bold && a.italic === b.italic && a.code === b.code
+    && a.underline === b.underline && a.strike === b.strike
+    && a.color === b.color && a.highlight === b.highlight
+    && a.fontSizeScale === b.fontSizeScale && a.yOffset === b.yOffset;
 }
 
 /**
@@ -228,35 +262,60 @@ export function renderSegmentedText(
   defaultStyle: string,
   startX: number,
   availableWidth: number,
-  textAlign: string
+  textAlign: string,
+  lineAt: (line: number, inline: InlinePosition | undefined) => BreakAt = blockLineAt(ctx)
 ): void {
   if (segments.length === 0) {
     ctx.y += fontSize * 0.352778 * PDF_STYLE.lineHeight;
     return;
   }
+  const lines = layoutLines(ctx, segments, fontSize, defaultStyle, availableWidth);
+  drawLines(ctx, lines, fontSize, defaultStyle, startX, availableWidth, textAlign, lineAt);
+}
 
-  const lineHeightMm = fontSize * 0.352778 * PDF_STYLE.lineHeight;
+/** A word (or a run of spaces) of a laid-out line, and where in its segment it starts. */
+interface WordChunk { text: string; seg: TextSegment; offset: number; }
 
-  // Break segments into words, preserving which segment each word belongs to
-  interface WordChunk { text: string; seg: TextSegment; }
+/** One laid-out line: its words and its width. */
+export interface TextLine { chunks: WordChunk[]; width: number; }
+
+/** The height of one line of text at `fontSize` (pt), in mm. */
+export function lineHeightOf(fontSize: number): number {
+  return fontSize * 0.352778 * PDF_STYLE.lineHeight;
+}
+
+/**
+ * Wrap styled segments into lines at `availableWidth`: the measuring half of
+ * `renderSegmentedText`, which the paginator's rules reuse (DSK-252).
+ */
+export function layoutLines(
+  ctx: PDFRenderContext,
+  segments: TextSegment[],
+  fontSize: number,
+  defaultStyle: string,
+  availableWidth: number
+): TextLine[] {
+  // Break segments into words, preserving which segment each word belongs to,
+  // and where in it the word starts (for page-break positions, DSK-252)
   const words: WordChunk[] = [];
   for (const seg of segments) {
     if (seg.text === '\n') {
-      words.push({ text: '\n', seg });
+      words.push({ text: '\n', seg, offset: 0 });
       continue;
     }
     // Split on word boundaries but keep leading/trailing spaces with the word
     const parts = seg.text.split(/( +)/);
+    let offset = 0;
     for (const part of parts) {
       if (part.length > 0) {
-        words.push({ text: part, seg });
+        words.push({ text: part, seg, offset });
       }
+      offset += part.length;
     }
   }
 
   // Build lines by wrapping words
-  interface LineDef { chunks: WordChunk[]; width: number; }
-  const lines: LineDef[] = [];
+  const lines: TextLine[] = [];
   let currentLine: WordChunk[] = [];
   let currentLineWidth = 0;
 
@@ -285,13 +344,15 @@ export function renderSegmentedText(
         availableWidth,
         (s) => ctx.doc.getTextWidth(s),
       );
+      let pieceOffset = word.offset;
       for (let i = 0; i < pieces.length - 1; i++) {
         const pieceText = pieces[i]!;
         const pieceWidth = measureTextWidth(ctx, word.seg, pieceText, fontSize, defaultStyle);
-        lines.push({ chunks: [{ text: pieceText, seg: word.seg }], width: pieceWidth });
+        lines.push({ chunks: [{ text: pieceText, seg: word.seg, offset: pieceOffset }], width: pieceWidth });
+        pieceOffset += pieceText.length;
       }
       const lastPiece = pieces[pieces.length - 1]!;
-      currentLine = [{ text: lastPiece, seg: word.seg }];
+      currentLine = [{ text: lastPiece, seg: word.seg, offset: pieceOffset }];
       currentLineWidth = measureTextWidth(ctx, word.seg, lastPiece, fontSize, defaultStyle);
       continue;
     }
@@ -308,10 +369,35 @@ export function renderSegmentedText(
   if (currentLine.length > 0) {
     lines.push({ chunks: currentLine, width: currentLineWidth });
   }
+  return lines;
+}
+
+/**
+ * Draw laid-out lines from `ctx.y`, one line height apart, breaking the page
+ * before any line that doesn't fit. `from` and `to` draw part of them.
+ */
+export function drawLines(
+  ctx: PDFRenderContext,
+  lines: TextLine[],
+  fontSize: number,
+  defaultStyle: string,
+  startX: number,
+  availableWidth: number,
+  textAlign: string,
+  lineAt: (line: number, inline: InlinePosition | undefined) => BreakAt,
+  from = 0,
+  to = lines.length
+): void {
+  const lineHeightMm = lineHeightOf(fontSize);
 
   // Render each line
-  for (const line of lines) {
-    checkPageBreak(ctx, lineHeightMm);
+  for (let lineIndex = from; lineIndex < to; lineIndex++) {
+    const line = lines[lineIndex]!;
+    const first = line.chunks[0];
+    const inline = first && first.seg.source !== undefined
+      ? { child: first.seg.source, offset: first.offset }
+      : undefined;
+    checkPageBreak(ctx, lineHeightMm, lineAt(lineIndex, inline));
 
     // Calculate x offset for alignment
     let lineX = startX;
@@ -321,8 +407,18 @@ export function renderSegmentedText(
       lineX = startX + availableWidth - line.width;
     }
 
-    let cursorX = lineX;
+    // Neighbouring words with the same style go out as one text run (DSK-252):
+    // one font change, one colour and one text operator instead of one per
+    // word and space. jsPDF doesn't kern, so the glyphs land where they did.
+    const runs: Array<{ text: string; seg: TextSegment }> = [];
     for (const chunk of line.chunks) {
+      const last = runs[runs.length - 1];
+      if (last && sameRunStyle(last.seg, chunk.seg)) last.text += chunk.text;
+      else runs.push({ text: chunk.text, seg: chunk.seg });
+    }
+
+    let cursorX = lineX;
+    for (const chunk of runs) {
       const seg = chunk.seg;
       applySegmentFont(ctx, seg, fontSize, defaultStyle);
 
@@ -430,6 +526,13 @@ export function renderSegmentedText(
   ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
+}
+
+/** Line positions inside the block being laid out (a paragraph or heading). */
+function blockLineAt(ctx: PDFRenderContext): (line: number, inline: InlinePosition | undefined) => BreakAt {
+  const path = [...ctx.path];
+  const ids = withBlockId(ctx.blocks[ctx.blocks.length - 1]);
+  return (line, inline) => ({ kind: 'line', path, ...ids, line, ...(inline ? { inline } : {}) });
 }
 
 /**

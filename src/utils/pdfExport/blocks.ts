@@ -5,15 +5,17 @@
 
 import type { JSONContent } from '@tiptap/core';
 import { PDF_FONT_MONO } from './fonts';
-import { checkPageBreak, pageContentHeight, spaceLeft, type PDFRenderContext, type TextSegment } from './context';
-import { renderNode } from './registry';
+import { checkPageBreak, newPage, pageContentHeight, spaceLeft, type PDFRenderContext, type TextSegment } from './context';
+import { withBlockId } from './pager';
+import { leadAfter } from './keep';
+import { renderChildren } from './registry';
 import { PDF_STYLE } from './style';
-import { extractSegments, extractText, renderSegmentedText } from './text';
+import { extractSegments, extractText, layoutLines, lineHeightOf, renderSegmentedText } from './text';
 
 /**
  * Render a heading node with inline formatting and alignment.
  */
-export function renderHeading(ctx: PDFRenderContext, node: JSONContent): void {
+export async function renderHeading(ctx: PDFRenderContext, node: JSONContent, listLevel = 0): Promise<void> {
   const level = (node.attrs?.['level'] as number | undefined) || 1;
   const fontSize = PDF_STYLE.headingSizes[level] || 12;
   const textAlign = (node.attrs?.['textAlign'] as string | undefined) || 'left';
@@ -24,7 +26,16 @@ export function renderHeading(ctx: PDFRenderContext, node: JSONContent): void {
     ctx.y += topSpacing;
   }
 
-  checkPageBreak(ctx, fontSize * PDF_STYLE.lineHeight);
+  // Keep the heading with the start of what follows (DSK-252): it moves to the
+  // next page unless this one also holds that start. Not when the two together
+  // wouldn't fit on a page anyway. The room asked for before stays the least.
+  const segments = extractSegments(node);
+  const leastRoom = fontSize * PDF_STYLE.lineHeight;
+  const lineCount = segments.length === 0 ? 1 : layoutLines(ctx, segments, fontSize, 'bold', ctx.contentWidth).length;
+  const ownHeight = lineCount * lineHeightOf(fontSize) + PDF_STYLE.headingBottomSpacing;
+  const lead = await leadAfter(ctx, ctx.y + ownHeight, listLevel);
+  const withLead = ownHeight + lead;
+  checkPageBreak(ctx, lead > 0 && withLead <= pageContentHeight(ctx) ? Math.max(leastRoom, withLead) : leastRoom);
 
   // Capture heading metadata for ToC + outline (text and the page where it lands).
   // Stamp pageId + within-page index so heading-targeted internal links can resolve.
@@ -43,7 +54,6 @@ export function renderHeading(ctx: PDFRenderContext, node: JSONContent): void {
     });
   }
 
-  const segments = extractSegments(node);
   renderSegmentedText(ctx, segments, fontSize, 'bold', ctx.marginLeft, ctx.contentWidth, textAlign);
 
   ctx.y += PDF_STYLE.headingBottomSpacing;
@@ -120,9 +130,7 @@ export async function renderBulletList(
 ): Promise<void> {
   if (!node.content) return;
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel + 1);
-  }
+  await renderChildren(ctx, node, listLevel + 1);
 
   ctx.y += 2;
 }
@@ -139,9 +147,7 @@ export async function renderOrderedList(
 
   const counter = { value: (node.attrs?.['start'] as number | undefined) || 1 };
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel + 1, counter);
-  }
+  await renderChildren(ctx, node, listLevel + 1, counter);
 
   ctx.y += 2;
 }
@@ -179,9 +185,7 @@ export async function renderListItem(
   }
 
   // Render list item content
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel);
-  }
+  await renderChildren(ctx, node, listLevel);
 }
 
 /**
@@ -227,16 +231,18 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
     // Taller than a page: split across pages, starting where it stands. Drawn
     // in one piece it ran off the page and lost its end (DSK-251).
     checkPageBreak(ctx, CODE_BLOCK_MIN_LINES * lineHeightMm + PDF_STYLE.codeBlockPadding * 2);
+    const path = [...ctx.path];
+    const ids = withBlockId(node);
     let remaining = wrappedLines;
+    let drawn = 0;
     while (remaining.length > 0) {
       const room = Math.floor((spaceLeft(ctx) - PDF_STYLE.codeBlockPadding * 2) / lineHeightMm);
       const part = remaining.slice(0, Math.max(1, room));
       remaining = remaining.slice(part.length);
       drawCodeLines(ctx, part, lineHeightMm);
+      drawn += part.length;
       if (remaining.length > 0) {
-        ctx.doc.addPage();
-        ctx.pageNumber++;
-        ctx.y = ctx.marginTop;
+        newPage(ctx, { kind: 'codeLine', path, ...ids, line: drawn });
       }
     }
   }
@@ -283,33 +289,33 @@ export async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent)
   ctx.y += pad;
   ctx.doc.setFont(ctx.textFont, 'italic');
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, 1);
-  }
+  await renderChildren(ctx, node, 1);
 
   // Last child added trailing 2mm; reduce so internal bottom pad reads symmetric with top
   ctx.y += pad - 2;
 
   ctx.doc.setDrawColor(150, 150, 150);
   ctx.doc.setLineWidth(1);
-
-  if (ctx.pageNumber === startPage) {
-    ctx.doc.line(ctx.marginLeft + 2, startY, ctx.marginLeft + 2, ctx.y);
-  } else {
-    const footerSpace = ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
-    ctx.doc.setPage(startPage);
-    ctx.doc.line(
-      ctx.marginLeft + 2,
-      startY,
-      ctx.marginLeft + 2,
-      ctx.pageHeight - ctx.marginBottom - footerSpace,
-    );
-    ctx.doc.setPage(ctx.pageNumber);
-    ctx.doc.line(ctx.marginLeft + 2, ctx.marginTop, ctx.marginLeft + 2, ctx.y);
-  }
+  drawBarAcrossPages(ctx, ctx.marginLeft + 2, startPage, startY);
 
   ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.y += 2;
+}
+
+/**
+ * Draw a block's left bar from where it started to where it ended, on every
+ * page in between too: a quote or callout can run over several pages
+ * (DSK-252; the middle pages used to get none).
+ */
+function drawBarAcrossPages(ctx: PDFRenderContext, x: number, startPage: number, startY: number): void {
+  const footerSpace = ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
+  const pageBottom = ctx.pageHeight - ctx.marginBottom - footerSpace;
+  for (let page = startPage; page < ctx.pageNumber; page++) {
+    ctx.doc.setPage(page);
+    ctx.doc.line(x, page === startPage ? startY : ctx.marginTop, x, pageBottom);
+  }
+  if (startPage !== ctx.pageNumber) ctx.doc.setPage(ctx.pageNumber);
+  ctx.doc.line(x, startPage === ctx.pageNumber ? startY : ctx.marginTop, x, ctx.y);
 }
 
 /**
@@ -335,9 +341,7 @@ export async function renderTaskList(
 ): Promise<void> {
   if (!node.content) return;
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel + 1);
-  }
+  await renderChildren(ctx, node, listLevel + 1);
   ctx.y += 2;
 }
 
@@ -374,9 +378,7 @@ export async function renderTaskItem(
   }
 
   // Render task item content
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel);
-  }
+  await renderChildren(ctx, node, listLevel);
 }
 
 const PDF_CALLOUT_COLORS: Record<string, [number, number, number]> = {
@@ -409,23 +411,13 @@ export async function renderCallout(ctx: PDFRenderContext, node: JSONContent): P
   ctx.doc.setTextColor(0, 0, 0);
   ctx.doc.setFont(ctx.textFont, 'normal');
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, 1);
-  }
+  await renderChildren(ctx, node, 1);
   ctx.y += 1;
 
   // Coloured left border (handles page spill like blockquote).
   ctx.doc.setDrawColor(color[0], color[1], color[2]);
   ctx.doc.setLineWidth(1.5);
-  if (ctx.pageNumber === startPage) {
-    ctx.doc.line(ctx.marginLeft + 1.5, startY, ctx.marginLeft + 1.5, ctx.y);
-  } else {
-    const footerSpace = ctx.showPageNumbers ? PDF_STYLE.pageNumberFooterHeight : 0;
-    ctx.doc.setPage(startPage);
-    ctx.doc.line(ctx.marginLeft + 1.5, startY, ctx.marginLeft + 1.5, ctx.pageHeight - ctx.marginBottom - footerSpace);
-    ctx.doc.setPage(ctx.pageNumber);
-    ctx.doc.line(ctx.marginLeft + 1.5, ctx.marginTop, ctx.marginLeft + 1.5, ctx.y);
-  }
+  drawBarAcrossPages(ctx, ctx.marginLeft + 1.5, startPage, startY);
   ctx.doc.setDrawColor(0, 0, 0);
   ctx.y += 3;
 }

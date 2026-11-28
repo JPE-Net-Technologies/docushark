@@ -1106,6 +1106,7 @@
         "Page 2 of 6"
       ],
       [
+        "Item Owner Notes",
         "Row 12 prose citation. relay export page heading",
         "review relay export page",
         "outline.",
@@ -1139,12 +1140,13 @@
         "Row 22 diagram figure. page heading source",
         "document export page",
         "heading source relay.",
-        "Row 23 document prose. review relay export page",
-        "outline review relay export",
-        "table.",
         "Page 3 of 6"
       ],
       [
+        "Item Owner Notes",
+        "Row 23 document prose. review relay export page",
+        "outline review relay export",
+        "table.",
         "Row 24 page heading. layout table outline review",
         "shape layout table outline",
         "canvas.",
@@ -1175,15 +1177,16 @@
         "Row 33 citation diagram. export page heading source",
         "relay export page heading",
         "review.",
+        "Page 4 of 6"
+      ],
+      [
+        "Item Owner Notes",
         "Row 34 source document. outline review relay export",
         "table outline review relay",
         "layout.",
         "Row 35 export page. shape layout table outline",
         "canvas shape layout table",
         "figure.",
-        "Page 4 of 6"
-      ],
-      [
         "Row 36 outline review. diagram figure canvas",
         "shape citation diagram",
         "figure canvas prose.",
@@ -1211,6 +1214,10 @@
         "Row 44 prose citation. relay export page heading",
         "review relay export page",
         "outline.",
+        "Page 5 of 6"
+      ],
+      [
+        "Item Owner Notes",
         "Row 45 heading source. table outline review relay",
         "layout table outline review",
         "shape.",
@@ -1220,9 +1227,6 @@
         "Row 47 table outline. citation diagram figure",
         "canvas prose citation",
         "diagram figure document.",
-        "Page 5 of 6"
-      ],
-      [
         "Row 48 canvas shape. source document prose",
         "citation heading source",
         "document prose page.",

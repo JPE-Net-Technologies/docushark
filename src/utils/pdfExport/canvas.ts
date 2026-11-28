@@ -9,7 +9,8 @@ import { exportToPng, type ExportData } from '../exportUtils';
 import { useDocumentStore } from '../../store/documentStore';
 import { isGroup, type GroupShape, type Shape, type ConnectorShape } from '../../shapes/Shape';
 import { normalizeAutoColorsForExport } from '../../engine/ContrastResolver';
-import { checkPageBreak, type PDFCanvasPage, type PDFRenderContext } from './context';
+import { checkPageBreak, newPage, type PDFCanvasPage, type PDFRenderContext } from './context';
+import type { BreakAt } from './pager';
 import { calculateScaledDimensions, getImageDimensions } from './images';
 import { PDF_STYLE } from './style';
 
@@ -30,20 +31,19 @@ export async function renderAllDiagramPages(
       if (page.shapeOrder.length === 0) continue;
 
       // Page break before each canvas page (except the first diagram page)
+      const at: BreakAt = { kind: 'section', section: 'diagram', index: i };
       if (i > 0) {
-        ctx.doc.addPage();
-        ctx.pageNumber++;
-        ctx.y = ctx.marginTop;
+        newPage(ctx, at);
       }
 
       // (Canvas page/tab names are intentionally not printed — pages are
       // separated by the hard page break above, not a per-page title heading.)
 
-      await renderDiagramPageToPdf(ctx, embedOptions, page.shapes, page.shapeOrder, themeBackground);
+      await renderDiagramPageToPdf(ctx, embedOptions, page.shapes, page.shapeOrder, at, themeBackground);
     }
   } else {
     // Legacy: single page from documentStore
-    await renderDiagramToPdf(ctx, embedOptions, themeBackground);
+    await renderDiagramToPdf(ctx, embedOptions, { kind: 'section', section: 'diagram', index: 0 }, themeBackground);
   }
 }
 
@@ -55,6 +55,7 @@ async function renderDiagramPageToPdf(
   embedOptions: PDFDiagramEmbed,
   shapes: Record<string, Shape>,
   shapeOrder: string[],
+  at: BreakAt,
   themeBackground?: string
 ): Promise<void> {
   try {
@@ -101,7 +102,7 @@ async function renderDiagramPageToPdf(
       maxHeight
     );
 
-    checkPageBreak(ctx, scaled.height + 10);
+    checkPageBreak(ctx, scaled.height + 10, at);
 
     const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
     ctx.doc.addImage({
@@ -126,6 +127,7 @@ async function renderDiagramPageToPdf(
 async function renderDiagramToPdf(
   ctx: PDFRenderContext,
   embedOptions: PDFDiagramEmbed,
+  at: BreakAt,
   themeBackground?: string
 ): Promise<void> {
   try {
@@ -183,7 +185,7 @@ async function renderDiagramToPdf(
     );
 
     // Check if we need a page break
-    checkPageBreak(ctx, scaled.height + 10);
+    checkPageBreak(ctx, scaled.height + 10, at);
 
     // Center the diagram
     const x = ctx.marginLeft + (ctx.contentWidth - scaled.width) / 2;
