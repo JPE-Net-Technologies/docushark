@@ -9,15 +9,18 @@ There are two levels to keep in order: the pages inside a document, and the docu
 
 ## Pages {#pages}
 
-A document holds two kinds of pages: **prose pages** for writing and **canvas pages** for diagrams. Each kind has its own row of tabs: the prose tabs sit above your writing, and the canvas tabs sit in the canvas's tool row. A new document starts with one of each, and each page's content is its own.
+A document holds two kinds of pages: **writing pages** and **diagrams**. Each kind has its own row of tabs: the writing tabs sit above your writing, and the diagram tabs sit in the canvas's tool row. A new document starts with one of each, and each page's content is its own.
 
-- **Add a page** with the **+** beside the tabs. It adds a page of that kind.
-- **Rename, colour or delete** a page by right-clicking its tab. A document always keeps at least one page of each kind.
-- **Reorder** pages by dragging their tabs.
+- **A page's name** comes from its first heading, the way a browser tab takes its title from the page, until you rename it. A page with no heading is "Page 2" or "Diagram 2".
+- **Add a page** with **+ Page** or **+ Diagram** at the end of its row.
+- **A page's menu** has **Rename**, **Color** (writing pages), **Duplicate** (diagrams) and **Delete page**. Open it with the **⋯** on the tab, by right-clicking the tab, by pressing and holding it on a touch screen, or with `Shift+F10` on a focused tab. `F2` or a double-click on the tab also renames.
+- **Delete page** removes the page straight away. For ten seconds, **Undo** in the message that appears brings it back. A document always keeps at least one page of each kind.
+- **Rest the pointer** on a tab to see the page's full name, its length, and where it falls in the PDF.
+- **Reorder** writing pages by dragging their tabs; reorder diagrams, or any page, in the Navigator.
 
 Treat pages as the sections of one piece of work, ordered from overview to detail: "Overview", "Data model", "API flow". A PDF export prints the pages in order; see [Export and import](./export-import).
 
-**The Navigator** panel lists every page, prose and canvas, in the order they export. Click a page to go to it, or drag pages to reorder them. Turn it on from the layout button's **Panels** section, or with **Toggle Navigator panel** in the command palette (`Ctrl+K`).
+**The Navigator** panel lists every page, writing pages and diagrams, in the order they export. Click a page to go to it, or drag pages to reorder them. Turn it on from the layout button's **Panels** section, or with **Toggle Navigator panel** in the command palette (`Ctrl+K`).
 
 ### Pages from Notion {#mirrored-pages}
 
@@ -25,7 +28,7 @@ A **mirrored page** shows a live, read-only copy of a Notion page inside a works
 
 - **Add one** with **Tools → New page from Notion…** (or from the command palette), then search for the page. To start a whole document from a page, use the arrow beside **New** in Documents and choose **From Notion…**.
 - **A banner** above the page names the source and when it last synced, with **Refresh**, **Open in Notion** and **Detach**. Detach turns it into an ordinary editable page with the content as last synced; it can't be undone.
-- **Subpages:** right-click the tab and choose **Add subpages…** to mirror the source's subpages too, a few levels deep if you like. They share one tab with a menu, and the Navigator shows them under their parent, with how long ago each synced, **Refresh all**, and a button to put pages back in the source's order.
+- **Subpages:** open the tab's menu (its **⋯**, or a right-click) and choose **Add subpages…** to mirror the source's subpages too, a few levels deep if you like. They share one tab with a menu, and the Navigator shows them under their parent, with how long ago each synced, **Refresh all**, and a button to put pages back in the source's order.
 
 Headings, lists, tables, images and attachments come across; anything the import can't represent is reported when the page is added. Mirrored pages aren't offered in a local document, because they live in your workspace.
 

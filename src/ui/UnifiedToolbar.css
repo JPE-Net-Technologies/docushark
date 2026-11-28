@@ -723,44 +723,6 @@
   background: var(--bg-hover);
 }
 
-/* Inline Tab Context Menu */
-.inline-tab-context-menu {
-  position: fixed;
-  min-width: 120px;
-  padding: var(--space-1);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  z-index: 2000;
-}
-
-.inline-tab-context-menu button {
-  display: block;
-  width: 100%;
-  padding: var(--space-1-5) 10px;
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-}
-
-.inline-tab-context-menu button:hover {
-  background: var(--bg-hover);
-}
-
-.inline-tab-context-menu button.disabled {
-  color: var(--text-muted);
-  cursor: not-allowed;
-}
-
-.inline-tab-context-menu button.disabled:hover {
-  background: transparent;
-}
-
 /* Inline Tab Input */
 .inline-tab-input {
   width: 60px;
@@ -771,16 +733,6 @@
   border: 1px solid var(--color-primary, var(--color-primary));
   border-radius: 3px;
   outline: none;
-}
-
-[data-theme="dark"] .inline-tab-context-menu {
-  background: var(--bg-primary);
-  border-color: var(--border-color);
-  box-shadow: var(--shadow-lg);
-}
-
-[data-theme="dark"] .inline-tab-context-menu button:hover {
-  background: var(--bg-hover);
 }
 
 [data-theme="dark"] .inline-tab-input {

@@ -3,6 +3,7 @@ import { navigateActivePage } from './pageNavigation';
 import { usePageStore } from '../store/pageStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { useHistoryStore } from '../store/historyStore';
+import { usePendingPageDeletes } from '../store/pendingPageDeleteStore';
 
 const canvasFocus = () => false;
 const proseFocus = () => true;
@@ -21,6 +22,16 @@ describe('navigateActivePage', () => {
     usePageStore.setState({ pageOrder: ['c1', 'c2', 'c3'], activePageId: 'c2', setActivePage: canvasSet } as never);
     useRichTextPagesStore.setState({ pageOrder: ['p1', 'p2', 'p3'], activePageId: 'p2', setActivePage: proseSet } as never);
     useHistoryStore.setState({ setActivePage: historySet } as never);
+    usePendingPageDeletes.setState({ pending: {} });
+  });
+
+  it('steps over a page waiting out a delete\'s Undo (DSK-260)', () => {
+    usePendingPageDeletes.setState({ pending: { c3: { kind: 'canvas', toastId: 't', wasActive: false } } });
+    navigateActivePage('next', canvasFocus);
+    expect(canvasSet).not.toHaveBeenCalled();
+    usePendingPageDeletes.setState({ pending: { p1: { kind: 'prose', toastId: 't', wasActive: false } } });
+    navigateActivePage('prev', proseFocus);
+    expect(proseSet).not.toHaveBeenCalled();
   });
 
   it('moves to the next canvas page and mirrors history', () => {

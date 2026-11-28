@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useState } from 'react';
 import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { DropdownMenu, menuAction, MENU_SEPARATOR, type DropdownMenuEntry } from './DropdownMenu';
 
@@ -242,6 +243,31 @@ describe('DropdownMenu', () => {
       // `open` is still true from the parent, so the menu must not self-close —
       // that is what "controlled" means.
       expect(screen.getByRole('menu')).toBeTruthy();
+    });
+
+    it('gives focus back to what had it when the menu opened, on Escape (DSK-260)', () => {
+      function Host() {
+        const [open, setOpen] = useState(false);
+        return (
+          <>
+            <div role="tab" tabIndex={0} aria-label="Page 2" onKeyDown={() => setOpen(true)} />
+            <DropdownMenu
+              open={open}
+              onOpenChange={setOpen}
+              anchorPoint={{ x: 10, y: 10 }}
+              entries={[menuAction({ id: 'a', label: 'Alpha', onSelect: vi.fn() })]}
+            />
+          </>
+        );
+      }
+      render(<Host />);
+      const tab = screen.getByRole('tab', { name: 'Page 2' });
+      tab.focus();
+      fireEvent.keyDown(tab, { key: 'F10', shiftKey: true });
+      expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Alpha' }));
+      fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(document.activeElement).toBe(tab);
     });
   });
 

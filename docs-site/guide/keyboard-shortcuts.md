@@ -22,6 +22,17 @@ You don't need to memorize these. Press `Ctrl+K` (`Cmd+K` on a Mac) for the **co
 
 In a browser tab, `F6` belongs to the browser: use **Move focus to the canvas** and **Move focus to the text** in the command palette instead. The desktop app and an installed app pass `F6` to DocuShark.
 
+## On a page tab {#page-tabs}
+
+Press `Tab` to reach a row of page tabs; it lands on the page that's open.
+
+| Action | Shortcut |
+|---|---|
+| Move along the tabs | `←` / `→`, `Home` / `End` |
+| Open the page | `Enter` |
+| Rename the page | `F2` |
+| Open the page's menu | `Shift+F10` or the Menu key |
+
 ## In your library {#library}
 
 | Action | Shortcut |

@@ -13,14 +13,22 @@ import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
 import { useDocumentStore } from '../store/documentStore';
 import { countWordsInHtml } from '../utils/versionSummary';
+import { usePendingDeleteIds } from '../store/pendingPageDeleteStore';
+import { pageLabel } from './pages/pageLabel';
+import { useProsePageHeadings } from './pages/useProsePageHeadings';
 import './DocumentStats.css';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
 export function ProseReadout() {
   const stats = useProseStatsStore((s) => s.stats);
-  const pageCount = useRichTextPagesStore((s) => s.pageOrder.length);
-  const pageIndex = useRichTextPagesStore((s) => (s.activePageId ? s.pageOrder.indexOf(s.activePageId) : -1));
+  const pageOrder = useRichTextPagesStore((s) => s.pageOrder);
+  const activePageId = useRichTextPagesStore((s) => s.activePageId);
+  // A page waiting out its Undo is gone as far as the reader can tell (DSK-260).
+  const pending = usePendingDeleteIds();
+  const shown = pageOrder.filter((id) => !pending.has(id));
+  const pageCount = shown.length;
+  const pageIndex = activePageId ? shown.indexOf(activePageId) : -1;
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<CSSProperties>({});
   const rootRef = useRef<HTMLDivElement>(null);
@@ -94,18 +102,23 @@ function DocumentStatsPopover({ popoverRef, style }: { popoverRef: Ref<HTMLDivEl
   const pages = useRichTextPagesStore((s) => s.pages);
   const pageOrder = useRichTextPagesStore((s) => s.pageOrder);
   const activePageId = useRichTextPagesStore((s) => s.activePageId);
-  const canvasPages = usePageStore((s) => s.pageOrder.length);
+  const canvasOrder = usePageStore((s) => s.pageOrder);
   const shapes = useDocumentStore((s) => s.shapeOrder.length);
+  const pending = usePendingDeleteIds();
+  const headings = useProsePageHeadings();
   if (!stats) return null;
 
+  // Pages by the names their tabs show, leaving out any waiting out its Undo (DSK-260).
   const perPage = pageOrder
+    .filter((id) => !pending.has(id))
     .map((id) => pages[id])
     .filter((page): page is NonNullable<typeof page> => !!page)
     .map((page) => ({
       id: page.id,
-      name: page.name,
+      name: pageLabel('prose', page.name, headings[page.id]),
       words: page.id === activePageId ? stats.words : countWordsInHtml(page.content),
     }));
+  const diagrams = canvasOrder.filter((id) => !pending.has(id)).length;
   const totalWords = perPage.reduce((sum, page) => sum + page.words, 0) || stats.words;
   const minutes = readingMinutes(stats.words);
 
@@ -139,9 +152,9 @@ function DocumentStatsPopover({ popoverRef, style }: { popoverRef: Ref<HTMLDivEl
           </dl>
         </>
       )}
-      <div className="document-stats-heading">Canvas</div>
+      <div className="document-stats-heading">Diagrams</div>
       <p className="document-stats-line">
-        {plural(canvasPages, 'page')} · {plural(shapes, 'shape')} on this page
+        {plural(diagrams, 'diagram')} · {plural(shapes, 'shape')} on the open one
       </p>
     </div>
   );

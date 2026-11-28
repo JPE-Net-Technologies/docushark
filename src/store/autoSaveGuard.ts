@@ -58,3 +58,27 @@ export function registerSaveNow(fn: () => void): void {
 export function requestSaveNow(): void {
   saveNowImpl?.();
 }
+
+// Work that must finish against the open document before another replaces it,
+// such as a page deletion still waiting out its Undo (DSK-260). Its owners
+// register here, so the persistence store never imports them.
+const beforeDocumentSwitch = new Set<() => void>();
+
+/** Register work to run before the open document is replaced. Returns an unregister. */
+export function onBeforeDocumentSwitch(fn: () => void): () => void {
+  beforeDocumentSwitch.add(fn);
+  return () => {
+    beforeDocumentSwitch.delete(fn);
+  };
+}
+
+/** Run the registered work. The switching paths call this, then flush the autosave. */
+export function runBeforeDocumentSwitch(): void {
+  for (const fn of beforeDocumentSwitch) {
+    try {
+      fn();
+    } catch (error) {
+      console.error('[autosave] work before a document switch failed:', error);
+    }
+  }
+}

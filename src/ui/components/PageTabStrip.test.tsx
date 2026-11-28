@@ -103,6 +103,35 @@ describe('PageTabStrip', () => {
     expect(screen.getByLabelText('All pages')).toBeTruthy();
   });
 
+  it('keeps the open tab in view when the row changes width (DSK-260)', () => {
+    let onResize: () => void = () => {};
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          onResize = cb;
+        }
+        observe() {}
+        disconnect() {}
+      }
+    );
+    renderStrip();
+    const row = screen.getByRole('tablist');
+    const open = row.querySelector<HTMLElement>('[data-page-id="a"]')!;
+    const box = (left: number, right: number) => () => ({ left, right }) as DOMRect;
+    // The row narrowed: the open tab (60-180) now ends past its right edge (150).
+    row.getBoundingClientRect = box(0, 150);
+    open.getBoundingClientRect = box(60, 180);
+    row.scrollLeft = 10;
+    onResize();
+    expect(row.scrollLeft).toBe(40);
+
+    // Scrolled past its start: back to its left edge.
+    open.getBoundingClientRect = box(-25, 95);
+    onResize();
+    expect(row.scrollLeft).toBe(15);
+  });
+
   it('opens the page menu on hover and jumps on click', () => {
     forceOverflow(800, 200);
     const { onSelect } = renderStrip();

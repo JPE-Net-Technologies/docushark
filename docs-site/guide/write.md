@@ -177,4 +177,4 @@ A few things differ from the PDF:
 
 ## More than one page {#pages}
 
-A document can hold several prose pages, each with its own tab. Adding, renaming, colouring and nesting pages is covered in [Organize](./organize#pages).
+A document can hold several writing pages, each with its own tab, named from its first heading until you rename it. Adding, renaming, colouring and nesting pages is covered in [Organize](./organize#pages).

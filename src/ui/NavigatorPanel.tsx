@@ -57,17 +57,16 @@ import {
   isFamilyRoot,
 } from '../services/mirrorFamily';
 import { refreshMirrorPage } from '../services/mirrorPageService';
-import {
-  detachMirrorPageWithConfirm,
-  openMirrorSource,
-  refreshMirrorPageWithFeedback,
-} from '../services/mirrorPageActions';
+import { canDeletePage, requestPageDelete, usePendingDeleteIds } from '../store/pendingPageDeleteStore';
 import { IngestSubpagesDialog } from './integrations/IngestSubpagesDialog';
 import { ProviderIcon } from './integrations/ProviderIcon';
 import { ReorderableList } from './properties/ReorderableList';
 import { DropdownMenu, menuAction, MENU_SEPARATOR, type DropdownMenuEntry } from './components/DropdownMenu';
-import { confirmDialog, promptDialog } from './confirm/confirmStore';
+import { promptDialog } from './confirm/confirmStore';
 import { useActivePanelState, useLayoutActions } from './layout/useLayout';
+import { pageLabel } from './pages/pageLabel';
+import { mirrorPageMenuEntries } from './pages/PageMenu';
+import { useProsePageHeadings } from './pages/useProsePageHeadings';
 import './NavigatorPanel.css';
 
 /** Width of one guide column. Also the twisty's box, so a branch toggle costs
@@ -100,8 +99,7 @@ interface RowMenuTarget {
 }
 
 export function NavigatorPanel() {
-  const { pages, pageOrder, activePageId, setActivePage, movePages, deletePage, renamePage } =
-    useRichTextPagesStore();
+  const { pages, pageOrder, activePageId, setActivePage, movePages, renamePage } = useRichTextPagesStore();
   const canvasPages = usePageStore((s) => s.pages);
   const canvasOrder = usePageStore((s) => s.pageOrder);
   const canvasActiveId = usePageStore((s) => s.activePageId);
@@ -109,8 +107,22 @@ export function NavigatorPanel() {
   const reorderCanvas = usePageStore((s) => s.reorderPages);
   const renameCanvasPage = usePageStore((s) => s.renamePage);
   const duplicateCanvasPage = usePageStore((s) => s.duplicatePage);
-  const deleteCanvasPage = usePageStore((s) => s.deletePage);
   const hub = useIntegrationHubStore((s) => s.hub);
+  const hidden = usePendingDeleteIds();
+  const headings = useProsePageHeadings();
+
+  // Pages waiting out a delete's Undo are gone from the lists (DSK-260); a
+  // waiting page's subpages stand on their own, as they will once it's deleted.
+  const proseOrder = useMemo(() => pageOrder.filter((id) => !hidden.has(id)), [pageOrder, hidden]);
+  const visibleCanvasOrder = useMemo(() => canvasOrder.filter((id) => !hidden.has(id)), [canvasOrder, hidden]);
+  const proseLabel = useCallback(
+    (pageId: string) => pageLabel('prose', pages[pageId]?.name ?? '', headings[pageId]),
+    [pages, headings],
+  );
+  const canvasLabel = useCallback(
+    (pageId: string) => pageLabel('canvas', canvasPages[pageId]?.name ?? ''),
+    [canvasPages],
+  );
 
   const navigatorState = useActivePanelState('navigator');
   const { setPanelVisible } = useLayoutActions();
@@ -120,14 +132,14 @@ export function NavigatorPanel() {
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [rowMenu, setRowMenu] = useState<RowMenuTarget | null>(null);
 
-  const familyIndex = useMemo(() => buildMirrorFamilyIndex(pages, pageOrder), [pages, pageOrder]);
+  const familyIndex = useMemo(() => buildMirrorFamilyIndex(pages, proseOrder), [pages, proseOrder]);
   const topLevel = useMemo(
-    () => pageOrder.filter((id) => pages[id] !== undefined && isFamilyRoot(familyIndex, id)),
-    [pageOrder, pages, familyIndex],
+    () => proseOrder.filter((id) => pages[id] !== undefined && isFamilyRoot(familyIndex, id)),
+    [proseOrder, pages, familyIndex],
   );
   const blocks = useMemo(
-    () => topLevel.map((id) => (familyIndex.childrenOf.has(id) ? familyBlock(familyIndex, pageOrder, id) : [id])),
-    [topLevel, familyIndex, pageOrder],
+    () => topLevel.map((id) => (familyIndex.childrenOf.has(id) ? familyBlock(familyIndex, proseOrder, id) : [id])),
+    [topLevel, familyIndex, proseOrder],
   );
 
   /** Ancestors of a page, root-first — index `c` is the ancestor at depth `c`,
@@ -193,10 +205,15 @@ export function NavigatorPanel() {
   const handleTopLevelReorder = (fromIndex: number, toIndex: number) => {
     const moved = blocks[fromIndex];
     if (!moved) return;
+    // The block lands before the first page of the block now at the target
+    // position, counted in the whole order with the moved pages taken out
+    // (movePages' convention): pages waiting out a delete's Undo are hidden
+    // here but still in the order.
     const rest = blocks.filter((_, i) => i !== fromIndex);
     const itemTo = Math.max(0, Math.min(toIndex, rest.length));
-    const pagesBefore = rest.slice(0, itemTo).reduce((n, b) => n + b.length, 0);
-    movePages(moved, pagesBefore);
+    const remaining = pageOrder.filter((id) => !moved.includes(id));
+    const before = rest[itemTo]?.[0];
+    movePages(moved, before === undefined ? remaining.length : remaining.indexOf(before));
   };
 
   /** Normalize physical order to the logical tree: each root block (root plus
@@ -245,46 +262,19 @@ export function NavigatorPanel() {
     });
   };
 
-  const promptDelete = (name: string, apply: () => void) => {
-    void confirmDialog({
-      title: `Delete "${name}"?`,
-      message: 'The page and its content are removed from this document.',
-      confirmLabel: 'Delete',
-      danger: true,
-    }).then((confirmed) => {
-      if (confirmed) apply();
-    });
+  /** Mirror-specific actions, appended to a mirror page's menu: the same
+   *  builder the tab strip uses (DSK-260). */
+  const mirrorMenuEntries = (pageId: string): DropdownMenuEntry[] => {
+    const m = pages[pageId]?.mirror;
+    return m ? mirrorPageMenuEntries(pageId, m, () => setIngestPageId(pageId)) : [];
   };
 
-  /** Mirror-specific actions, appended to a mirror page's menu. */
-  const mirrorMenuEntries = (pageId: string): DropdownMenuEntry[] => {
-    const page = pages[pageId];
-    const m = page?.mirror;
-    if (!page || !m) return [];
-    const label = providerLabel(hub, m.provider);
-    return [
-      menuAction({
-        id: 'refresh',
-        label: 'Refresh from source',
-        onSelect: () => void refreshMirrorPageWithFeedback(pageId),
-      }),
-      menuAction({ id: 'ingest', label: 'Add subpages…', onSelect: () => setIngestPageId(pageId) }),
-      ...(m.url
-        ? [
-            menuAction({
-              id: 'open-external',
-              label: `Open in ${label}`,
-              onSelect: () => openMirrorSource(m.url!),
-            }),
-          ]
-        : []),
-      menuAction({
-        id: 'detach',
-        label: `Detach from ${label}`,
-        onSelect: () => void detachMirrorPageWithConfirm(pageId, label),
-      }),
-    ];
-  };
+  /** Rename from what the row shows; unchanged text leaves a default name as it is. */
+  const renameFrom = (shown: string, apply: (name: string) => void) =>
+    promptRename(shown, (name) => {
+      const value = name.trim();
+      if (value && value !== shown) apply(value);
+    });
 
   /** One menu description per prose row, shared by the kebab and the
    *  right-click menu so the two can never drift. */
@@ -297,7 +287,7 @@ export function NavigatorPanel() {
       menuAction({
         id: 'rename',
         label: 'Rename…',
-        onSelect: () => promptRename(page.name, (name) => renamePage(pageId, name)),
+        onSelect: () => renameFrom(proseLabel(pageId), (name) => renamePage(pageId, name)),
       }),
     ];
     if (hasChildren) {
@@ -317,9 +307,10 @@ export function NavigatorPanel() {
         id: 'delete',
         label: 'Delete page',
         danger: true,
-        // The store silently refuses to delete the last page; say so instead.
-        disabled: pageOrder.length <= 1,
-        onSelect: () => promptDelete(page.name, () => deletePage(pageId)),
+        // The last page of a kind can't go; say so instead of silently refusing.
+        disabled: !canDeletePage('prose', pageId),
+        // Undo for ten seconds, in place of a confirmation (DSK-260).
+        onSelect: () => requestPageDelete('prose', pageId, proseLabel(pageId)),
       }),
     );
     return entries;
@@ -333,7 +324,7 @@ export function NavigatorPanel() {
       menuAction({
         id: 'rename',
         label: 'Rename…',
-        onSelect: () => promptRename(page.name, (name) => renameCanvasPage(pageId, name)),
+        onSelect: () => renameFrom(canvasLabel(pageId), (name) => renameCanvasPage(pageId, name)),
       }),
       menuAction({ id: 'duplicate', label: 'Duplicate', onSelect: () => void duplicateCanvasPage(pageId) }),
       MENU_SEPARATOR,
@@ -341,8 +332,8 @@ export function NavigatorPanel() {
         id: 'delete',
         label: 'Delete page',
         danger: true,
-        disabled: canvasOrder.length <= 1,
-        onSelect: () => promptDelete(page.name, () => deleteCanvasPage(pageId)),
+        disabled: !canDeletePage('canvas', pageId),
+        onSelect: () => requestPageDelete('canvas', pageId, canvasLabel(pageId)),
       }),
     ];
   };
@@ -411,10 +402,10 @@ export function NavigatorPanel() {
           onClick={() => setActivePage(pageId)}
           // Without this the name and the staleness badge run together into
           // "Concepts8d" for a screen reader.
-          aria-label={m ? `${page.name}, synced ${syncedShort(m.syncedAt)} ago` : page.name}
+          aria-label={m ? `${proseLabel(pageId)}, synced ${syncedShort(m.syncedAt)} ago` : proseLabel(pageId)}
         >
           {showGlyph && m && <ProviderIcon provider={m.provider} size={13} />}
-          <span className="navigator-row-name">{page.name}</span>
+          <span className="navigator-row-name">{proseLabel(pageId)}</span>
           {m && (
             <span
               className="navigator-row-synced"
@@ -427,9 +418,9 @@ export function NavigatorPanel() {
         </button>
         <DropdownMenu
           trigger={<Icon icon={MoreHorizontal} size={14} />}
-          triggerTitle={`Actions for ${page.name}`}
+          triggerTitle={`Actions for ${proseLabel(pageId)}`}
           triggerClassName="navigator-row-menu"
-          sheetTitle={page.name}
+          sheetTitle={proseLabel(pageId)}
           entries={proseMenuEntries(pageId)}
         />
       </div>
@@ -499,18 +490,21 @@ export function NavigatorPanel() {
       />
 
       <div className="navigator-section-head">
-        <h3>Canvas pages</h3>
+        <h3>Diagrams</h3>
       </div>
       <ReorderableList
-        items={canvasOrder}
+        items={visibleCanvasOrder}
         getKey={(id) => id}
         onReorder={(from, to) => {
-          const next = [...canvasOrder];
-          const [moved] = next.splice(from, 1);
-          if (moved !== undefined) {
-            next.splice(to, 0, moved);
-            reorderCanvas(next);
-          }
+          // reorderPages replaces the whole order, so build it from the whole
+          // order: a page waiting out a delete's Undo is hidden here but must
+          // stay in it (DSK-260).
+          const moved = visibleCanvasOrder[from];
+          if (moved === undefined) return;
+          const before = visibleCanvasOrder.filter((_, i) => i !== from)[to];
+          const next = canvasOrder.filter((id) => id !== moved);
+          next.splice(before === undefined ? next.length : next.indexOf(before), 0, moved);
+          reorderCanvas(next);
         }}
         listClassName="navigator-list"
         rowClassName="navigator-block"
@@ -528,15 +522,15 @@ export function NavigatorPanel() {
                 type="button"
                 className="navigator-row-main"
                 onClick={() => setCanvasActive(id)}
-                aria-label={canvasPages[id]?.name ?? 'Untitled'}
+                aria-label={canvasLabel(id)}
               >
-                <span className="navigator-row-name">{canvasPages[id]?.name ?? 'Untitled'}</span>
+                <span className="navigator-row-name">{canvasLabel(id)}</span>
               </button>
               <DropdownMenu
                 trigger={<Icon icon={MoreHorizontal} size={14} />}
-                triggerTitle={`Actions for ${canvasPages[id]?.name ?? 'this page'}`}
+                triggerTitle={`Actions for ${canvasLabel(id)}`}
                 triggerClassName="navigator-row-menu"
-                sheetTitle={canvasPages[id]?.name ?? 'Untitled'}
+                sheetTitle={canvasLabel(id)}
                 entries={canvasMenuEntries(id)}
               />
             </div>
@@ -554,10 +548,7 @@ export function NavigatorPanel() {
           }}
           anchorPoint={{ x: rowMenu.x, y: rowMenu.y }}
           // On a phone a long-press opens this as a sheet, which needs a title.
-          sheetTitle={
-            (rowMenu.kind === 'prose' ? pages[rowMenu.pageId]?.name : canvasPages[rowMenu.pageId]?.name) ??
-            'Untitled'
-          }
+          sheetTitle={rowMenu.kind === 'prose' ? proseLabel(rowMenu.pageId) : canvasLabel(rowMenu.pageId)}
           entries={
             rowMenu.kind === 'prose' ? proseMenuEntries(rowMenu.pageId) : canvasMenuEntries(rowMenu.pageId)
           }

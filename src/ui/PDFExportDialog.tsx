@@ -15,6 +15,7 @@ import {
 import type { PDFSettings } from '../types/PDFExport';
 import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { flushPendingPageDeletes } from '../store/pendingPageDeleteStore';
 import { usePageStore } from '../store/pageStore';
 import { createInitialPDFOptions } from '../store/pdfExportStore';
 import { isRichTextEmpty } from '../types/RichText';
@@ -201,6 +202,10 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
       }
       // The page setup goes back to the document, so Paper Mode shows these pages.
       setPageSetup({ size: pageSize, orientation, margins });
+
+      // A page deleted moments ago is still waiting out its Undo; delete it now,
+      // so the PDF doesn't print it (DSK-260).
+      flushPendingPageDeletes();
 
       // Gather all rich text pages in order
       const rtPagesState = useRichTextPagesStore.getState();

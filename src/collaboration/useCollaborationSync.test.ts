@@ -22,7 +22,7 @@ function makeMockYjs() {
     // JP-340 per-page binding surface.
     hasAnyShapes: vi.fn(() => false),
     rebindActivePage: vi.fn(() => ({ shapes: [] as Shape[], order: [] as string[] })),
-    // JP-335 pending-page handoff surface.
+    // JP-335 pending-page handoff surface (and DSK-260's duplicate seed).
     seedPageShapes: vi.fn(),
     // JP-338 self-heal (runs over the prose page list after adopt).
     healDoubledProse: vi.fn(),
@@ -563,5 +563,35 @@ describe('useCollaborationSync', () => {
       secondYjs._shapeCbs.forEach((cb) => cb([shape('R1')], [], []));
     });
     expect(Object.keys(useDocumentStore.getState().shapes)).toContain('R1');
+  });
+
+  it('seeds a duplicated diagram page into the shared document, so the copy opens with its shapes (DSK-260)', () => {
+    startSyncedSession();
+    adoptShapes([shape('S1')]);
+    renderHook(() => useCollaborationSync());
+    currentYjs.seedPageShapes.mockClear();
+
+    let copyId = '';
+    act(() => {
+      copyId = usePageStore.getState().duplicatePage('p1')!;
+    });
+
+    expect(currentYjs.seedPageShapes).toHaveBeenCalledTimes(1);
+    const [pageId, shapes, order] = currentYjs.seedPageShapes.mock.calls[0]!;
+    expect(pageId).toBe(copyId);
+    expect(shapes).toHaveLength(1);
+    expect(order).toHaveLength(1);
+  });
+
+  it('does not seed a new blank diagram page', () => {
+    startSyncedSession();
+    renderHook(() => useCollaborationSync());
+    currentYjs.seedPageShapes.mockClear();
+
+    act(() => {
+      usePageStore.getState().createPage();
+    });
+
+    expect(currentYjs.seedPageShapes).not.toHaveBeenCalled();
   });
 });

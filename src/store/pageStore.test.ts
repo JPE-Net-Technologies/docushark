@@ -177,6 +177,45 @@ describe('Page Store', () => {
       const result = usePageStore.getState().duplicatePage('nonexistent');
       expect(result).toBeNull();
     });
+
+    it('copies the open page as it is now, not as it was when last left (DSK-260)', () => {
+      // The first page opens on creation; a shape drawn since lives only in the
+      // document store until the page is left.
+      const pageId = usePageStore.getState().createPage('Original');
+      useDocumentStore.getState().addShape(createTestRect({ id: 'rect1' }));
+
+      const copyId = usePageStore.getState().duplicatePage(pageId)!;
+
+      expect(usePageStore.getState().pages[copyId]?.shapeOrder).toHaveLength(1);
+    });
+
+    it("copies a group's children, which are drawn through the group, not the page order (DSK-260)", () => {
+      usePageStore.getState().createPage('Open');
+      const pageId = usePageStore.getState().createPage('Grouped');
+      const group = { ...createTestRect({ id: 'g1' }), type: 'group', childIds: ['c1', 'c2'] } as unknown as RectangleShape;
+      const { pages } = usePageStore.getState();
+      usePageStore.setState({
+        pages: {
+          ...pages,
+          [pageId]: {
+            ...pages[pageId]!,
+            shapes: { g1: group, c1: createTestRect({ id: 'c1' }), c2: createTestRect({ id: 'c2' }) },
+            shapeOrder: ['g1'],
+          },
+        },
+      });
+
+      const copyId = usePageStore.getState().duplicatePage(pageId)!;
+
+      const copy = usePageStore.getState().pages[copyId]!;
+      expect(Object.keys(copy.shapes)).toHaveLength(3);
+      const copiedGroup = copy.shapes[copy.shapeOrder[0]!] as unknown as { childIds: string[] };
+      expect(copiedGroup.childIds).toHaveLength(2);
+      for (const childId of copiedGroup.childIds) {
+        expect(copy.shapes[childId]).toBeDefined();
+        expect(['c1', 'c2']).not.toContain(childId);
+      }
+    });
   });
 
   describe('reorderPages', () => {

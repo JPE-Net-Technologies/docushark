@@ -195,3 +195,61 @@
 [data-theme='dark'] .page-tab-strip-menu {
   background: var(--bg-secondary);
 }
+
+/* "+ Page" / "+ Diagram": the add button says what it adds (DSK-260). */
+.page-tab-strip-add--labelled {
+  width: auto;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-1-5);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.page-tab-strip-add--labelled:hover {
+  transform: none;
+}
+
+/* A tab is never wider than its row, so the open tab's ⋯ stays in reach on a
+ * phone: the name gives way first, and the hover card has it in full. */
+.page-tab-strip [data-page-id] {
+  max-width: 100%;
+}
+
+.page-tab-strip .inline-tab-name,
+.page-tab-strip .rich-text-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A phone's row can't spare the room: the add button is "+" alone there, and
+ * still says what it adds on hover and to a screen reader. */
+@media (max-width: 640px) {
+  .page-tab-strip-add--labelled {
+    width: 26px;
+    padding: 0;
+  }
+
+  .page-tab-strip-add--labelled .page-tab-strip-add-label {
+    display: none;
+  }
+}
+
+/* On touch, tabs and the add button are Apple's minimum target, 44 px, and a
+ * tab's ⋯ is always shown on the open one (DSK-260). The tabs' own classes
+ * (.rich-text-tab, .inline-tab) keep their padding. */
+.page-tab-strip--touch [data-page-id],
+.page-tab-strip--touch .page-tab-strip-add,
+.page-tab-strip--touch .page-tab-strip-overflow-btn {
+  min-height: 44px;
+}
+
+.page-tab-strip--touch .page-tab-strip-add {
+  min-width: 44px;
+}
+
+.page-tab-strip--touch [data-page-id] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}

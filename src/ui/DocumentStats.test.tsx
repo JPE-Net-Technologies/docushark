@@ -2,9 +2,10 @@
  * The status line's prose readout and Document stats (DSK-211).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useProseStatsStore } from '../services/proseStats';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
+import { usePendingPageDeletes } from '../store/pendingPageDeleteStore';
 import { ProseReadout } from './DocumentStats';
 
 const page = (id: string, name: string, content: string, order: number) => ({
@@ -23,7 +24,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  usePendingPageDeletes.setState({ pending: {} });
+});
 
 describe('ProseReadout (DSK-211)', () => {
   it("shows the page's words and its place among the pages", () => {
@@ -51,6 +55,25 @@ describe('ProseReadout (DSK-211)', () => {
     expect(screen.queryByRole('dialog')).toBeTruthy();
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('names pages as their tabs do, and leaves out one waiting out its Undo (DSK-260)', () => {
+    useRichTextPagesStore.setState((st) => ({
+      pages: { ...st.pages, p3: page('p3', 'Prose p.3', '<h2>Results</h2><p>two words</p>', 2) },
+      pageOrder: ['p1', 'p2', 'p3'],
+    }));
+    render(<ProseReadout />);
+    expect(screen.getByText('Page 1 of 3')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '4 words' }));
+    const dialog = () => screen.getByRole('dialog', { name: 'Document stats' }).textContent ?? '';
+    expect(dialog()).toContain('Results3');
+    expect(dialog()).not.toContain('Prose p.3');
+
+    act(() => {
+      usePendingPageDeletes.setState({ pending: { p2: { kind: 'prose', toastId: 't', wasActive: false } } });
+    });
+    expect(screen.getByText('Page 1 of 2')).toBeTruthy();
+    expect(dialog()).not.toContain('Method');
   });
 
   it('shows no page position for a one-page document', () => {

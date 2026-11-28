@@ -46,7 +46,7 @@ import { registerOpenDocumentIdSource } from '../collaboration/openDocumentSourc
 import { useWhiteboardStore } from './whiteboardStore';
 import { blobStorage } from '../storage/BlobStorage';
 import { collectBlobReferences, deriveBlobReferences } from '../storage/AssetBundler';
-import { withAutoSaveSuppressed, flushAutoSaveNow } from './autoSaveGuard';
+import { withAutoSaveSuppressed, flushAutoSaveNow, runBeforeDocumentSwitch } from './autoSaveGuard';
 import { VersionConflictError } from '../api/relayClient';
 import { resetFileThumbnailCaches } from '../shapes/FileShape';
 
@@ -850,6 +850,12 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       newDocument: (name?: string) => {
         const docName = name ?? UNTITLED_DOCUMENT_NAME;
 
+        // Finish what belongs to the open document first (a page deletion
+        // waiting out its Undo, DSK-260), and save it under its own id, as
+        // loadDocument does.
+        runBeforeDocumentSwitch();
+        flushAutoSaveNow();
+
         // A new document is local until it is saved to a workspace. Leave the
         // previous relay document's session BEFORE the store resets below, so
         // nothing they trigger can reach its Y.Doc (DSK-192).
@@ -1064,7 +1070,9 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
         // Commit any pending autosave under the *current* docId before we
         // flip currentDocumentId. Otherwise the debounced save would fire
         // later and write the new doc's content under the old doc's id —
-        // losing the in-flight edit.
+        // losing the in-flight edit. Work waiting on the open document (a page
+        // deletion's Undo window, DSK-260) finishes first, so the save has it.
+        runBeforeDocumentSwitch();
         flushAutoSaveNow();
 
         const doc = loadDocumentFromStorage(id);
@@ -1736,6 +1744,7 @@ export const usePersistenceStore = create<PersistenceState & PersistenceActions>
       loadRemoteDocument: (doc: DiagramDocument) => {
         // Same rationale as loadDocument: flush before switching so we
         // don't lose the current doc's pending edit.
+        runBeforeDocumentSwitch();
         flushAutoSaveNow();
 
         // Ensure relay document flag is set for documents loaded from host

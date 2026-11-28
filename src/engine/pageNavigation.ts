@@ -12,6 +12,12 @@
 import { usePageStore } from '../store/pageStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { useHistoryStore } from '../store/historyStore';
+import { isPageDeletePending } from '../store/pendingPageDeleteStore';
+
+/** The order without pages waiting out a delete's Undo, which are gone from view (DSK-260). */
+function shown(order: readonly string[]): string[] {
+  return order.filter((id) => !isPageDeletePending(id));
+}
 
 /** True when the Tiptap prose editor (its `.ProseMirror` editable) owns focus. */
 function defaultIsProseFocused(): boolean {
@@ -42,13 +48,13 @@ export function navigateActivePage(
 
   if (isProseFocused()) {
     const { pageOrder, activePageId, setActivePage } = useRichTextPagesStore.getState();
-    const target = neighbor(pageOrder, activePageId, step);
+    const target = neighbor(shown(pageOrder), activePageId, step);
     if (target) setActivePage(target);
     return;
   }
 
   const { pageOrder, activePageId, setActivePage } = usePageStore.getState();
-  const target = neighbor(pageOrder, activePageId, step);
+  const target = neighbor(shown(pageOrder), activePageId, step);
   if (target) {
     setActivePage(target);
     // Mirror the tab-click path (InlinePageTabs) so history tracks the switch.

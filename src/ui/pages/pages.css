@@ -1,0 +1,66 @@
+/* Page management (DSK-260): the hover card and a tab's ⋯ button. */
+
+.page-hover-card {
+  position: fixed;
+  z-index: 1100;
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-elevated, var(--bg-primary));
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+}
+
+.page-hover-card-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.page-hover-card-row {
+  color: var(--text-secondary);
+}
+
+/* A tab's ⋯: everything that used to need a right-click. It shows on hover and
+ * focus, and always on the open tab on touch, where there's no hover. */
+.page-tab-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+
+[data-page-id]:hover .page-tab-menu-btn,
+[data-page-id]:focus-within .page-tab-menu-btn,
+.page-tab-menu-btn[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.page-tab-menu-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.page-tab-strip--touch .page-tab-menu-btn {
+  display: none;
+  width: 32px;
+  height: 32px;
+}
+
+.page-tab-strip--touch [aria-selected='true'] .page-tab-menu-btn {
+  display: inline-flex;
+  opacity: 1;
+}
