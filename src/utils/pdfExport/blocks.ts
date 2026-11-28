@@ -203,9 +203,14 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
   // and re-prepend the line's leading whitespace to wrapped continuations.
   const innerWidth = ctx.contentWidth - PDF_STYLE.codeBlockPadding * 2;
   const wrappedLines: string[] = [];
+  // Where each wrapped line starts in the code's text, for page breaks (DSK-48).
+  const lineStarts: number[] = [];
+  let rawStart = 0;
   for (const rawLine of text.split('\n')) {
     if (rawLine.length === 0) {
       wrappedLines.push('');
+      lineStarts.push(rawStart);
+      rawStart += 1;
       continue;
     }
     const indentMatch = rawLine.match(/^[\t ]*/);
@@ -213,12 +218,22 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
     const segments = ctx.doc.splitTextToSize(rawLine, innerWidth) as string[];
     if (segments.length <= 1) {
       wrappedLines.push(rawLine);
+      lineStarts.push(rawStart);
     } else {
       wrappedLines.push(segments[0] ?? rawLine);
+      lineStarts.push(rawStart);
+      let searchFrom = (segments[0] ?? '').length;
       for (let i = 1; i < segments.length; i++) {
         wrappedLines.push(indent + (segments[i] ?? ''));
+        // A continuation is a later piece of the same line: find where it starts.
+        const piece = (segments[i] ?? '').trimStart();
+        const found = piece.length > 0 ? rawLine.indexOf(piece, searchFrom) : -1;
+        const at = found >= 0 ? found : Math.min(searchFrom, rawLine.length);
+        lineStarts.push(rawStart + at);
+        searchFrom = at + piece.length;
       }
     }
+    rawStart += rawLine.length + 1;
   }
 
   const blockHeight = wrappedLines.length * lineHeightMm + PDF_STYLE.codeBlockPadding * 2;
@@ -242,7 +257,7 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
       drawCodeLines(ctx, part, lineHeightMm);
       drawn += part.length;
       if (remaining.length > 0) {
-        newPage(ctx, { kind: 'codeLine', path, ...ids, line: drawn });
+        newPage(ctx, { kind: 'codeLine', path, ...ids, line: drawn, offset: lineStarts[drawn] ?? text.length });
       }
     }
   }

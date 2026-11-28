@@ -298,6 +298,11 @@ function firstWordAt(pages: PDFRichTextPage[], pageId: string | undefined, at: B
     // A prose page opens with its first block.
     return textOf(page?.content.content.content?.[0]).trim().split(/\s+/)[0] || undefined;
   }
+  if (at.kind === 'codeLine') {
+    // A code block's page opens at the line that starts at this offset (DSK-48).
+    const code = page ? nodeAt(page.content.content, at.path) : undefined;
+    return textOf(code).slice(at.offset).trim().split(/\s+/)[0] || undefined;
+  }
   if (at.kind !== 'block' && at.kind !== 'line') return undefined;
   const block = page ? nodeAt(page.content.content, at.path) : undefined;
   if (!block) return undefined;
