@@ -33,7 +33,9 @@ If changes aren't syncing, check the status bar, make sure the document is in yo
 
 **Documents are private by default.** Being in a workspace doesn't let someone see a document; it has to be shared with them first. The exception is workspace owners, who can manage every document in the workspace.
 
-Open the access panel with **Manage access** from a document card's **⋯** menu, or by clicking the people on a document's row. Then, if you own the document:
+**Share**, at the top of the editor, holds every way to hand a document on: **Share with people…**, **Publish a link…** ([below](#publish)), **Export to PDF…** and **Download a copy** ([files](./export-import#docushark-files)). The same actions are in **Tools**, under **Share**. Only documents in your workspace can be shared with people; for one that's only on this device, the menu says how to move it.
+
+Open the access panel with **Share → Share with people…**, or from Documents with **Manage access** in a document card's **⋯** menu or by clicking the people on a document's row. Then, if you own the document:
 
 1. Pick a person from your workspace, and choose **Can view** or **Can edit**.
 2. Click **Add**. Change or remove anyone's access in the same list.
@@ -45,6 +47,14 @@ The panel reads top to bottom in the order access works: the **workspace** (its 
 
 - **Shared with me**, on the left of Documents while you're signed in, lists other people's documents you can open.
 - **Make owner** hands a document to someone who can already edit it. You become an editor; it can't be undone, so DocuShark asks first.
+
+## Publish a link {#publish}
+
+**Share → Publish a link…** puts a read-only copy of a workspace document on the web, for anyone with the link to read without an account. Only the document's owner can publish it.
+
+- **Publish to the web** makes the link. **Copy** puts it on your clipboard, and the panel shows how many times it's been viewed and when you published.
+- Readers see the version you published, not your live edits. When the document changes, the panel says so, and **Republish** updates the copy.
+- **Turn off link** takes the copy down: within a minute, anyone opening the link sees that the document is unavailable. Publishing again turns the same address back on, so links you've already shared start working again.
 
 ## Invite people {#invite}
 

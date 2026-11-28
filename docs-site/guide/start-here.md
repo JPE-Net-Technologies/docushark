@@ -23,7 +23,7 @@ When a new version is out, DocuShark says **A new version of DocuShark is availa
 2. **Write.** The document opens ready for writing. Start with a heading (type `#` and a space) and DocuShark names the document after it; **Undo** in the message keeps it untitled. Format with the ribbon above the page.
 3. **Draw.** Click **Split** at the top to put a canvas beside your writing, or **Canvas** to give it the whole window. Choose **Rectangle** in the tool row above the canvas and drag to draw one, then draw a second. Choose **Connector** and drag from one rectangle to the other.
 4. **Label and style.** Choose **Select**, double-click a shape, type its label and press **Enter**. Click a shape and a small bar appears above it with its style and colours; **More** on that bar shows every property.
-5. **Keep it.** DocuShark saves as you go. A check mark beside the document's name means everything is saved, and `Ctrl+S` (`Cmd+S` on a Mac) saves at once. To hand it to someone, choose **Tools → Export to PDF…**, or see [Export and import](./export-import) for images and files.
+5. **Keep it.** DocuShark saves as you go. A check mark beside the document's name means everything is saved, and `Ctrl+S` (`Cmd+S` on a Mac) saves at once. To hand it to someone, open **Share** at the top: **Export to PDF…** makes a PDF, and in a workspace you can share the document itself ([Share and collaborate](./share#share-a-document)). For images and files, see [Export and import](./export-import).
 
 **Documents**, at the top left, always takes you back to your library.
 
