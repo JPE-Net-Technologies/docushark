@@ -12,6 +12,8 @@ import {
   parseHeadingHref,
 } from '../utils/headingLinks';
 import { mintBlockId } from '../tiptap/BlockIdExtension';
+import { usePendingDeleteIds } from '../store/pendingPageDeleteStore';
+import { pageLabel } from './pages/pageLabel';
 import './InsertLinkDialog.css';
 
 /**
@@ -63,10 +65,12 @@ interface HeadingEntry {
   id: string | undefined;
 }
 
-function parseHeadings(pageId: string, pageName: string, html: string): HeadingEntry[] {
+function parseHeadings(pageId: string, storedName: string, html: string): HeadingEntry[] {
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  const els = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
-  return Array.from(els).map((el, i) => ({
+  const els = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+  // The page as its tab names it: a chosen name, else its first heading (DSK-260).
+  const pageName = pageLabel('prose', storedName, els[0]?.textContent?.trim() || null);
+  return els.map((el, i) => ({
     pageId,
     pageName,
     index: i,
@@ -78,6 +82,7 @@ function parseHeadings(pageId: string, pageName: string, html: string): HeadingE
 
 export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
   const { pages, pageOrder, activePageId } = useRichTextPagesStore();
+  const pendingDeletes = usePendingDeleteIds();
 
   const initial = useMemo(() => {
     const { from, to, empty } = editor.state.selection;
@@ -98,12 +103,13 @@ export function InsertLinkDialog({ editor, onClose }: InsertLinkDialogProps) {
     const out: HeadingEntry[] = [];
     for (const id of pageOrder) {
       const page = pages[id];
-      if (!page) continue;
+      // A page waiting out its Undo is as good as gone: no links into it.
+      if (!page || pendingDeletes.has(id)) continue;
       const html = id === activePageId ? editor.getHTML() : page.content;
       out.push(...parseHeadings(id, page.name, html));
     }
     return out;
-  }, [pages, pageOrder, activePageId, editor]);
+  }, [pages, pageOrder, activePageId, editor, pendingDeletes]);
 
   const startMode: Mode = isHeadingHref(initial.existingHref) ? 'internal' : 'web';
   const [mode, setMode] = useState<Mode>(startMode);
