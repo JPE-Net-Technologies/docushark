@@ -85,6 +85,7 @@ export async function layOut(doc: PdfDoc, textFont: string, input: LayoutInput):
     pager: new Pager(),
     path: [],
     blocks: [],
+    following: [],
     textFont,
     y: options.margins.top,
     pageWidth: width,

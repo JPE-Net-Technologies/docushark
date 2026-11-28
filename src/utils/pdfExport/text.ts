@@ -269,12 +269,34 @@ export function renderSegmentedText(
     ctx.y += fontSize * 0.352778 * PDF_STYLE.lineHeight;
     return;
   }
+  const lines = layoutLines(ctx, segments, fontSize, defaultStyle, availableWidth);
+  drawLines(ctx, lines, fontSize, defaultStyle, startX, availableWidth, textAlign, lineAt);
+}
 
-  const lineHeightMm = fontSize * 0.352778 * PDF_STYLE.lineHeight;
+/** A word (or a run of spaces) of a laid-out line, and where in its segment it starts. */
+interface WordChunk { text: string; seg: TextSegment; offset: number; }
 
+/** One laid-out line: its words and its width. */
+export interface TextLine { chunks: WordChunk[]; width: number; }
+
+/** The height of one line of text at `fontSize` (pt), in mm. */
+export function lineHeightOf(fontSize: number): number {
+  return fontSize * 0.352778 * PDF_STYLE.lineHeight;
+}
+
+/**
+ * Wrap styled segments into lines at `availableWidth`: the measuring half of
+ * `renderSegmentedText`, which the paginator's rules reuse (DSK-252).
+ */
+export function layoutLines(
+  ctx: PDFRenderContext,
+  segments: TextSegment[],
+  fontSize: number,
+  defaultStyle: string,
+  availableWidth: number
+): TextLine[] {
   // Break segments into words, preserving which segment each word belongs to,
   // and where in it the word starts (for page-break positions, DSK-252)
-  interface WordChunk { text: string; seg: TextSegment; offset: number; }
   const words: WordChunk[] = [];
   for (const seg of segments) {
     if (seg.text === '\n') {
@@ -293,8 +315,7 @@ export function renderSegmentedText(
   }
 
   // Build lines by wrapping words
-  interface LineDef { chunks: WordChunk[]; width: number; }
-  const lines: LineDef[] = [];
+  const lines: TextLine[] = [];
   let currentLine: WordChunk[] = [];
   let currentLineWidth = 0;
 
@@ -348,9 +369,29 @@ export function renderSegmentedText(
   if (currentLine.length > 0) {
     lines.push({ chunks: currentLine, width: currentLineWidth });
   }
+  return lines;
+}
+
+/**
+ * Draw laid-out lines from `ctx.y`, one line height apart, breaking the page
+ * before any line that doesn't fit. `from` and `to` draw part of them.
+ */
+export function drawLines(
+  ctx: PDFRenderContext,
+  lines: TextLine[],
+  fontSize: number,
+  defaultStyle: string,
+  startX: number,
+  availableWidth: number,
+  textAlign: string,
+  lineAt: (line: number, inline: InlinePosition | undefined) => BreakAt,
+  from = 0,
+  to = lines.length
+): void {
+  const lineHeightMm = lineHeightOf(fontSize);
 
   // Render each line
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+  for (let lineIndex = from; lineIndex < to; lineIndex++) {
     const line = lines[lineIndex]!;
     const first = line.chunks[0];
     const inline = first && first.seg.source !== undefined

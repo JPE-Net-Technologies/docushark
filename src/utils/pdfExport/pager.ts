@@ -23,8 +23,8 @@ export type BreakAt =
   | { kind: 'block'; path: number[]; blockId?: string }
   /** A line inside a paragraph or heading, from its first character. */
   | { kind: 'line'; path: number[]; blockId?: string; line: number; inline?: InlinePosition }
-  /** A table row. */
-  | { kind: 'row'; path: number[]; row: number }
+  /** A table row; `header` header rows are drawn again above it. */
+  | { kind: 'row'; path: number[]; row: number; header?: number }
   /** A line inside a code block. */
   | { kind: 'codeLine'; path: number[]; blockId?: string; line: number }
   /** The start of a prose page, a diagram page, or the first page after the cover. */
@@ -38,9 +38,21 @@ export interface PageBreak {
   at: BreakAt;
 }
 
+/**
+ * While measuring what follows a heading: where the first space requirement
+ * and each line end, on one long column (see `keep.ts`).
+ */
+export interface LeadLog {
+  first?: number;
+  lines: number[];
+}
+
 /** Collects the breaks of one layout, in order. */
 export class Pager {
   readonly breaks: PageBreak[] = [];
+
+  /** Set on a scratch pager that measures instead of breaking. */
+  constructor(readonly lead?: LeadLog) {}
 
   record(page: number, pageId: string | undefined, at: BreakAt): void {
     this.breaks.push({ page, pageId, at });

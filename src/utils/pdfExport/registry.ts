@@ -72,11 +72,13 @@ export async function renderChildren(
     const child = children[i]!;
     ctx.path.push(i);
     ctx.blocks.push(child);
+    ctx.following.push(children.slice(i + 1));
     try {
       await pdfNodeRenderers.render(ctx, child, listLevel, listCounter);
     } finally {
       ctx.path.pop();
       ctx.blocks.pop();
+      ctx.following.pop();
     }
   }
 }

@@ -70,6 +70,8 @@ export interface PDFRenderContext {
   path: number[];
   /** The nodes along `path`, innermost last. */
   blocks: JSONContent[];
+  /** At each level of `path`, the siblings still to come after its node. */
+  following: JSONContent[][];
   /** jsPDF's name for the document's font family (DSK-246), for `setFont`. */
   textFont: string;
   y: number;
@@ -140,6 +142,8 @@ export function blockAt(ctx: PDFRenderContext): BreakAt {
 
 /** Start a new page, opened by `at`, and record the break. */
 export function newPage(ctx: PDFRenderContext, at: BreakAt): void {
+  // Measuring what follows a heading: one long column, never a new page.
+  if (ctx.pager.lead) return;
   ctx.doc.addPage();
   ctx.pageNumber++;
   ctx.y = ctx.marginTop;
@@ -152,6 +156,14 @@ export function newPage(ctx: PDFRenderContext, at: BreakAt): void {
  * the new page; by default, the node being laid out.
  */
 export function checkPageBreak(ctx: PDFRenderContext, requiredHeight: number, at?: BreakAt): void {
+  const lead = ctx.pager.lead;
+  if (lead) {
+    // Measuring what follows a heading: note where things end, break nothing.
+    const bottom = ctx.y + requiredHeight;
+    lead.first ??= bottom;
+    if (at?.kind === 'line') lead.lines.push(bottom);
+    return;
+  }
   if (requiredHeight > spaceLeft(ctx)) {
     newPage(ctx, at ?? blockAt(ctx));
   }

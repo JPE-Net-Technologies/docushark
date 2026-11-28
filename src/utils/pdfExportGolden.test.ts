@@ -45,6 +45,10 @@ import { DEFAULT_PDF_OPTIONS } from '../types/PDFExport';
 import type { RichTextContent } from '../types/RichText';
 import { exportToPdf, exportToPdfWithLayout, type PDFRichTextPage } from './pdfExportUtils';
 import { paginate, type BreakAt, type PdfLayout } from './pdfExport/paginate';
+import { jsPDF } from 'jspdf';
+import { MeasureDoc } from './pdfExport/doc';
+import { pdfFontFor, registerPDFFonts } from './pdfExport/fonts';
+import { layOut } from './pdfExport/layout';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS = resolve(__dirname, '../../relay/tests/prose-fixtures/cases.json');
@@ -439,4 +443,120 @@ describe('PDF export golden output (DSK-242)', () => {
     ].sort();
     expect(Object.keys(golden).sort()).toEqual(expected);
   });
+});
+
+// ─── Page-break rules (DSK-252) ─────────────────────────────────────────────
+
+describe('page-break rules (DSK-252)', () => {
+  const options = {
+    ...DEFAULT_PDF_OPTIONS,
+    coverPage: { ...DEFAULT_PDF_OPTIONS.coverPage, enabled: false },
+    includeTableOfContents: false,
+  };
+  const onePage = (html: string): PDFRichTextPage[] => [{ id: 'page', name: 'Page', content: content(html) }];
+  const layoutOfHtml = (html: string) => paginate(options, onePage(html)[0]!.content, undefined, onePage(html));
+
+  /**
+   * Filler that puts what comes next at many heights on the page: a first
+   * paragraph of about `lines` lines, then `count` one-line paragraphs.
+   */
+  const filler = (lines: number, count: number): string =>
+    `<p>${sentence(1, lines * 10 - 4)}</p>` +
+    Array.from({ length: count }, (_, i) => `<p>${sentence(i + 2, 6)}</p>`).join('');
+
+  it('keeps a heading with the first two lines after it', async () => {
+    let movedHeadings = 0;
+    for (let lines = 1; lines <= 4; lines++) {
+      for (let count = 15; count <= 40; count++) {
+        const heading = count + 1;
+        const { breaks } = await layoutOfHtml(`${filler(lines, count)}<h4>Next section</h4><p>${sentence(99, 60)}</p>`);
+        for (const b of breaks) {
+          if (b.at.kind === 'block' && b.at.path[0] === heading) movedHeadings++;
+          if ((b.at.kind === 'block' || b.at.kind === 'line') && b.at.path[0] === heading + 1) {
+            // The paragraph after the heading may break only after its second line.
+            expect(b.at.kind === 'line' && b.at.line >= 2, `${lines}/${count}: ${JSON.stringify(b.at)}`).toBe(true);
+          }
+        }
+      }
+    }
+    expect(movedHeadings, 'some filler left the heading at the foot of a page').toBeGreaterThan(0);
+  }, 120_000);
+
+  it('lets a heading stay when the start of what follows doesn’t fit on any page', async () => {
+    // The code block fits on a page alone, but not with the heading: no rule
+    // can keep them together, so the layout must still finish.
+    const code = Array.from({ length: 44 }, (_, i) => `const v${i} = ${i};`).join('\n');
+    const layout = await layoutOfHtml(`${filler(1, 20)}<h1>Listing</h1><pre><code>${code}</code></pre><p>After.</p>`);
+    expect(layout.pages).toBeGreaterThanOrEqual(2);
+    expect(layout.pages).toBeLessThan(5);
+  }, 30_000);
+
+  it('starts a table with its header and first row, and repeats the header', async () => {
+    const tall = sentence(5, 30); // a first body row three lines tall
+    const rows = Array.from({ length: 30 }, (_, r) => `<tr><td><p>${r === 0 ? tall : `Row ${r}`}</p></td><td><p>${sentence(r, 3)}</p></td></tr>`);
+    const table = `<table><tbody><tr><th><p>Item</p></th><th><p>Notes</p></th></tr>${rows.join('')}</tbody></table>`;
+    let movedTables = 0;
+    let rowBreaks = 0;
+    for (let lines = 1; lines <= 4; lines++) {
+      for (let count = 15; count <= 40; count++) {
+        const tableIndex = count + 1;
+        const { breaks } = await layoutOfHtml(`${filler(lines, count)}${table}`);
+        for (const b of breaks) {
+          if (b.at.kind === 'block' && b.at.path[0] === tableIndex) movedTables++;
+          if (b.at.kind === 'row' && b.at.path[0] === tableIndex) {
+            rowBreaks++;
+            expect(b.at.row, `${lines}/${count}: the header would be left alone`).not.toBe(1);
+            expect(b.at.header, 'the header is drawn again above the row').toBe(1);
+          }
+        }
+      }
+    }
+    expect(movedTables, 'some filler left only the header room').toBeGreaterThan(0);
+    expect(rowBreaks).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('splits a row taller than a page by lines, keeping every word', async () => {
+    const words = Array.from({ length: 1500 }, (_, i) => `w${String(i).padStart(4, '0')}`);
+    const html = `<table><tbody><tr><th><p>Head</p></th><th><p>Side</p></th></tr>` +
+      `<tr><td><p>${words.join(' ')}</p></td><td><p>short</p></td></tr></tbody></table>`;
+    const pages = onePage(html);
+    const { blob, layout } = await exportToPdfWithLayout(options, pages[0]!.content, undefined, pages);
+    const { text } = await readBack(new Uint8Array(await blobBytes(blob)));
+    const printed = text.flat().join(' ').split(/\s+/).filter((w) => /^w\d{4}$/.test(w));
+    expect(printed).toEqual(words);
+    const splits = layout.breaks.filter((b) => b.at.kind === 'row' && b.at.row === 1);
+    expect(splits.length, 'the row continues over several pages').toBeGreaterThanOrEqual(2);
+    for (const b of splits) {
+      expect(text[b.page - 1]?.[0], `page ${b.page} opens with the header`).toBe('Head Side');
+    }
+  }, 60_000);
+
+  it('draws a quote’s bar on every page it spans', async () => {
+    const pdf = new jsPDF({ unit: 'mm', compress: true });
+    const textFont = await registerPDFFonts(pdf, pdfFontFor(undefined));
+    class RecordingDoc extends MeasureDoc {
+      page = 1;
+      lines: Array<{ page: number; x: number }> = [];
+      override addPage(): void {
+        super.addPage();
+        this.page = this.getNumberOfPages();
+      }
+      override setPage(pageNumber: number): void {
+        this.page = pageNumber;
+      }
+      override line(x1: number, _y1: number, x2: number): void {
+        if (x1 === x2) this.lines.push({ page: this.page, x: x1 });
+      }
+    }
+    const doc = new RecordingDoc(pdf);
+    const quote = Array.from({ length: 60 }, (_, i) => `<p>${sentence(i, 40)}</p>`).join('');
+    const pages = onePage(`<p>Before.</p><blockquote>${quote}</blockquote>`);
+    const ctx = await layOut(doc, textFont, {
+      options, richTextContent: pages[0]!.content, themeBackground: undefined, richTextPages: pages, canvasPages: undefined,
+    });
+    const barX = ctx.marginLeft + 2;
+    const barPages = [...new Set(doc.lines.filter((l) => l.x === barX).map((l) => l.page))].sort((a, b) => a - b);
+    expect(barPages.length, 'the quote spans at least three pages').toBeGreaterThanOrEqual(3);
+    expect(barPages).toEqual(Array.from({ length: barPages.length }, (_, i) => barPages[0]! + i));
+  }, 60_000);
 });

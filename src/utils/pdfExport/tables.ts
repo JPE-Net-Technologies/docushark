@@ -4,10 +4,19 @@
  */
 
 import type { JSONContent } from '@tiptap/core';
-import { checkPageBreak, type PDFRenderContext } from './context';
+import { checkPageBreak, newPage, pageContentHeight, spaceLeft, type PDFRenderContext } from './context';
 import type { BreakAt } from './pager';
 import { PDF_STYLE } from './style';
-import { extractSegmentsDeep, extractText, parseColor, renderSegmentedText } from './text';
+import {
+  drawLines,
+  extractSegmentsDeep,
+  extractText,
+  layoutLines,
+  lineHeightOf,
+  parseColor,
+  renderSegmentedText,
+  type TextLine,
+} from './text';
 
 /**
  * Table layout including per-column widths, per-row heights, and a grid model
@@ -218,6 +227,13 @@ function computeTableLayout(ctx: PDFRenderContext, node: JSONContent): TableLayo
 /**
  * Render a table node to PDF with borders, headers, cell backgrounds,
  * and colspan/rowspan merged cell support.
+ *
+ * Page breaks (DSK-252):
+ * - the header rows (the leading rows made only of header cells) are drawn
+ *   again at the top of every page the table continues on;
+ * - the header starts on the same page as the first body row;
+ * - the rows a merged cell spans move together, when they fit on a page;
+ * - a row taller than a page splits by lines, its borders drawn per page.
  */
 export async function renderTable(ctx: PDFRenderContext, node: JSONContent): Promise<void> {
   const rows = node.content || [];
@@ -227,78 +243,64 @@ export async function renderTable(ctx: PDFRenderContext, node: JSONContent): Pro
   if (layout.numCols === 0) return;
 
   const fontSize = PDF_STYLE.bodyFontSize - 1;
-
-  // Check if entire table fits, otherwise start on new page
-  checkPageBreak(ctx, Math.min(layout.totalHeight, layout.rowHeights[0]! + 10));
-
-  // Track the Y position where each row starts (may shift on page breaks)
-  const rowYPositions: number[] = [];
   const tablePath = [...ctx.path];
+  const headerRows = countHeaderRows(layout);
+  const headerHeight = sumRows(layout, 0, headerRows);
+  const rowAt = (row: number): BreakAt => ({
+    kind: 'row',
+    path: tablePath,
+    row,
+    ...(headerRows > 0 && row >= headerRows ? { header: headerRows } : {}),
+  });
 
-  for (let ri = 0; ri < rows.length; ri++) {
-    const rowHeight = layout.rowHeights[ri]!;
-    const rowAt: BreakAt = { kind: 'row', path: tablePath, row: ri };
+  // Start where the first rows fit: the first row and 10 mm, as before, and
+  // the header with the first body row (or its merged group).
+  const firstBody = headerRows > 0 ? headerHeight + sumRows(layout, headerRows, groupEnd(layout, headerRows)) : 0;
+  const startRoom = Math.min(layout.totalHeight, Math.max(layout.rowHeights[0]! + 10, firstBody));
+  checkPageBreak(ctx, startRoom <= pageContentHeight(ctx) ? startRoom : layout.rowHeights[0]! + 10);
 
-    checkPageBreak(ctx, rowHeight, rowAt);
-    rowYPositions[ri] = ctx.y;
-
-    // Draw cells in this row (only origin cells — skip spanned positions)
-    for (let ci = 0; ci < layout.numCols; ci++) {
-      const gc = layout.grid[ri]?.[ci];
-      if (!gc || gc.originRow !== ri || gc.originCol !== ci) continue;
-
-      // Compute cell position and dimensions
-      let cellX = ctx.marginLeft;
-      for (let c = 0; c < ci; c++) cellX += layout.colWidths[c]!;
-
-      let cellWidth = 0;
-      for (let dc = 0; dc < gc.colspan && ci + dc < layout.numCols; dc++) {
-        cellWidth += layout.colWidths[ci + dc]!;
-      }
-
-      let cellHeight = 0;
-      for (let dr = 0; dr < gc.rowspan && ri + dr < rows.length; dr++) {
-        cellHeight += layout.rowHeights[ri + dr]!;
-      }
-
-      const cellTop = ctx.y - 3;
-
-      // Cell background
-      const bgColor = gc.node.attrs?.['backgroundColor'] as string | null | undefined;
-      if (bgColor) {
-        const rgb = parseColor(bgColor);
-        if (rgb) {
-          ctx.doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-          ctx.doc.rect(cellX, cellTop, cellWidth, cellHeight, 'F');
-        }
-      } else if (gc.isHeader) {
-        ctx.doc.setFillColor(PDF_STYLE.tableHeaderBg);
-        ctx.doc.rect(cellX, cellTop, cellWidth, cellHeight, 'F');
-      }
-
-      // Cell border
-      ctx.doc.setDrawColor(PDF_STYLE.tableBorderColor);
-      ctx.doc.setLineWidth(0.2);
-      ctx.doc.rect(cellX, cellTop, cellWidth, cellHeight, 'S');
-
-      // Cell text
-      const textX = cellX + PDF_STYLE.tableCellPadding;
-      const textY = ctx.y + PDF_STYLE.tableCellPadding - 1;
-      const cellContentWidth = cellWidth - PDF_STYLE.tableCellPadding * 2;
-
-      const segments = extractSegmentsDeep(gc.node);
-      const plainText = segments.map((s) => s.text).join('');
-
-      if (plainText.trim()) {
-        const cellFontStyle = gc.isHeader ? 'bold' : 'normal';
-        const savedY = ctx.y;
-        ctx.y = textY;
-        renderSegmentedText(ctx, segments, fontSize, cellFontStyle, textX, cellContentWidth, 'left', () => rowAt);
-        ctx.y = savedY;
+  /** Start a new page in the table, and draw the header again at its top. */
+  const continueOnNewPage = (at: BreakAt, row: number): void => {
+    newPage(ctx, at);
+    if (headerRows > 0 && row >= headerRows) {
+      for (let hr = 0; hr < headerRows; hr++) {
+        drawRow(ctx, layout, rows, hr, fontSize, rowAt(hr));
+        ctx.y += layout.rowHeights[hr]!;
       }
     }
+  };
 
+  let ri = 0;
+  while (ri < rows.length) {
+    const repeats = headerRows > 0 && ri >= headerRows;
+    const room = pageContentHeight(ctx) - (repeats ? headerHeight : 0);
+    const end = groupEnd(layout, ri);
+    const groupHeight = sumRows(layout, ri, end);
+    const rowHeight = layout.rowHeights[ri]!;
+
+    if (end - ri > 1 && groupHeight <= room) {
+      // Rows a merged cell spans: kept together.
+      if (groupHeight > spaceLeft(ctx)) continueOnNewPage(rowAt(ri), ri);
+      for (let r = ri; r < end; r++) {
+        drawRow(ctx, layout, rows, r, fontSize, rowAt(r));
+        ctx.y += layout.rowHeights[r]!;
+      }
+      ri = end;
+      continue;
+    }
+
+    if (rowHeight > room && end - ri === 1) {
+      // Taller than a page: split by lines.
+      if (spaceLeft(ctx) < minimumRowPiece(fontSize)) continueOnNewPage(rowAt(ri), ri);
+      drawSplitRow(ctx, layout, rows, ri, fontSize, rowAt(ri), () => continueOnNewPage(rowAt(ri), ri));
+      ri++;
+      continue;
+    }
+
+    if (rowHeight > spaceLeft(ctx)) continueOnNewPage(rowAt(ri), ri);
+    drawRow(ctx, layout, rows, ri, fontSize, rowAt(ri));
     ctx.y += rowHeight;
+    ri++;
   }
 
   // Reset
@@ -306,4 +308,165 @@ export async function renderTable(ctx: PDFRenderContext, node: JSONContent): Pro
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
   ctx.y += 4;
+}
+
+/**
+ * The leading rows made only of header cells, repeated on each page. None
+ * when every row is a header row: there would be nothing to repeat them over.
+ */
+function countHeaderRows(layout: TableLayout): number {
+  let count = 0;
+  for (const row of layout.grid) {
+    if (!row || row.length === 0 || !row.every((cell) => cell?.isHeader)) break;
+    count++;
+  }
+  if (count === 0 || count >= layout.grid.length) return 0;
+  // A merged header cell reaching into the body can't be repeated on its own.
+  for (let r = 0; r < count; r++) {
+    for (let c = 0; c < layout.numCols; c++) {
+      const cell = layout.grid[r]?.[c];
+      if (cell && cell.originRow === r && cell.originCol === c && r + cell.rowspan > count) return 0;
+    }
+  }
+  return count;
+}
+
+/** The row after the group of rows that merged cells starting at `start` span. */
+function groupEnd(layout: TableLayout, start: number): number {
+  let end = start + 1;
+  for (let r = start; r < end && r < layout.grid.length; r++) {
+    for (let c = 0; c < layout.numCols; c++) {
+      const cell = layout.grid[r]?.[c];
+      if (cell && cell.originRow === r && cell.originCol === c) end = Math.max(end, r + cell.rowspan);
+    }
+  }
+  return Math.min(end, layout.grid.length);
+}
+
+/** Total height of rows `from` (inclusive) to `to` (exclusive). */
+function sumRows(layout: TableLayout, from: number, to: number): number {
+  let sum = 0;
+  for (let r = from; r < to; r++) sum += layout.rowHeights[r] ?? 0;
+  return sum;
+}
+
+/** The least room worth starting a split row in: one line and its padding. */
+function minimumRowPiece(fontSize: number): number {
+  return lineHeightOf(fontSize) + PDF_STYLE.tableCellPadding * 2;
+}
+
+/** A cell's x, width and height on the page (its spans included). */
+function cellBox(ctx: PDFRenderContext, layout: TableLayout, rowCount: number, ri: number, ci: number, cell: TableGridCell): { x: number; width: number; height: number } {
+  let x = ctx.marginLeft;
+  for (let c = 0; c < ci; c++) x += layout.colWidths[c]!;
+  let width = 0;
+  for (let dc = 0; dc < cell.colspan && ci + dc < layout.numCols; dc++) width += layout.colWidths[ci + dc]!;
+  let height = 0;
+  for (let dr = 0; dr < cell.rowspan && ri + dr < rowCount; dr++) height += layout.rowHeights[ri + dr]!;
+  return { x, width, height };
+}
+
+/** A cell's background and border, `height` tall, from the row's top at `ctx.y`. */
+function drawCellFrame(ctx: PDFRenderContext, cell: TableGridCell, x: number, width: number, height: number): void {
+  const cellTop = ctx.y - 3;
+
+  // Cell background
+  const bgColor = cell.node.attrs?.['backgroundColor'] as string | null | undefined;
+  if (bgColor) {
+    const rgb = parseColor(bgColor);
+    if (rgb) {
+      ctx.doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+      ctx.doc.rect(x, cellTop, width, height, 'F');
+    }
+  } else if (cell.isHeader) {
+    ctx.doc.setFillColor(PDF_STYLE.tableHeaderBg);
+    ctx.doc.rect(x, cellTop, width, height, 'F');
+  }
+
+  // Cell border
+  ctx.doc.setDrawColor(PDF_STYLE.tableBorderColor);
+  ctx.doc.setLineWidth(0.2);
+  ctx.doc.rect(x, cellTop, width, height, 'S');
+}
+
+/** Draw row `ri`'s cells (only origin cells; spanned positions are skipped) at `ctx.y`. */
+function drawRow(
+  ctx: PDFRenderContext,
+  layout: TableLayout,
+  rows: JSONContent[],
+  ri: number,
+  fontSize: number,
+  at: BreakAt
+): void {
+  for (let ci = 0; ci < layout.numCols; ci++) {
+    const gc = layout.grid[ri]?.[ci];
+    if (!gc || gc.originRow !== ri || gc.originCol !== ci) continue;
+
+    const { x, width, height } = cellBox(ctx, layout, rows.length, ri, ci, gc);
+    drawCellFrame(ctx, gc, x, width, height);
+
+    // Cell text
+    const textX = x + PDF_STYLE.tableCellPadding;
+    const textY = ctx.y + PDF_STYLE.tableCellPadding - 1;
+    const cellContentWidth = width - PDF_STYLE.tableCellPadding * 2;
+
+    const segments = extractSegmentsDeep(gc.node);
+    const plainText = segments.map((s) => s.text).join('');
+
+    if (plainText.trim()) {
+      const cellFontStyle = gc.isHeader ? 'bold' : 'normal';
+      const savedY = ctx.y;
+      ctx.y = textY;
+      renderSegmentedText(ctx, segments, fontSize, cellFontStyle, textX, cellContentWidth, 'left', () => at);
+      ctx.y = savedY;
+    }
+  }
+}
+
+/**
+ * Draw a row taller than a page in pieces: on each page, as many of its lines
+ * as fit, in every cell, with the cells' borders around that piece.
+ */
+function drawSplitRow(
+  ctx: PDFRenderContext,
+  layout: TableLayout,
+  rows: JSONContent[],
+  ri: number,
+  fontSize: number,
+  at: BreakAt,
+  nextPage: () => void
+): void {
+  const lineH = lineHeightOf(fontSize);
+  const pad = PDF_STYLE.tableCellPadding;
+  const cells: Array<{ cell: TableGridCell; x: number; width: number; lines: TextLine[]; style: string }> = [];
+  for (let ci = 0; ci < layout.numCols; ci++) {
+    const gc = layout.grid[ri]?.[ci];
+    if (!gc || gc.originRow !== ri || gc.originCol !== ci) continue;
+    const { x, width } = cellBox(ctx, layout, rows.length, ri, ci, gc);
+    const style = gc.isHeader ? 'bold' : 'normal';
+    const segments = extractSegmentsDeep(gc.node);
+    const hasText = segments.map((s) => s.text).join('').trim().length > 0;
+    const lines = hasText ? layoutLines(ctx, segments, fontSize, style, width - pad * 2) : [];
+    cells.push({ cell: gc, x, width, lines, style });
+  }
+  const total = Math.max(1, ...cells.map((c) => c.lines.length));
+
+  let from = 0;
+  while (from < total) {
+    const fits = Math.max(1, Math.floor((spaceLeft(ctx) - pad * 2) / lineH));
+    const to = Math.min(total, from + fits);
+    const pieceHeight = (to - from) * lineH + pad * 2;
+    for (const { cell, x, width, lines, style } of cells) {
+      drawCellFrame(ctx, cell, x, width, pieceHeight);
+      if (from < lines.length) {
+        const savedY = ctx.y;
+        ctx.y = ctx.y + pad - 1;
+        drawLines(ctx, lines, fontSize, style, x + pad, width - pad * 2, 'left', () => at, from, Math.min(to, lines.length));
+        ctx.y = savedY;
+      }
+    }
+    ctx.y += pieceHeight;
+    from = to;
+    if (from < total) nextPage();
+  }
 }

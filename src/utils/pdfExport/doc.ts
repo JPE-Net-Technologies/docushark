@@ -11,7 +11,7 @@
  * added to a finished export, through the real jsPDF (`furniture.ts`).
  */
 
-import type { ImageOptions, jsPDF, TextOptionsLight } from 'jspdf';
+import type { ImageOptions, TextOptionsLight } from 'jspdf';
 
 export interface PdfDoc {
   // Metrics. They depend on the font and size set before them.
@@ -38,6 +38,9 @@ export interface PdfDoc {
   link(x: number, y: number, w: number, h: number, options: { url: string } | { pageNumber: number }): unknown;
 }
 
+/** Where a `MeasureDoc` gets its metrics: a real jsPDF with the fonts registered. */
+export type PdfMetrics = Pick<PdfDoc, 'setFont' | 'setFontSize' | 'getTextWidth' | 'splitTextToSize'>;
+
 /**
  * Measures with a real jsPDF (fonts registered) and draws nothing. It counts
  * pages so that page-dependent bookkeeping in the renderers still adds up.
@@ -45,7 +48,7 @@ export interface PdfDoc {
 export class MeasureDoc implements PdfDoc {
   private pageCount = 1;
 
-  constructor(private readonly metrics: jsPDF) {}
+  constructor(private readonly metrics: PdfMetrics) {}
 
   setFont(fontName: string, fontStyle?: string): void {
     this.metrics.setFont(fontName, fontStyle);
@@ -60,27 +63,27 @@ export class MeasureDoc implements PdfDoc {
   }
 
   splitTextToSize(text: string, maxLength: number): string[] {
-    return this.metrics.splitTextToSize(text, maxLength) as string[];
+    return this.metrics.splitTextToSize(text, maxLength);
   }
 
   addPage(): void {
     this.pageCount++;
   }
 
-  setPage(): void {}
+  setPage(_pageNumber: number): void {}
 
   getNumberOfPages(): number {
     return this.pageCount;
   }
 
-  setTextColor(): void {}
-  setFillColor(): void {}
-  setDrawColor(): void {}
-  setLineWidth(): void {}
-  text(): void {}
-  rect(): void {}
-  line(): void {}
-  circle(): void {}
-  addImage(): void {}
-  link(): void {}
+  setTextColor(_ch1: string | number, _ch2?: number, _ch3?: number): void {}
+  setFillColor(_ch1: string | number, _ch2?: number, _ch3?: number): void {}
+  setDrawColor(_ch1: string | number, _ch2?: number, _ch3?: number): void {}
+  setLineWidth(_width: number): void {}
+  text(_text: string | string[], _x: number, _y: number, _options?: TextOptionsLight): void {}
+  rect(_x: number, _y: number, _w: number, _h: number, _style?: string | null): void {}
+  line(_x1: number, _y1: number, _x2: number, _y2: number, _style?: string | null): void {}
+  circle(_x: number, _y: number, _r: number, _style?: string | null): void {}
+  addImage(_options: ImageOptions): void {}
+  link(_x: number, _y: number, _w: number, _h: number, _options: { url: string } | { pageNumber: number }): void {}
 }
