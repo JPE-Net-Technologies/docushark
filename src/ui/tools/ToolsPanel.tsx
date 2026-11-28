@@ -36,7 +36,7 @@ import './ToolsPanel.css';
  * Category order for the grid. Categories not listed fall to the end in
  * registry order, so a new category shows up rather than vanishing.
  */
-const GROUP_ORDER: readonly ShortcutCategory[] = ['File', 'View', 'Editing', 'Tools', 'Navigation'];
+const GROUP_ORDER: readonly ShortcutCategory[] = ['Share', 'File', 'View', 'Editing', 'Tools', 'Navigation'];
 
 export interface ToolsPanelProps {
   /** Run after a tile is activated — the toolbar uses it to close the popover. */

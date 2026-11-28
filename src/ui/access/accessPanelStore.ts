@@ -18,12 +18,15 @@ export interface AccessPanelTarget {
   scope: AccessScope;
   /** Required for `document` scope; ignored otherwise. */
   documentId?: string | null;
+  /** A step to bring into view on open: `publish`, from Share → Publish a link (DSK-257). */
+  focus?: 'publish' | null;
 }
 
 interface AccessPanelState {
   isOpen: boolean;
   scope: AccessScope;
   documentId: string | null;
+  focus: 'publish' | null;
   open: (target: AccessPanelTarget) => void;
   close: () => void;
 }
@@ -32,8 +35,9 @@ export const useAccessPanelStore = create<AccessPanelState>((set) => ({
   isOpen: false,
   scope: 'workspace',
   documentId: null,
-  open: ({ scope, documentId }) =>
-    set({ isOpen: true, scope, documentId: documentId ?? null }),
+  focus: null,
+  open: ({ scope, documentId, focus }) =>
+    set({ isOpen: true, scope, documentId: documentId ?? null, focus: focus ?? null }),
   close: () => set({ isOpen: false }),
 }));
 

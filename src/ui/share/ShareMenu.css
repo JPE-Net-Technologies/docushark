@@ -1,0 +1,30 @@
+/* The top bar's Share menu (ShareMenu.tsx, DSK-257). */
+
+.share-menu-content {
+  min-width: 220px;
+  max-width: 300px;
+}
+
+.share-menu-item svg {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.share-menu-item[data-disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Why the people items are greyed: under them, quiet. */
+.share-menu-reason {
+  margin: 2px var(--space-2) var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal, 1.4);
+}
+
+.share-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-color);
+}
