@@ -4,9 +4,12 @@
  * the page-break check.
  */
 
-import type { jsPDF, ImageCompression } from 'jspdf';
+import type { JSONContent } from '@tiptap/core';
+import type { ImageCompression } from 'jspdf';
 import type { RichTextContent } from '../../types/RichText';
 import type { Shape } from '../../shapes/Shape';
+import type { PdfDoc } from './doc';
+import { type BreakAt, type Pager, withBlockId } from './pager';
 import { PDF_STYLE } from './style';
 
 /**
@@ -51,13 +54,22 @@ export interface TextSegment {
   yOffset: number;
   /** Hyperlink href if this segment has a link mark */
   link?: string;
+  /** Index of the inline child it came from, for page-break positions (DSK-252) */
+  source?: number;
 }
 
 /**
  * Context for PDF rendering, tracks current position and state.
  */
 export interface PDFRenderContext {
-  doc: jsPDF;
+  /** A real jsPDF when exporting, a `MeasureDoc` when only laying out (DSK-252). */
+  doc: PdfDoc;
+  /** Records every page break and what opens the new page. */
+  pager: Pager;
+  /** Index path, from the prose page's root, of the node being laid out. */
+  path: number[];
+  /** The nodes along `path`, innermost last. */
+  blocks: JSONContent[];
   /** jsPDF's name for the document's font family (DSK-246), for `setFont`. */
   textFont: string;
   y: number;
@@ -121,14 +133,26 @@ export function pageContentHeight(ctx: PDFRenderContext): number {
   return ctx.pageHeight - ctx.marginTop - ctx.marginBottom - footerSpace(ctx);
 }
 
+/** The node being laid out, as what would open a new page. */
+export function blockAt(ctx: PDFRenderContext): BreakAt {
+  return { kind: 'block', path: [...ctx.path], ...withBlockId(ctx.blocks[ctx.blocks.length - 1]) };
+}
+
+/** Start a new page, opened by `at`, and record the break. */
+export function newPage(ctx: PDFRenderContext, at: BreakAt): void {
+  ctx.doc.addPage();
+  ctx.pageNumber++;
+  ctx.y = ctx.marginTop;
+  ctx.pager.record(ctx.pageNumber, ctx.currentPageId, at);
+}
+
 /**
- * Check if we need a page break, and add one if necessary.
- * Accounts for footer space when page numbers are enabled.
+ * Start a new page when `requiredHeight` doesn't fit in what's left of this
+ * one (above the footer, when page numbers are shown). `at` says what opens
+ * the new page; by default, the node being laid out.
  */
-export function checkPageBreak(ctx: PDFRenderContext, requiredHeight: number): void {
+export function checkPageBreak(ctx: PDFRenderContext, requiredHeight: number, at?: BreakAt): void {
   if (requiredHeight > spaceLeft(ctx)) {
-    ctx.doc.addPage();
-    ctx.pageNumber++;
-    ctx.y = ctx.marginTop;
+    newPage(ctx, at ?? blockAt(ctx));
   }
 }

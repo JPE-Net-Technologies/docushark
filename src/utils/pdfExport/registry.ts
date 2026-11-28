@@ -41,15 +41,9 @@ class PDFNodeRendererRegistry {
     } else if (node.type && node.type !== 'doc' && node.type !== 'text') {
       console.warn(`[PDF Export] No renderer registered for node type: "${node.type}"`);
       // Fall through: render children so content isn't silently lost
-      if (node.content) {
-        for (const child of node.content) {
-          await this.render(ctx, child, listLevel, listCounter);
-        }
-      }
-    } else if (node.content) {
-      for (const child of node.content) {
-        await this.render(ctx, child, listLevel, listCounter);
-      }
+      await renderChildren(ctx, node, listLevel, listCounter);
+    } else {
+      await renderChildren(ctx, node, listLevel, listCounter);
     }
   }
 
@@ -61,6 +55,31 @@ class PDFNodeRendererRegistry {
 
 /** Singleton registry — renderers are registered after their functions are defined. */
 export const pdfNodeRenderers = new PDFNodeRendererRegistry();
+
+/**
+ * Render a node's children in order, keeping `ctx.path` and `ctx.blocks` on
+ * the child being laid out, so a page break can say what opens the new page.
+ */
+export async function renderChildren(
+  ctx: PDFRenderContext,
+  parent: JSONContent,
+  listLevel: number,
+  listCounter?: { value: number }
+): Promise<void> {
+  const children = parent.content;
+  if (!children) return;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]!;
+    ctx.path.push(i);
+    ctx.blocks.push(child);
+    try {
+      await pdfNodeRenderers.render(ctx, child, listLevel, listCounter);
+    } finally {
+      ctx.path.pop();
+      ctx.blocks.pop();
+    }
+  }
+}
 
 /**
  * Render a Tiptap node to PDF via the node renderer registry.

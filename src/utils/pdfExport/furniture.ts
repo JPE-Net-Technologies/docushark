@@ -3,6 +3,7 @@
  * outline (bookmarks), internal heading links and page numbers.
  */
 
+import type { jsPDF } from 'jspdf';
 import { PDFCoverPage } from '../../types/PDFExport';
 import type { PDFRenderContext } from './context';
 import {
@@ -113,16 +114,19 @@ export async function renderCoverPage(
 }
 
 /**
- * Insert ToC pages right after the cover page (or at the front when no cover),
- * fill them with the heading list and dotted page-number leaders, then shift
- * `collectedHeadings` page numbers to account for the inserted pages.
- *
- * Returns the number of ToC pages inserted.
+ * How many pages the contents take, and the sizes they're set in. The export
+ * inserts them after the cover; a measure-only layout counts them (DSK-252).
  */
-export function insertTableOfContents(ctx: PDFRenderContext, hasCover: boolean): number {
-  const headings = ctx.collectedHeadings;
-  if (headings.length === 0) return 0;
-
+export function tableOfContentsLayout(ctx: PDFRenderContext): {
+  pages: number;
+  titleFontSize: number;
+  entryFontSize: number;
+  entryLineHeightMm: number;
+  titleLineHeightMm: number;
+  firstPageEntries: number;
+  subsequentPageEntries: number;
+} {
+  const headingCount = ctx.collectedHeadings.length;
   const titleFontSize = 18;
   const entryFontSize = 11;
   const entryLineHeightMm = entryFontSize * 0.352778 * 1.6;
@@ -131,10 +135,29 @@ export function insertTableOfContents(ctx: PDFRenderContext, hasCover: boolean):
   const usableHeight = ctx.pageHeight - ctx.marginTop - ctx.marginBottom - footerSpace;
   const firstPageEntries = Math.max(1, Math.floor((usableHeight - titleLineHeightMm - 6) / entryLineHeightMm));
   const subsequentPageEntries = Math.max(1, Math.floor(usableHeight / entryLineHeightMm));
+  const pages = headingCount === 0
+    ? 0
+    : headingCount <= firstPageEntries
+      ? 1
+      : 1 + Math.ceil((headingCount - firstPageEntries) / subsequentPageEntries);
+  return { pages, titleFontSize, entryFontSize, entryLineHeightMm, titleLineHeightMm, firstPageEntries, subsequentPageEntries };
+}
 
-  const tocPageCount = headings.length <= firstPageEntries
-    ? 1
-    : 1 + Math.ceil((headings.length - firstPageEntries) / subsequentPageEntries);
+/**
+ * Insert ToC pages right after the cover page (or at the front when no cover),
+ * fill them with the heading list and dotted page-number leaders, then shift
+ * `collectedHeadings` page numbers to account for the inserted pages.
+ *
+ * Returns the number of ToC pages inserted.
+ */
+export function insertTableOfContents(ctx: PDFRenderContext, pdf: jsPDF, hasCover: boolean): number {
+  const headings = ctx.collectedHeadings;
+  if (headings.length === 0) return 0;
+
+  const {
+    titleFontSize, entryFontSize, entryLineHeightMm, titleLineHeightMm,
+    firstPageEntries, subsequentPageEntries, pages: tocPageCount,
+  } = tableOfContentsLayout(ctx);
 
   const insertBefore = (hasCover ? 2 : 1);
   // Add ToC pages at the end then move them into place
@@ -145,7 +168,7 @@ export function insertTableOfContents(ctx: PDFRenderContext, hasCover: boolean):
   // Move newly-added pages into position (in reverse so page numbers stay stable as we go)
   for (let i = 0; i < tocPageCount; i++) {
     const newPageIndex = startTotal + tocPageCount; // last newly-added page (numbers shift each move)
-    ctx.doc.movePage(newPageIndex, insertBefore + i);
+    pdf.movePage(newPageIndex, insertBefore + i);
   }
 
   // All previously-numbered pages shift down by `tocPageCount`
@@ -270,7 +293,7 @@ export function resolveDeferredHeadingLinks(ctx: PDFRenderContext): void {
  * Build PDF reader bookmarks (outline) from the collected heading list,
  * nesting children under the most-recent heading of a higher level.
  */
-export function buildPdfOutline(ctx: PDFRenderContext): void {
+export function buildPdfOutline(ctx: PDFRenderContext, pdf: jsPDF): void {
   const headings = ctx.collectedHeadings;
   // Stack of [level, outlineItem] from outermost to innermost
   const stack: Array<{ level: number; item: unknown }> = [];
@@ -280,7 +303,7 @@ export function buildPdfOutline(ctx: PDFRenderContext): void {
       stack.pop();
     }
     const parent = stack.length > 0 ? stack[stack.length - 1]!.item : null;
-    const item = ctx.doc.outline.add(parent as never, h.text, { pageNumber: h.pdfPage });
+    const item = pdf.outline.add(parent as never, h.text, { pageNumber: h.pdfPage });
     stack.push({ level: h.level, item });
   }
 }

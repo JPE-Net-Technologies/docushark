@@ -5,6 +5,7 @@
 
 import type { JSONContent } from '@tiptap/core';
 import { checkPageBreak, type PDFRenderContext } from './context';
+import type { BreakAt } from './pager';
 import { PDF_STYLE } from './style';
 import { extractSegmentsDeep, extractText, parseColor, renderSegmentedText } from './text';
 
@@ -232,11 +233,13 @@ export async function renderTable(ctx: PDFRenderContext, node: JSONContent): Pro
 
   // Track the Y position where each row starts (may shift on page breaks)
   const rowYPositions: number[] = [];
+  const tablePath = [...ctx.path];
 
   for (let ri = 0; ri < rows.length; ri++) {
     const rowHeight = layout.rowHeights[ri]!;
+    const rowAt: BreakAt = { kind: 'row', path: tablePath, row: ri };
 
-    checkPageBreak(ctx, rowHeight);
+    checkPageBreak(ctx, rowHeight, rowAt);
     rowYPositions[ri] = ctx.y;
 
     // Draw cells in this row (only origin cells — skip spanned positions)
@@ -290,7 +293,7 @@ export async function renderTable(ctx: PDFRenderContext, node: JSONContent): Pro
         const cellFontStyle = gc.isHeader ? 'bold' : 'normal';
         const savedY = ctx.y;
         ctx.y = textY;
-        renderSegmentedText(ctx, segments, fontSize, cellFontStyle, textX, cellContentWidth, 'left');
+        renderSegmentedText(ctx, segments, fontSize, cellFontStyle, textX, cellContentWidth, 'left', () => rowAt);
         ctx.y = savedY;
       }
     }

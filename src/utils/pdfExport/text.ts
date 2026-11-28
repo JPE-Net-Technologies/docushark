@@ -9,6 +9,7 @@ import { formatFileSize } from '../byteSize';
 import { parseHeadingHref } from '../headingLinks';
 import { NAMED_COLORS } from '../color';
 import { checkPageBreak, type PDFRenderContext, type TextSegment } from './context';
+import { type BreakAt, type InlinePosition, withBlockId } from './pager';
 import { PDF_STYLE } from './style';
 
 /**
@@ -20,10 +21,12 @@ export function extractSegments(node: JSONContent): TextSegment[] {
   const segments: TextSegment[] = [];
   if (!node.content) return segments;
 
-  for (const child of node.content) {
+  for (let source = 0; source < node.content.length; source++) {
+    const child = node.content[source]!;
     if (child.type === 'text') {
       const marks = child.marks || [];
       const seg: TextSegment = {
+        source,
         text: child.text || '',
         bold: marks.some((m) => m.type === 'bold'),
         italic: marks.some((m) => m.type === 'italic'),
@@ -62,6 +65,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       segments.push(seg);
     } else if (child.type === 'hardBreak') {
       segments.push({
+        source,
         text: '\n',
         bold: false, italic: false, underline: false, strike: false, code: false,
         color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -72,6 +76,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       const label = (child.attrs?.['label'] as string | undefined) || '';
       if (label) {
         segments.push({
+          source,
           text: label,
           bold: false, italic: false, underline: false, strike: false, code: false,
           color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -83,6 +88,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       const label = (child.attrs?.['label'] as string | undefined) || '';
       if (label) {
         segments.push({
+          source,
           text: label,
           bold: false, italic: false, underline: false, strike: false, code: false,
           color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -97,6 +103,7 @@ export function extractSegments(node: JSONContent): TextSegment[] {
       const rawSize = Number(child.attrs?.['fileSize'] ?? 0);
       const size = Number.isFinite(rawSize) && rawSize > 0 ? ` (${formatFileSize(rawSize)})` : '';
       segments.push({
+        source,
         text: `${name}${size}`,
         bold: false, italic: true, underline: false, strike: false, code: false,
         color: null, highlight: null, fontSizeScale: 1, yOffset: 0,
@@ -228,7 +235,8 @@ export function renderSegmentedText(
   defaultStyle: string,
   startX: number,
   availableWidth: number,
-  textAlign: string
+  textAlign: string,
+  lineAt: (line: number, inline: InlinePosition | undefined) => BreakAt = blockLineAt(ctx)
 ): void {
   if (segments.length === 0) {
     ctx.y += fontSize * 0.352778 * PDF_STYLE.lineHeight;
@@ -237,20 +245,23 @@ export function renderSegmentedText(
 
   const lineHeightMm = fontSize * 0.352778 * PDF_STYLE.lineHeight;
 
-  // Break segments into words, preserving which segment each word belongs to
-  interface WordChunk { text: string; seg: TextSegment; }
+  // Break segments into words, preserving which segment each word belongs to,
+  // and where in it the word starts (for page-break positions, DSK-252)
+  interface WordChunk { text: string; seg: TextSegment; offset: number; }
   const words: WordChunk[] = [];
   for (const seg of segments) {
     if (seg.text === '\n') {
-      words.push({ text: '\n', seg });
+      words.push({ text: '\n', seg, offset: 0 });
       continue;
     }
     // Split on word boundaries but keep leading/trailing spaces with the word
     const parts = seg.text.split(/( +)/);
+    let offset = 0;
     for (const part of parts) {
       if (part.length > 0) {
-        words.push({ text: part, seg });
+        words.push({ text: part, seg, offset });
       }
+      offset += part.length;
     }
   }
 
@@ -285,13 +296,15 @@ export function renderSegmentedText(
         availableWidth,
         (s) => ctx.doc.getTextWidth(s),
       );
+      let pieceOffset = word.offset;
       for (let i = 0; i < pieces.length - 1; i++) {
         const pieceText = pieces[i]!;
         const pieceWidth = measureTextWidth(ctx, word.seg, pieceText, fontSize, defaultStyle);
-        lines.push({ chunks: [{ text: pieceText, seg: word.seg }], width: pieceWidth });
+        lines.push({ chunks: [{ text: pieceText, seg: word.seg, offset: pieceOffset }], width: pieceWidth });
+        pieceOffset += pieceText.length;
       }
       const lastPiece = pieces[pieces.length - 1]!;
-      currentLine = [{ text: lastPiece, seg: word.seg }];
+      currentLine = [{ text: lastPiece, seg: word.seg, offset: pieceOffset }];
       currentLineWidth = measureTextWidth(ctx, word.seg, lastPiece, fontSize, defaultStyle);
       continue;
     }
@@ -310,8 +323,13 @@ export function renderSegmentedText(
   }
 
   // Render each line
-  for (const line of lines) {
-    checkPageBreak(ctx, lineHeightMm);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex]!;
+    const first = line.chunks[0];
+    const inline = first && first.seg.source !== undefined
+      ? { child: first.seg.source, offset: first.offset }
+      : undefined;
+    checkPageBreak(ctx, lineHeightMm, lineAt(lineIndex, inline));
 
     // Calculate x offset for alignment
     let lineX = startX;
@@ -430,6 +448,13 @@ export function renderSegmentedText(
   ctx.doc.setFont(ctx.textFont, 'normal');
   ctx.doc.setFontSize(PDF_STYLE.bodyFontSize);
   ctx.doc.setTextColor(0, 0, 0);
+}
+
+/** Line positions inside the block being laid out (a paragraph or heading). */
+function blockLineAt(ctx: PDFRenderContext): (line: number, inline: InlinePosition | undefined) => BreakAt {
+  const path = [...ctx.path];
+  const ids = withBlockId(ctx.blocks[ctx.blocks.length - 1]);
+  return (line, inline) => ({ kind: 'line', path, ...ids, line, ...(inline ? { inline } : {}) });
 }
 
 /**

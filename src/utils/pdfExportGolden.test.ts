@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getSchema } from '@tiptap/core';
+import { getSchema, type JSONContent } from '@tiptap/core';
 import { DOMParser as PMDOMParser, type Node as PMNode, type Schema } from '@tiptap/pm/model';
 import StarterKit from '@tiptap/starter-kit';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -43,7 +43,8 @@ import 'pdfjs-dist/legacy/build/pdf.worker.mjs';
 import { sharedProseExtensions } from '../ui/TiptapEditor';
 import { DEFAULT_PDF_OPTIONS } from '../types/PDFExport';
 import type { RichTextContent } from '../types/RichText';
-import { exportToPdf, type PDFRichTextPage } from './pdfExportUtils';
+import { exportToPdf, exportToPdfWithLayout, type PDFRichTextPage } from './pdfExportUtils';
+import { paginate, type BreakAt, type PdfLayout } from './pdfExport/paginate';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS = resolve(__dirname, '../../relay/tests/prose-fixtures/cases.json');
@@ -245,6 +246,8 @@ const golden: Record<string, GoldenDoc> = existsSync(GOLDEN)
   ? (JSON.parse(readFileSync(GOLDEN, 'utf8')) as Record<string, GoldenDoc>)
   : {};
 const produced: Record<string, GoldenDoc> = {};
+/** Breaks whose opening word was found at the top of their PDF page (DSK-252). */
+let openedPages = 0;
 
 afterAll(() => {
   if (!UPDATE) return;
@@ -252,16 +255,88 @@ afterAll(() => {
   writeFileSync(GOLDEN, `${JSON.stringify(sorted, null, 2)}\n`);
 });
 
+/** The node an index path leads to, from a prose page's root. */
+function nodeAt(root: JSONContent, path: number[]): JSONContent | undefined {
+  let node: JSONContent | undefined = root;
+  for (const i of path) node = node?.content?.[i];
+  return node;
+}
+
+/** A node's text, as the PDF prints it (atoms print their cached labels). */
+function textOf(node: JSONContent | undefined): string {
+  if (!node) return '';
+  if (node.type === 'text') return node.text ?? '';
+  const label = node.attrs?.['label'];
+  if (typeof label === 'string') return label;
+  const children = node.content ?? [];
+  // Inline content runs together; blocks (list items, paragraphs) are separate words.
+  const inline = children.some((c) => c.type === 'text');
+  const text = children.map(textOf).join(inline ? '' : ' ');
+  // A callout prints its variant before its content.
+  if (node.type === 'callout') {
+    const variant = node.attrs?.['variant'];
+    return `${(typeof variant === 'string' ? variant : 'note').toUpperCase()} ${text}`;
+  }
+  return text;
+}
+
+/**
+ * The first word printed at a break, for the breaks that open with text:
+ * a block, or a line from its inline position. Rows, code lines and sections
+ * are left to the page-count and break-list checks.
+ */
+function firstWordAt(pages: PDFRichTextPage[], pageId: string | undefined, at: BreakAt): string | undefined {
+  const page = pages.find((p) => p.id === pageId);
+  if (at.kind === 'section' && at.section === 'prose') {
+    // A prose page opens with its first block.
+    return textOf(page?.content.content.content?.[0]).trim().split(/\s+/)[0] || undefined;
+  }
+  if (at.kind !== 'block' && at.kind !== 'line') return undefined;
+  const block = page ? nodeAt(page.content.content, at.path) : undefined;
+  if (!block) return undefined;
+  let text = textOf(block);
+  if (at.kind === 'line' && at.inline) {
+    const children = block.content ?? [];
+    text = textOf(children[at.inline.child]).slice(at.inline.offset)
+      + children.slice(at.inline.child + 1).map(textOf).join('');
+  }
+  return text.trim().split(/\s+/)[0] || undefined;
+}
+
+/**
+ * The paginator against the PDF (DSK-252): `paginate` must find exactly the
+ * export's breaks without writing a PDF, the page counts must agree with what
+ * pdf.js reads, and each break that opens with text must be the first thing
+ * on its page.
+ */
+function checkLayout(name: string, pages: PDFRichTextPage[], exported: PdfLayout, measured: PdfLayout, got: GoldenDoc): number {
+  expect(measured, `${name}: paginate() matches the export`).toEqual(exported);
+  expect(exported.pages + exported.contentsPages, `${name}: page count`).toBe(got.pages);
+  let opened = 0;
+  for (const brk of exported.breaks) {
+    const word = firstWordAt(pages, brk.pageId, brk.at);
+    if (!word) continue;
+    const firstLine = got.text[brk.page + exported.contentsPages - 1]?.[0] ?? '';
+    // An ordered list's number is printed right against its first word ("3.c").
+    const words = firstLine.replace(/^\d+\.\s*/, '').split(/\s+/);
+    expect(words, `${name}: page ${brk.page} opens with "${word}"`).toContain(word);
+    opened++;
+  }
+  return opened;
+}
+
 /** Export `pages` with the default options, then check what a reader gets out. */
 async function check(name: string, pages: PDFRichTextPage[]): Promise<void> {
   const options = { ...DEFAULT_PDF_OPTIONS, coverPage: { ...DEFAULT_PDF_OPTIONS.coverPage, enabled: false } };
-  const bytes = new Uint8Array(await blobBytes(await exportToPdf(options, pages[0]!.content, undefined, pages)));
+  const { blob, layout } = await exportToPdfWithLayout(options, pages[0]!.content, undefined, pages);
+  const bytes = new Uint8Array(await blobBytes(blob));
   if (DUMP_DIR) {
     mkdirSync(DUMP_DIR, { recursive: true });
     writeFileSync(resolve(DUMP_DIR, `${name.replace(/\//g, '__')}.pdf`), stableBytes(bytes));
   }
   const got = await readBack(bytes);
   produced[name] = got;
+  openedPages += checkLayout(name, pages, layout, await paginate(options, pages[0]!.content, undefined, pages), got);
   if (UPDATE) return;
   expect(golden[name], `no golden output for "${name}": run with UPDATE_PDF_GOLDEN=1`).toBeDefined();
   expect(got).toEqual(golden[name]);
@@ -343,6 +418,12 @@ describe('PDF export golden output (DSK-242)', () => {
     expect((await exported("'Comic Sans MS', cursive")).fonts.has('/BaseFont /Caveat')).toBe(true);
     expect((await exported("'Atkinson Hyperlegible', sans-serif")).fonts.has('/BaseFont /Inter')).toBe(true);
   }, 60_000);
+
+  it('found the paginator’s opening text at the top of the PDF’s pages (DSK-252)', () => {
+    // Runs after the exports above: without it, a first-line check that never
+    // matched a break would pass by checking nothing.
+    expect(openedPages, 'breaks checked against the top of their page').toBeGreaterThan(20);
+  });
 
   it('the golden file holds exactly the documents above', () => {
     if (UPDATE) return;

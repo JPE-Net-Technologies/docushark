@@ -5,8 +5,9 @@
 
 import type { JSONContent } from '@tiptap/core';
 import { PDF_FONT_MONO } from './fonts';
-import { checkPageBreak, pageContentHeight, spaceLeft, type PDFRenderContext, type TextSegment } from './context';
-import { renderNode } from './registry';
+import { checkPageBreak, newPage, pageContentHeight, spaceLeft, type PDFRenderContext, type TextSegment } from './context';
+import { withBlockId } from './pager';
+import { renderChildren } from './registry';
 import { PDF_STYLE } from './style';
 import { extractSegments, extractText, renderSegmentedText } from './text';
 
@@ -120,9 +121,7 @@ export async function renderBulletList(
 ): Promise<void> {
   if (!node.content) return;
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel + 1);
-  }
+  await renderChildren(ctx, node, listLevel + 1);
 
   ctx.y += 2;
 }
@@ -139,9 +138,7 @@ export async function renderOrderedList(
 
   const counter = { value: (node.attrs?.['start'] as number | undefined) || 1 };
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel + 1, counter);
-  }
+  await renderChildren(ctx, node, listLevel + 1, counter);
 
   ctx.y += 2;
 }
@@ -179,9 +176,7 @@ export async function renderListItem(
   }
 
   // Render list item content
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel);
-  }
+  await renderChildren(ctx, node, listLevel);
 }
 
 /**
@@ -227,16 +222,18 @@ export function renderCodeBlock(ctx: PDFRenderContext, node: JSONContent): void 
     // Taller than a page: split across pages, starting where it stands. Drawn
     // in one piece it ran off the page and lost its end (DSK-251).
     checkPageBreak(ctx, CODE_BLOCK_MIN_LINES * lineHeightMm + PDF_STYLE.codeBlockPadding * 2);
+    const path = [...ctx.path];
+    const ids = withBlockId(node);
     let remaining = wrappedLines;
+    let drawn = 0;
     while (remaining.length > 0) {
       const room = Math.floor((spaceLeft(ctx) - PDF_STYLE.codeBlockPadding * 2) / lineHeightMm);
       const part = remaining.slice(0, Math.max(1, room));
       remaining = remaining.slice(part.length);
       drawCodeLines(ctx, part, lineHeightMm);
+      drawn += part.length;
       if (remaining.length > 0) {
-        ctx.doc.addPage();
-        ctx.pageNumber++;
-        ctx.y = ctx.marginTop;
+        newPage(ctx, { kind: 'codeLine', path, ...ids, line: drawn });
       }
     }
   }
@@ -283,9 +280,7 @@ export async function renderBlockquote(ctx: PDFRenderContext, node: JSONContent)
   ctx.y += pad;
   ctx.doc.setFont(ctx.textFont, 'italic');
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, 1);
-  }
+  await renderChildren(ctx, node, 1);
 
   // Last child added trailing 2mm; reduce so internal bottom pad reads symmetric with top
   ctx.y += pad - 2;
@@ -335,9 +330,7 @@ export async function renderTaskList(
 ): Promise<void> {
   if (!node.content) return;
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel + 1);
-  }
+  await renderChildren(ctx, node, listLevel + 1);
   ctx.y += 2;
 }
 
@@ -374,9 +367,7 @@ export async function renderTaskItem(
   }
 
   // Render task item content
-  for (const child of node.content) {
-    await renderNode(ctx, child, listLevel);
-  }
+  await renderChildren(ctx, node, listLevel);
 }
 
 const PDF_CALLOUT_COLORS: Record<string, [number, number, number]> = {
@@ -409,9 +400,7 @@ export async function renderCallout(ctx: PDFRenderContext, node: JSONContent): P
   ctx.doc.setTextColor(0, 0, 0);
   ctx.doc.setFont(ctx.textFont, 'normal');
 
-  for (const child of node.content) {
-    await renderNode(ctx, child, 1);
-  }
+  await renderChildren(ctx, node, 1);
   ctx.y += 1;
 
   // Coloured left border (handles page spill like blockquote).
