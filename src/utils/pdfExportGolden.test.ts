@@ -44,7 +44,7 @@ import { sharedProseExtensions } from '../ui/TiptapEditor';
 import { DEFAULT_PDF_OPTIONS } from '../types/PDFExport';
 import type { RichTextContent } from '../types/RichText';
 import { exportToPdf, exportToPdfWithLayout, type PDFRichTextPage } from './pdfExportUtils';
-import { paginate, type BreakAt, type PdfLayout } from './pdfExport/paginate';
+import { paginate, relayoutFrom, type BreakAt, type PdfLayout } from './pdfExport/paginate';
 import { jsPDF } from 'jspdf';
 import { MeasureDoc } from './pdfExport/doc';
 import { pdfFontFor, registerPDFFonts } from './pdfExport/fonts';
@@ -559,4 +559,78 @@ describe('page-break rules (DSK-252)', () => {
     expect(barPages.length, 'the quote spans at least three pages').toBeGreaterThanOrEqual(3);
     expect(barPages).toEqual(Array.from({ length: barPages.length }, (_, i) => barPages[0]! + i));
   }, 60_000);
+});
+
+describe('re-layout from an edited block (DSK-252)', () => {
+  const options = { ...DEFAULT_PDF_OPTIONS, coverPage: { ...DEFAULT_PDF_OPTIONS.coverPage, enabled: false } };
+  const documents: Array<[string, PDFRichTextPage[]]> = [
+    ['long/report', [{ id: 'report', name: 'Report', content: content(longReport()) }]],
+    ['long/blocks', [{ id: 'blocks', name: 'Blocks', content: content(longBlocks()) }]],
+    ['long/table', [{ id: 'table', name: 'Table', content: content(longTable()) }]],
+    ['corpus-as-pages', drawable.map((c) => ({ id: c.name, name: c.name, content: content(c.html) }))],
+  ];
+
+  for (const [name, pages] of documents) {
+    it(`${name}: laying out again from any block gives the full layout`, async () => {
+      const full = await paginate(options, pages[0]!.content, undefined, pages);
+      expect(full.starts.length).toBeGreaterThan(0);
+      for (const start of full.starts) {
+        const pageId = pages[start.prosePage]!.id!;
+        const again = await relayoutFrom(full, { pageId, block: start.block }, options, pages[0]!.content, undefined, pages);
+        expect(again, `${name}: from block ${start.block} of page ${pageId}`).toEqual(full);
+      }
+    }, 120_000);
+  }
+
+  /** long/report with its top-level blocks changed by `change`. */
+  const editedReport = (change: (blocks: JSONContent[]) => void): PDFRichTextPage[] => {
+    const page = { id: 'report', name: 'Report', content: content(longReport()) };
+    const doc = structuredClone(page.content.content) as JSONContent;
+    change(doc.content!);
+    return [{ ...page, content: { ...page.content, content: doc } }];
+  };
+
+  const edits: Array<[string, number, (blocks: JSONContent[]) => void]> = [
+    ['a paragraph inserted', 9, (blocks) => blocks.splice(9, 0, { type: 'paragraph', content: [{ type: 'text', text: sentence(500, 90) }] })],
+    ['a paragraph deleted', 12, (blocks) => blocks.splice(12, 1)],
+    // Block 10 is the paragraph right after "Section 2": the heading's rule looks at it.
+    ['the paragraph after a heading shortened', 10, (blocks) => { blocks[10] = { type: 'paragraph', content: [{ type: 'text', text: 'Short.' }] }; }],
+    // Block 8 is the list right after "Detail 1".
+    ['the list after a heading replaced', 8, (blocks) => { blocks[8] = { type: 'paragraph', content: [{ type: 'text', text: sentence(600, 120) }] }; }],
+  ];
+
+  for (const [what, block, change] of edits) {
+    it(`long/report, ${what}: laying out from the edit gives what a full layout gives`, async () => {
+      const before = [{ id: 'report', name: 'Report', content: content(longReport()) }];
+      const previous = await paginate(options, before[0]!.content, undefined, before);
+      const after = editedReport(change);
+      const expected = await paginate(options, after[0]!.content, undefined, after);
+      const again = await relayoutFrom(previous, { pageId: 'report', block }, options, after[0]!.content, undefined, after);
+      expect(again).toEqual(expected);
+    }, 60_000);
+  }
+
+  it('lays out again the heading before an edited block, since its rule looks ahead', async () => {
+    const opts = { ...options, includeTableOfContents: false };
+    const filler = (count: number): string => Array.from({ length: count }, (_, i) => `<p>${sentence(i + 2, 6)}</p>`).join('');
+    const code = Array.from({ length: 30 }, (_, i) => `const v${i} = ${i};`).join('\n');
+    let headingDecisionChanged = 0;
+    for (let count = 15; count <= 40; count++) {
+      const edited = count + 1; // the block after the heading
+      const before = [{ id: 'p', name: 'P', content: content(`${filler(count)}<h4>Listing</h4><p>Short.</p>`) }];
+      const after = [{ id: 'p', name: 'P', content: content(`${filler(count)}<h4>Listing</h4><pre><code>${code}</code></pre>`) }];
+      const previous = await paginate(opts, before[0]!.content, undefined, before);
+      const expected = await paginate(opts, after[0]!.content, undefined, after);
+      const headingMoved = (l: PdfLayout) => l.breaks.some((b) => b.at.kind === 'block' && b.at.path[0] === count);
+      if (headingMoved(previous) !== headingMoved(expected)) headingDecisionChanged++;
+      const again = await relayoutFrom(previous, { pageId: 'p', block: edited }, opts, after[0]!.content, undefined, after);
+      expect(again, `count ${count}`).toEqual(expected);
+    }
+    expect(headingDecisionChanged, 'some edit moved the heading').toBeGreaterThan(0);
+  }, 120_000);
+
+  it('the blocks edited above follow headings', () => {
+    const blocks = content(longReport()).content.content!;
+    expect(blocks.slice(7, 11).map((b) => b.type)).toEqual(['heading', 'bulletList', 'heading', 'paragraph']);
+  });
 });

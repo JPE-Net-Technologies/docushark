@@ -47,9 +47,29 @@ export interface LeadLog {
   lines: number[];
 }
 
+/**
+ * Where a top-level block of a prose page started: the layout's state there,
+ * enough to lay out again from that block without redoing what came before.
+ */
+export interface BlockStart {
+  /** Index of the prose page among those laid out. */
+  prosePage: number;
+  /** Index of the block in that page's content. */
+  block: number;
+  pageNumber: number;
+  y: number;
+  /** Headings on this prose page before the block. */
+  pageHeadings: number;
+  /** Headings collected before the block (the contents count them). */
+  headings: number;
+  /** Breaks recorded before the block. */
+  breaks: number;
+}
+
 /** Collects the breaks of one layout, in order. */
 export class Pager {
   readonly breaks: PageBreak[] = [];
+  readonly starts: BlockStart[] = [];
 
   /** Set on a scratch pager that measures instead of breaking. */
   constructor(readonly lead?: LeadLog) {}

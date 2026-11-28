@@ -69,17 +69,28 @@ export async function renderChildren(
   const children = parent.content;
   if (!children) return;
   for (let i = 0; i < children.length; i++) {
-    const child = children[i]!;
-    ctx.path.push(i);
-    ctx.blocks.push(child);
-    ctx.following.push(children.slice(i + 1));
-    try {
-      await pdfNodeRenderers.render(ctx, child, listLevel, listCounter);
-    } finally {
-      ctx.path.pop();
-      ctx.blocks.pop();
-      ctx.following.pop();
-    }
+    await renderChild(ctx, children, i, listLevel, listCounter);
+  }
+}
+
+/** Render `children[i]`, with `ctx.path`, `ctx.blocks` and `ctx.following` on it. */
+export async function renderChild(
+  ctx: PDFRenderContext,
+  children: JSONContent[],
+  i: number,
+  listLevel: number,
+  listCounter?: { value: number }
+): Promise<void> {
+  const child = children[i]!;
+  ctx.path.push(i);
+  ctx.blocks.push(child);
+  ctx.following.push(children.slice(i + 1));
+  try {
+    await pdfNodeRenderers.render(ctx, child, listLevel, listCounter);
+  } finally {
+    ctx.path.pop();
+    ctx.blocks.pop();
+    ctx.following.pop();
   }
 }
 

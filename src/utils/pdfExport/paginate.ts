@@ -12,10 +12,10 @@ import type { PDFExportOptions } from '../../types/PDFExport';
 import type { PDFCanvasPage, PDFRichTextPage } from './context';
 import { MeasureDoc } from './doc';
 import { pdfFontFor, registerPDFFonts } from './fonts';
-import { layOut, layoutOf, type PdfLayout } from './layout';
+import { layOut, layoutOf, type PdfLayout, type ResumeFrom } from './layout';
 
 export type { PdfLayout } from './layout';
-export type { BreakAt, InlinePosition, PageBreak } from './pager';
+export type { BlockStart, BreakAt, InlinePosition, PageBreak } from './pager';
 
 interface Metrics {
   pdf: jsPDF;
@@ -59,6 +59,54 @@ export function paginate(
   richTextPages?: PDFRichTextPage[],
   canvasPages?: PDFCanvasPage[]
 ): Promise<PdfLayout> {
+  return measure(options, richTextContent, themeBackground, richTextPages, canvasPages);
+}
+
+/** The first top-level block an edit changed: in a prose page, by id, or the only one. */
+export interface EditStart {
+  pageId?: string;
+  block: number;
+}
+
+/**
+ * Lay the document out again after an edit, from the first block it changed:
+ * the pages before it don't move, so they're taken from `previous` (a layout
+ * of the document before the edit, with the same options). A heading's rule
+ * looks ahead, so the headings just before the edited block are laid out
+ * again too. Gives exactly what `paginate` would.
+ */
+export function relayoutFrom(
+  previous: PdfLayout,
+  edit: EditStart,
+  options: PDFExportOptions,
+  richTextContent: RichTextContent,
+  themeBackground?: string,
+  richTextPages?: PDFRichTextPage[],
+  canvasPages?: PDFCanvasPage[]
+): Promise<PdfLayout> {
+  const pages = richTextPages && richTextPages.length > 0 ? richTextPages : [{ name: 'Document', content: richTextContent }];
+  const prosePage = edit.pageId === undefined ? 0 : pages.findIndex((page) => page.id === edit.pageId);
+  const blocks = pages[prosePage]?.content.content.content ?? [];
+  let block = Math.min(edit.block, blocks.length);
+  while (block > 0 && blocks[block - 1]?.type === 'heading') block--;
+
+  // The last block start at or before the edit that the previous layout saw.
+  let start: ResumeFrom['start'] | undefined;
+  for (const s of previous.starts) {
+    if (s.prosePage === prosePage && s.block <= block && (!start || s.block > start.block)) start = s;
+  }
+  const resume: ResumeFrom | undefined = start && { start, breaks: previous.breaks, starts: previous.starts };
+  return measure(options, richTextContent, themeBackground, richTextPages, canvasPages, resume);
+}
+
+function measure(
+  options: PDFExportOptions,
+  richTextContent: RichTextContent,
+  themeBackground: string | undefined,
+  richTextPages: PDFRichTextPage[] | undefined,
+  canvasPages: PDFCanvasPage[] | undefined,
+  resume?: ResumeFrom
+): Promise<PdfLayout> {
   const run = async (): Promise<PdfLayout> => {
     const { pdf, textFont } = await metricsFor(options.fontFamily);
     const ctx = await layOut(new MeasureDoc(pdf), textFont, {
@@ -67,7 +115,7 @@ export function paginate(
       themeBackground,
       richTextPages,
       canvasPages,
-    });
+    }, resume);
     return layoutOf(options, ctx);
   };
   const result = queue.then(run, run);

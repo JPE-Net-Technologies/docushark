@@ -15,8 +15,8 @@ import { newPage, type PDFCanvasPage, type PDFRenderContext, type PDFRichTextPag
 import type { PdfDoc } from './doc';
 import { renderCoverPage, tableOfContentsLayout } from './furniture';
 import { loadBlobAsDataUrl, loadEmbeddedImages } from './images';
-import { Pager, type PageBreak } from './pager';
-import { renderChildren } from './registry';
+import { type BlockStart, Pager, type PageBreak } from './pager';
+import { renderChild } from './registry';
 // Registers a renderer for every node type.
 import './nodes';
 
@@ -49,10 +49,24 @@ export interface PdfLayout {
   contentsPages: number;
   /** Every page break, in order. */
   breaks: PageBreak[];
+  /** Where each top-level block of each prose page started, for `relayoutFrom`. */
+  starts: BlockStart[];
 }
 
-/** Lay the whole document out on `doc` and return the finished context. */
-export async function layOut(doc: PdfDoc, textFont: string, input: LayoutInput): Promise<PDFRenderContext> {
+/** A layout to continue from one of its block starts, instead of from the top. */
+export interface ResumeFrom {
+  start: BlockStart;
+  /** The previous layout's breaks and starts before that block. */
+  breaks: PageBreak[];
+  starts: BlockStart[];
+}
+
+/**
+ * Lay the whole document out on `doc` and return the finished context. With
+ * `resume`, start at one of a previous layout's block starts: the cover, the
+ * diagrams before the content and every block before it are taken as laid out.
+ */
+export async function layOut(doc: PdfDoc, textFont: string, input: LayoutInput, resume?: ResumeFrom): Promise<PDFRenderContext> {
   const { options, richTextContent, themeBackground, richTextPages, canvasPages } = input;
   const { width, height } = getPageDimensions(options.pageSize, options.orientation);
 
@@ -61,9 +75,10 @@ export async function layOut(doc: PdfDoc, textFont: string, input: LayoutInput):
     ? richTextPages
     : [{ name: 'Document', content: richTextContent }];
 
-  // Load all embedded images from all pages
+  // Load all embedded images from the pages to lay out
+  const firstPage = resume?.start.prosePage ?? 0;
   const images = new Map<string, string>();
-  for (const page of pagesToRender) {
+  for (const page of pagesToRender.slice(firstPage)) {
     const pageImages = await loadEmbeddedImages(page.content.content);
     for (const [key, value] of pageImages) {
       images.set(key, value);
@@ -108,44 +123,70 @@ export async function layOut(doc: PdfDoc, textFont: string, input: LayoutInput):
     deferredHeadingLinks: [],
   };
 
-  // Render cover page if enabled
-  if (options.coverPage.enabled) {
-    await renderCoverPage(ctx, options.coverPage, logoDataUrl);
-    newPage(ctx, { kind: 'section', section: 'afterCover', index: 0 });
-  }
+  if (resume) {
+    // Continue where the previous layout stood at this block.
+    const { start } = resume;
+    ctx.pager.breaks.push(...resume.breaks.slice(0, start.breaks));
+    ctx.pager.starts.push(...resume.starts.filter((s) => s.prosePage < start.prosePage || (s.prosePage === start.prosePage && s.block < start.block)));
+    ctx.pageNumber = start.pageNumber;
+    ctx.y = start.y;
+    // Only their number matters to a layout (the contents count them).
+    ctx.collectedHeadings = Array.from({ length: start.headings }, () => ({
+      level: 1, text: '', pdfPage: 0, pageId: undefined, pageHeadingIndex: undefined, headingId: undefined,
+    }));
+  } else {
+    // Render cover page if enabled
+    if (options.coverPage.enabled) {
+      await renderCoverPage(ctx, options.coverPage, logoDataUrl);
+      newPage(ctx, { kind: 'section', section: 'afterCover', index: 0 });
+    }
 
-  // Render diagrams after cover page if position is 'after-cover'
-  if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'after-cover') {
-    await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
-  }
+    // Render diagrams after cover page if position is 'after-cover'
+    if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'after-cover') {
+      await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
+    }
 
-  // Render diagrams before content if position is 'before-content'
-  if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'before-content') {
-    await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
+    // Render diagrams before content if position is 'before-content'
+    if (options.diagramEmbed?.enabled && options.diagramEmbed.position === 'before-content') {
+      await renderAllDiagramPages(ctx, options.diagramEmbed, canvasPages, themeBackground);
+    }
   }
 
   // Render all rich text pages
-  for (let i = 0; i < pagesToRender.length; i++) {
+  for (let i = firstPage; i < pagesToRender.length; i++) {
     const page = pagesToRender[i]!;
+    const resumingHere = resume !== undefined && i === firstPage;
 
     ctx.currentPageId = page.id;
-    ctx.currentPageHeadingIndex = 0;
+    ctx.currentPageHeadingIndex = resumingHere ? resume.start.pageHeadings : 0;
 
     // Add a page break before each rich text page (except the first)
-    if (i > 0) {
+    if (i > 0 && !resumingHere) {
       newPage(ctx, { kind: 'section', section: 'prose', index: i });
     }
 
     // Record where this app page lives in the PDF (for internal link resolution)
-    if (page.id) {
+    if (page.id && !resumingHere) {
       ctx.pageIdToPdfPage[page.id] = ctx.pageNumber;
     }
 
     // (Page/tab names are intentionally not printed — pages are separated by the
     // hard page break above, not a per-page title heading.)
 
-    // Render document content for this page
-    await renderChildren(ctx, page.content.content, 0);
+    // Render document content for this page, noting where each block starts.
+    const blocks = page.content.content.content ?? [];
+    for (let j = resumingHere ? resume.start.block : 0; j < blocks.length; j++) {
+      ctx.pager.starts.push({
+        prosePage: i,
+        block: j,
+        pageNumber: ctx.pageNumber,
+        y: ctx.y,
+        pageHeadings: ctx.currentPageHeadingIndex,
+        headings: ctx.collectedHeadings.length,
+        breaks: ctx.pager.breaks.length,
+      });
+      await renderChild(ctx, blocks, j, 0);
+    }
   }
 
   // Render diagrams after content if position is 'after-content'
@@ -167,5 +208,6 @@ export function layoutOf(options: PDFExportOptions, ctx: PDFRenderContext): PdfL
     pages: ctx.pageNumber,
     contentsPages: wantsContents(options, ctx) ? tableOfContentsLayout(ctx).pages : 0,
     breaks: ctx.pager.breaks,
+    starts: ctx.pager.starts,
   };
 }
