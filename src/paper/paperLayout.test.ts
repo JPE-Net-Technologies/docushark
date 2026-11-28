@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import { sharedProseExtensions } from '../ui/TiptapEditor';
 import { DEFAULT_PDF_OPTIONS, type PDFExportOptions } from '../types/PDFExport';
 import type { PdfLayout } from '../utils/pdfExport/paginate';
 import {
@@ -30,7 +31,7 @@ afterEach(() => {
   editor = null;
 });
 const docOf = (html: string) => {
-  editor = new Editor({ extensions: [StarterKit], content: html });
+  editor = new Editor({ extensions: [StarterKit.configure({ codeBlock: false }), ...sharedProseExtensions], content: html });
   return editor.state.doc;
 };
 
@@ -50,7 +51,9 @@ describe('paperOptions', () => {
 
 describe('firstChangedBlock', () => {
   it('finds the first top-level block that is a different node', () => {
-    const before = docOf('<p>One</p><p>Two</p><p>Three</p>');
+    // StarterKit alone: the shared extensions stamp block ids on the first edit.
+    editor = new Editor({ extensions: [StarterKit], content: '<p>One</p><p>Two</p><p>Three</p>' });
+    const before = editor.state.doc;
     editor!.commands.insertContentAt(before.child(0).nodeSize + 1, 'X');
     const after = editor!.state.doc;
     expect(firstChangedBlock(before, after)).toBe(1);
@@ -99,6 +102,22 @@ describe('paperPagesFor', () => {
     const b = paperPagesFor(layout, 'b', 1, doc, base);
     expect(b.ends.map((end) => end.footer)).toEqual(['Page 4 of 5']);
     expect(b.lastFooter).toBe('Page 5 of 5');
+  });
+
+  it('keeps a row taller than a page whole, on the page it starts', () => {
+    const doc = docOf('<table><tr><th><p>Head</p></th></tr><tr><td><p>Tall</p></td></tr></table><p>After</p>');
+    const tall: PdfLayout = {
+      pages: 3,
+      contentsPages: 0,
+      breaks: [
+        { page: 2, pageId: 'a', at: { kind: 'row', path: [0], row: 1, header: 1 } },
+        { page: 3, pageId: 'a', at: { kind: 'row', path: [0], row: 1, header: 1 } },
+      ],
+      starts: [],
+    };
+    const pages = paperPagesFor(tall, 'a', 0, doc, base);
+    expect(pages.ends.map((end) => [end.at.kind, end.footer])).toEqual([['row', 'Page 1 of 3']]);
+    expect(pages.lastFooter).toBe('Page 3 of 3');
   });
 
   it('prints nothing when the export prints no page numbers', () => {

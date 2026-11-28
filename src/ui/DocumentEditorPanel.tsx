@@ -217,7 +217,7 @@ export function DocumentEditorPanel({
 
   // Paper Mode (DSK-48): the prose as the PDF's pages, in the reading column.
   const paperMode = usePaperModeActive() && presentation === 'reading';
-  const paperOptions = usePaperOptions();
+  const { options: paperOptions, diagramsLeftOut } = usePaperOptions();
   usePaperLayout(editor, paperMode, paperOptions);
   const paperStyle = useMemo<Record<string, string> | undefined>(
     () =>
@@ -627,6 +627,11 @@ export function DocumentEditorPanel({
         {/* In every layout: a phone has no ribbon, and "/" still needs its pickers. */}
         <SlashUiHost />
         <div className="document-editor-panel-content">
+          {paperMode && diagramsLeftOut && (
+            <p className="paper-mode-note" role="note">
+              Diagrams aren't shown in Paper Mode. The PDF adds them, so its page numbers differ.
+            </p>
+          )}
           {/* Never blank (JP-328): a prose render crash degrades to the page's
               read-only HTML projection, not an empty panel; auto-resets on
               doc/page switch. */}

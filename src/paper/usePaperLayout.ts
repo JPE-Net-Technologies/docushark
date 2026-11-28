@@ -35,8 +35,14 @@ import { firstChangedBlock, fitPages, paperGeometry, paperOptions, paperPagesFor
 /** How long typing pauses before the pages are laid out again. */
 export const PAPER_LAYOUT_DELAY_MS = 300;
 
-/** The options Paper Mode lays out with: the export's, as the dialog would start them. */
-export function usePaperOptions(): PDFExportOptions {
+export interface PaperSetup {
+  /** The options Paper Mode lays out with: the export's, as the dialog would start them. */
+  options: PDFExportOptions;
+  /** Whether the export embeds diagrams, which Paper Mode leaves out. */
+  diagramsLeftOut: boolean;
+}
+
+export function usePaperOptions(): PaperSetup {
   // The page setting changes on every export too, which is when the other
   // export settings can have changed: they're read again with it.
   const stored = usePageSetting();
@@ -45,7 +51,10 @@ export function usePaperOptions(): PDFExportOptions {
   return useMemo(() => {
     const exportSettings = documentId ? loadDocumentPdfSettings(documentId) : null;
     const options: PDFExportOptions = { ...createInitialPDFOptions('', exportSettings), fontFamily: font };
-    return paperOptions(options, resolvePageSetup(stored, exportSettings));
+    return {
+      options: paperOptions(options, resolvePageSetup(stored, exportSettings)),
+      diagramsLeftOut: options.diagramEmbed?.enabled === true,
+    };
   }, [stored, documentId, font]);
 }
 

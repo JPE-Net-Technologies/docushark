@@ -30,6 +30,17 @@
   padding: 0;
 }
 
+/* Above the sheets when the export embeds diagrams, which the view leaves out. */
+.paper-mode .paper-mode-note {
+  flex: none;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  background: var(--paper-desk);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
 .paper-mode .tiptap-editor {
   background: var(--paper-desk);
   overflow-x: auto;

@@ -73,8 +73,16 @@ export function paperPagesFor(
   const total = layout.pages + layout.contentsPages;
   const footerOf = (page: number) => footerText(printedPageNumber(page, layout, options), total, options);
   const ends: PageEnd[] = [];
+  // A row taller than a page breaks again inside itself, which the view can't
+  // show: it keeps the row whole, on the page it starts.
+  const rows = new Set<string>();
   for (const b of layout.breaks) {
     if (b.pageId !== pageId || b.at.kind === 'section') continue;
+    if (b.at.kind === 'row') {
+      const row = `${b.at.path.join(',')}:${b.at.row}`;
+      if (rows.has(row)) continue;
+      rows.add(row);
+    }
     const at = positionOfBreak(doc, b.at);
     if (at) ends.push({ at, footer: footerOf(b.page - 1) });
   }
