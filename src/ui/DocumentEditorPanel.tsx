@@ -219,6 +219,12 @@ export function DocumentEditorPanel({
   const paperMode = usePaperModeActive() && presentation === 'reading';
   const { options: paperOptions, diagramsLeftOut } = usePaperOptions();
   usePaperLayout(editor, paperMode, paperOptions);
+  // Popovers that portal to the body read this, to stay legible over the sheet.
+  useEffect(() => {
+    if (!paperMode) return;
+    document.documentElement.setAttribute('data-paper-mode', '');
+    return () => document.documentElement.removeAttribute('data-paper-mode');
+  }, [paperMode]);
   const paperStyle = useMemo<Record<string, string> | undefined>(
     () =>
       paperMode

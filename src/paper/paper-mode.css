@@ -290,6 +290,14 @@
   background-clip: padding-box;
 }
 
+/* Over the bright sheet, the dark theme's glass (58% opaque) lets the paper
+   through and its light text loses contrast. While Paper Mode shows
+   (DocumentEditorPanel sets the flag), popovers are nearly opaque; with glass
+   off they're opaque already. */
+:root[data-theme='dark'][data-paper-mode]:not([data-glass='off']) {
+  --glass-surface: rgba(14, 28, 48, 0.94);
+}
+
 /* The gaps between the sheets and the footers, drawn by `fitPages`. */
 .paper-overlay {
   position: absolute;

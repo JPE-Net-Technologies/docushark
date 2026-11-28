@@ -1,6 +1,9 @@
 .relaxed-focus-control {
   display: inline-flex;
   align-items: stretch;
+  /* As tall as the top bar's chips (Relaxed, Share, Tools), so the row is even. */
+  box-sizing: border-box;
+  min-height: var(--control-height-lg);
   gap: var(--space-0-5);
   padding: var(--space-0-5);
   border: 1px solid var(--border-color);
@@ -55,5 +58,64 @@
 @media (max-width: 640px) {
   .relaxed-focus-segment-label {
     display: none;
+  }
+}
+
+/* Paper Mode's control (PaperModeToggle.tsx): an on/off switch, so it doesn't
+   read as a fourth focus, and PDF beside it while it's on (DSK-257). */
+.paper-mode-switch-track {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 12px;
+  margin-left: 2px;
+  border-radius: 6px;
+  background: var(--border-color);
+  transition: background 0.15s ease;
+}
+
+.paper-mode-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.paper-mode-switch.on {
+  color: var(--text-primary);
+}
+
+.paper-mode-switch.on .paper-mode-switch-track {
+  background: var(--color-cta);
+}
+
+.paper-mode-switch.on .paper-mode-switch-knob {
+  transform: translateX(10px);
+  background: var(--color-cta-text);
+}
+
+/* PDF reads as an action beside the switch: a hairline between them. */
+.paper-mode-pdf {
+  position: relative;
+}
+
+.paper-mode-pdf::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: var(--border-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paper-mode-switch-track,
+  .paper-mode-switch-knob {
+    transition: none;
   }
 }
