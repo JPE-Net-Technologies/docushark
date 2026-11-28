@@ -366,6 +366,15 @@ canvas, and canvas-primary. The focus is ephemeral app-level state
 is primary — a `compact` viewport forbids split, the single-pane shape a future
 mobile (PWA) layout reuses.
 
+**Paper Mode** (DSK-48, `src/paper/`): the **Paper** toggle beside the focus
+control shows the prose as the PDF's pages. It lays the document out with the
+export's own paginator (`src/utils/pdfExport/paginate.ts`), so the breaks are
+the PDF's; `PaperModeExtension` turns them into decorations and `fitPages`
+sizes each page and draws the gaps and footers. The page setup is the
+document's `page` setting, shared with the PDF export. A change to the PDF's
+layout or text metrics changes Paper Mode too: keep `paper-mode.css` in step
+with `PDF_STYLE`.
+
 ### Persistence model
 
 Layout is an **app-level** concern — a single active mode for the whole editor,
