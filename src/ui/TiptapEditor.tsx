@@ -15,6 +15,7 @@
  * - Embedded groups from canvas
  */
 
+import { PaperModeExtension } from '../tiptap/PaperModeExtension';
 import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { getSchema } from '@tiptap/core';
@@ -411,7 +412,9 @@ export function TiptapEditor({ className, onEditorReady }: TiptapEditorProps) {
   const readOnly = docReadOnly || activeMirror !== null;
 
   const editor = useEditor({
-    extensions,
+    // Paper Mode's page breaks are view-only decorations, so they stay out of
+    // the shared list `generateJSON` parses with (DSK-48).
+    extensions: [...extensions, PaperModeExtension],
     content: content.content,
     editable: !readOnly,
     onUpdate: ({ editor, transaction }) => {

@@ -22,6 +22,7 @@
  * outline, PDF) stay current — a pure projection, never an independent writer.
  */
 
+import { PaperModeExtension } from '../tiptap/PaperModeExtension';
 import { useEffect } from 'react';
 import { useEditor } from '@tiptap/react';
 import type { Editor } from '@tiptap/core';
@@ -103,6 +104,8 @@ export function CollaborativeProseEditor({
         ...sharedProseExtensions,
         Collaboration.configure({ document: ydoc, field }),
         ...collaborationCursor,
+        // Paper Mode's page breaks: view-only decorations (DSK-48).
+        PaperModeExtension,
       ],
       editable: !readOnly,
       // Build the editor in a commit-phase effect, not during render. Tiptap's

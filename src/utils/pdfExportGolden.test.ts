@@ -49,6 +49,7 @@ import { jsPDF } from 'jspdf';
 import { MeasureDoc } from './pdfExport/doc';
 import { pdfFontFor, registerPDFFonts } from './pdfExport/fonts';
 import { layOut } from './pdfExport/layout';
+import { positionOfBreak } from '../paper/breakPositions';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CORPUS = resolve(__dirname, '../../relay/tests/prose-fixtures/cases.json');
@@ -637,5 +638,52 @@ describe('re-layout from an edited block (DSK-252)', () => {
   it('the blocks edited above follow headings', () => {
     const blocks = content(longReport()).content.content!;
     expect(blocks.slice(7, 11).map((b) => b.type)).toEqual(['heading', 'bulletList', 'heading', 'paragraph']);
+  });
+});
+
+describe('Paper Mode’s break positions (DSK-48)', () => {
+  // Each break inside a prose page maps to a position in that page's editor
+  // document, and the text there is what opens the exported PDF's page.
+  const options = { ...DEFAULT_PDF_OPTIONS, coverPage: { ...DEFAULT_PDF_OPTIONS.coverPage, enabled: false } };
+  const documents: Array<[string, PDFRichTextPage[]]> = [
+    ['long/report', [{ id: 'report', name: 'Report', content: content(longReport()) }]],
+    ['long/blocks', [{ id: 'blocks', name: 'Blocks', content: content(longBlocks()) }]],
+    ['long/table', [{ id: 'table', name: 'Table', content: content(longTable()) }]],
+    ['corpus-as-pages', drawable.map((c) => ({ id: c.name, name: c.name, content: content(c.html) }))],
+  ];
+
+  it('places every break at the text that opens its PDF page', async () => {
+    let placed = 0;
+    for (const [name, pages] of documents) {
+      const layout = await paginate(options, pages[0]!.content, undefined, pages);
+      const printed = golden[name]!;
+      expect(layout.pages + layout.contentsPages, `${name}: the page count shown is the PDF's`).toBe(printed.pages);
+      for (const b of layout.breaks) {
+        const page = pages.find((p) => p.id === b.pageId)!;
+        const doc = schema.nodeFromJSON(page.content.content);
+        const at = positionOfBreak(doc, b.at);
+        if (b.at.kind === 'section') {
+          expect(at, `${name}: a prose page's own start isn't inside it`).toBeNull();
+          continue;
+        }
+        expect(at, `${name}: ${JSON.stringify(b.at)}`).not.toBeNull();
+        const text = at!.kind === 'row'
+          ? doc.textBetween(at!.pos, at!.end, ' ')
+          : doc.textBetween(at!.pos, Math.min(doc.content.size, at!.pos + 200), ' ', ' ');
+        const word = text.trim().split(/\s+/)[0]!;
+        // The top of the page: a callout's label or a repeated table header can
+        // come first, and an ordered list's number sits against its first word.
+        const top = (printed.text[b.page + layout.contentsPages - 1] ?? []).slice(0, 2).join(' ').replace(/(^|\s)\d+\./g, '$1');
+        expect(top.split(/\s+/), `${name}: page ${b.page} opens with "${word}"`).toContain(word);
+        placed++;
+      }
+    }
+    expect(placed, 'breaks placed in the editor').toBeGreaterThan(8);
+  }, 120_000);
+
+  it('places nothing for a path that no longer resolves', () => {
+    const doc = schema.nodeFromJSON(content('<p>One</p>').content);
+    expect(positionOfBreak(doc, { kind: 'block', path: [3] })).toBeNull();
+    expect(positionOfBreak(doc, { kind: 'row', path: [0], row: 0 })).toBeNull();
   });
 });
