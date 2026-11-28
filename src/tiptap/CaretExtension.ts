@@ -2,6 +2,7 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { useUIPreferencesStore } from '../store/uiPreferencesStore';
+import { contrastRatio, parseColorInput } from '../utils/color';
 
 /**
  * CaretExtension (JP-259) — a custom prose caret that **glides** between
@@ -37,6 +38,24 @@ function motionReduced(): boolean {
   if (m === 'reduced') return true;
   if (m === 'full') return false;
   return prefersReducedMotion();
+}
+
+/** The least contrast a caret keeps against Paper Mode's sheet (WCAG's 3:1 for interface parts). */
+const PAPER_CARET_CONTRAST = 3;
+
+/**
+ * Whether a caret colour is too faint on Paper Mode's sheet (DSK-48), which
+ * stays paper-coloured in either theme: a colour picked for a dark editor can
+ * vanish on it. `caret` already wears the colour; the sheet is the editor's
+ * parent. Both are read as the browser resolved them, so a CSS variable works.
+ */
+export function faintOnPaper(caret: HTMLElement, view: EditorView): boolean {
+  if (!view.dom.closest('.paper-mode')) return false;
+  const sheet = view.dom.parentElement;
+  if (!sheet) return false;
+  const ink = parseColorInput(getComputedStyle(caret).backgroundColor);
+  const paper = parseColorInput(getComputedStyle(sheet).backgroundColor);
+  return ink !== null && paper !== null && contrastRatio(ink, paper) < PAPER_CARET_CONTRAST;
 }
 
 class CaretView {
@@ -165,10 +184,14 @@ class CaretView {
     // Custom caret color (any CSS color or var). Empty string falls back to the
     // CSS defaults (.ds-caret / .ds-caret--block). The block caret stays
     // translucent so the glyph underneath remains legible.
-    this.caret.style.background = caretColor
+    // On Paper Mode's sheet a colour too faint against the paper gives way to
+    // the paper's ink (the stylesheet's default there).
+    this.caret.style.background = caretColor ?? '';
+    const color = caretColor && !faintOnPaper(this.caret, view) ? caretColor : null;
+    this.caret.style.background = color
       ? isBlock
-        ? `color-mix(in srgb, ${caretColor} 35%, transparent)`
-        : caretColor
+        ? `color-mix(in srgb, ${color} 35%, transparent)`
+        : color
       : '';
 
     this.caret.style.width = `${width}px`;

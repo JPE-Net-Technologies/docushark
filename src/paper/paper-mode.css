@@ -88,6 +88,18 @@
   white-space: pre-wrap;
 }
 
+/* The caret is drawn in the scroll container, outside the sheet
+   (CaretExtension), so it takes the paper's ink here. A caret colour too faint
+   for the paper falls back to it too (`faintOnPaper`). */
+.paper-mode .ds-caret {
+  --text-primary: #000;
+}
+
+/* The block caret's translucent accent is too faint on paper: the ink, translucent. */
+.paper-mode .ds-caret--block {
+  background: color-mix(in srgb, #000 30%, transparent);
+}
+
 /* Where a page ends (`PaperModeExtension`): room only, sized inline. */
 .paper-mode .tiptap-editor .ProseMirror .paper-gap {
   display: block;
