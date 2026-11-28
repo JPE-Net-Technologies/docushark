@@ -33,6 +33,7 @@ import type { Field, FieldLibrary } from '../types/Field';
 import type { PageMirrorMeta } from '../types/PageMirror';
 import { getProseSchema } from './proseSchema';
 import { CanvasUndoController } from './CanvasUndoController';
+import { proseFragmentHeading, summarizeProseFragment, type ProsePageSummary } from './proseFragmentSummary';
 
 /**
  * Document metadata stored in Yjs
@@ -68,6 +69,10 @@ export interface ProsePageMeta {
    *  The relay's hydrate/flatten pass page-meta fields through generically,
    *  so no relay change backs this. */
   mirror?: PageMirrorMeta;
+  /** The writing page this one is a subpage of (DSK-262). Every copy carries
+   *  it since DSK-260, ahead of anything that writes it (DSK-235); the relay
+   *  passes it through like `mirror`. */
+  parentId?: string;
 }
 
 /**
@@ -423,6 +428,16 @@ export class YjsDocument {
    */
   private proseFragment(pageId: string): Y.XmlFragment {
     return this.doc.getXmlFragment(`prose:${pageId}`);
+  }
+
+  /** A writing page's first heading and word count, from its shared content (DSK-260). */
+  getProsePageSummary(pageId: string): ProsePageSummary {
+    return summarizeProseFragment(this.proseFragment(pageId));
+  }
+
+  /** Just a writing page's first heading, for its label (DSK-260). */
+  getProsePageHeading(pageId: string): string | null {
+    return proseFragmentHeading(this.proseFragment(pageId));
   }
 
   /**

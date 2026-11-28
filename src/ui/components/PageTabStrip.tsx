@@ -20,6 +20,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { MoreHorizontal, Plus } from 'lucide-react';
 import { Icon } from '../icons';
 import { useActiveDocReadOnly } from '../../store/documentRegistry';
+import { useBreakpoint } from '../layout/useBreakpoint';
 import './PageTabStrip.css';
 
 export interface PageTabStripItem {
@@ -50,9 +51,10 @@ interface PageTabStripProps {
   onSelect: (id: string) => void;
   /**
    * Render one tab. The returned element MUST carry `data-page-id={item.id}` so
-   * the strip can scroll the active tab into view.
+   * the strip can scroll the active tab into view and move focus between tabs,
+   * and must take `tab.tabIndex`: the row is one tab stop (DSK-260).
    */
-  renderTab: (item: PageTabStripItem, index: number) => ReactNode;
+  renderTab: (item: PageTabStripItem, index: number, tab: PageTabProps) => ReactNode;
   /** Add-page handler — renders the shared "+" button when provided. The
    *  button's rect is passed so a consumer can anchor an add-menu to it
    *  (JP-415); consumers that add directly simply ignore it. */
@@ -62,6 +64,8 @@ interface PageTabStripProps {
   addDisabled?: boolean;
   /** Tooltip / aria-label for the add button. */
   addTitle?: string;
+  /** Text beside the add button's "+" ("Page", "Diagram"), saying what it adds (DSK-260). */
+  addLabel?: string;
   /** Extra content pinned flush-right (e.g. the editor's ⋮ actions menu). */
   trailing?: ReactNode;
   /** Outer class (the consumer's bg/border/padding lives here). */
@@ -69,7 +73,21 @@ interface PageTabStripProps {
   ariaLabel?: string;
 }
 
+/** What the strip asks of each tab it renders. */
+export interface PageTabProps {
+  /** 0 for the one tab the row's tab stop lands on, -1 for the rest. */
+  tabIndex: 0 | -1;
+}
+
 const CLOSE_DELAY_MS = 200;
+
+/** The top-level item showing `activeId`: itself, or the family it belongs to. */
+function itemShowing(items: PageTabStripItem[], activeId: string | null): string | null {
+  if (activeId === null) return null;
+  const holds = (item: PageTabStripItem): boolean =>
+    item.id === activeId || (item.children ?? []).some(holds);
+  return items.find(holds)?.id ?? null;
+}
 
 export function PageTabStrip({
   items,
@@ -79,10 +97,14 @@ export function PageTabStrip({
   onAdd,
   addDisabled,
   addTitle,
+  addLabel,
   trailing,
   className,
   ariaLabel,
 }: PageTabStripProps) {
+  const { isTouch } = useBreakpoint();
+  // One tab stop for the row (DSK-260): the tab showing the open page, else the first.
+  const stopId = itemShowing(items, activeId) ?? items[0]?.id ?? null;
   /**
    * Adding a page is a WRITE. Gated here rather than at each consumer
    * (`InlinePageTabs`, `RichTextTabBar`) because both are document page
@@ -174,23 +196,60 @@ export function PageTabStrip({
     [onSelect]
   );
 
+  // Arrow keys, Home and End move between tabs; Enter or Space opens the one
+  // focused (DSK-260). The menu key and Shift+F10 fire the tab's own
+  // `contextmenu`, which opens its page menu.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('input, textarea')) return; // renaming
+      const tab = target.closest<HTMLElement>('[data-page-id]');
+      const row = scrollRef.current;
+      if (!tab || !row || target !== tab) return;
+      const tabs = Array.from(row.querySelectorAll<HTMLElement>('[data-page-id]'));
+      const at = tabs.indexOf(tab);
+      let next: HTMLElement | undefined;
+      if (e.key === 'ArrowRight') next = tabs[at + 1];
+      else if (e.key === 'ArrowLeft') next = tabs[at - 1];
+      else if (e.key === 'Home') next = tabs[0];
+      else if (e.key === 'End') next = tabs[tabs.length - 1];
+      else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        const id = tab.dataset['pageId'];
+        if (id) onSelect(id);
+        return;
+      } else return;
+      e.preventDefault();
+      next?.focus();
+      next?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+    },
+    [onSelect]
+  );
+
+  const addText = addTitle ?? 'Add page';
+
   return (
-    <div ref={rootRef} className={`page-tab-strip ${className ?? ''}`.trim()} aria-label={ariaLabel}>
-      <div className="page-tab-strip-scroll" ref={scrollRef} role="tablist">
-        {items.map((item, index) => renderTab(item, index))}
+    <div
+      ref={rootRef}
+      className={`page-tab-strip ${isTouch ? 'page-tab-strip--touch' : ''} ${className ?? ''}`.replace(/\s+/g, ' ').trim()}
+      aria-label={ariaLabel}
+    >
+      <div className="page-tab-strip-scroll" ref={scrollRef} role="tablist" onKeyDown={handleKeyDown}>
+        {items.map((item, index) => renderTab(item, index, { tabIndex: item.id === stopId ? 0 : -1 }))}
       </div>
 
       {onAdd && !docReadOnly && (
         <button
           type="button"
-          className="page-tab-strip-add"
+          className={`page-tab-strip-add ${addLabel ? 'page-tab-strip-add--labelled' : ''}`.trim()}
           onClick={(e) => onAdd(e.currentTarget.getBoundingClientRect())}
           aria-disabled={addDisabled}
           data-disabled={addDisabled || undefined}
-          title={addTitle ?? 'Add page'}
-          aria-label={addTitle ?? 'Add page'}
+          title={addText}
+          aria-label={addText}
         >
           <Icon icon={Plus} size={16} />
+          {addLabel && <span className="page-tab-strip-add-label">{addLabel}</span>}
         </button>
       )}
 

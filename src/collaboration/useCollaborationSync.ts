@@ -28,8 +28,7 @@ import { getProvenance, runWithProvenance } from '../store/writeProvenance';
 import { useConnectionStore } from '../store/connectionStore';
 import { usePendingSyncPages, pendingPagesForDoc } from '../store/pendingSyncPages';
 import { useCollaborationStore } from './collaborationStore';
-import { healOrphanedProseFragments, synthesizeProsePageMeta } from './proseInvariant';
-import { pageMirrorEquals } from '../types/PageMirror';
+import { healOrphanedProseFragments, prosePageMetaChanged, synthesizeProsePageMeta } from './proseInvariant';
 import type { YjsDocument, CanvasPageMeta } from './YjsDocument';
 import { isGroup } from '../shapes/Shape';
 
@@ -615,14 +614,7 @@ export function useCollaborationSync(): void {
       state.pageOrder.forEach((id, index) => {
         const cur = state.pages[id];
         if (!cur) return;
-        const prev = prevState.pages[id];
-        const metaChanged =
-          !prev ||
-          prev.name !== cur.name ||
-          prev.color !== cur.color ||
-          prev.order !== cur.order ||
-          !pageMirrorEquals(prev.mirror, cur.mirror);
-        if (metaChanged) {
+        if (prosePageMetaChanged(prevState.pages[id], cur)) {
           syncProsePage(synthesizeProsePageMeta(cur, index));
         }
       });
@@ -676,6 +668,16 @@ export function useCollaborationSync(): void {
             modifiedAt: cur.modifiedAt,
           };
           syncCanvasPage(meta);
+          // A page added here with shapes already in it (a duplicate) has no
+          // other way into the shared document: only the open page's shapes
+          // stream live. Seed them, or the copy opens empty for everyone
+          // (DSK-260). Additive by shape id, so a repeat is a no-op.
+          if (!prev && cur.shapeOrder.length > 0) {
+            useCollaborationStore
+              .getState()
+              .getYjsDocument()
+              ?.seedPageShapes(id, Object.values(cur.shapes), cur.shapeOrder);
+          }
         }
       }
 

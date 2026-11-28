@@ -40,6 +40,10 @@ export interface RichTextPage {
   /** Inbound-mirror provenance (JP-415). Present = the page mirrors an
    *  external resource and is read-only in the editor; absent = normal page. */
   mirror?: PageMirrorMeta;
+  /** The writing page this one is a subpage of, by page id; absent = top
+   *  level (DSK-262). Read and kept since DSK-260 so a build carries it before
+   *  any build writes it (DSK-235, readers before writers). */
+  parentId?: string;
 }
 
 /**
@@ -362,6 +366,12 @@ export const useRichTextPagesStore = create<RichTextPagesState & RichTextPagesAc
           // adopt, absent = a remote detach (leave unset).
           if (meta.mirror !== undefined) {
             page.mirror = meta.mirror;
+          }
+          // The page's parent (DSK-262) rides the same way, and is carried
+          // before anything writes it (DSK-235): present = adopt, absent = top
+          // level.
+          if (meta.parentId !== undefined) {
+            page.parentId = meta.parentId;
           }
           draft.pages[id] = page;
         });

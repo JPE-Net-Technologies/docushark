@@ -206,6 +206,11 @@ export const usePageStore = create<PageState & PageActions>()(
 
     // Duplicate a page
     duplicatePage: (id: string): string | null => {
+      // The open page's newest shapes live in the document store until the page
+      // is left, so copy it as it is now, not as it was last left (DSK-260).
+      if (id === get().activePageId && get().pages[id]) {
+        get().syncCurrentPageFromDocument();
+      }
       const state = get();
       const sourcePage = state.pages[id];
       if (!sourcePage) {
@@ -230,14 +235,17 @@ export const usePageStore = create<PageState & PageActions>()(
         const newShapes: Record<string, typeof newPage.shapes[string]> = {};
         const newShapeOrder: string[] = [];
 
+        // Every shape gets a new id, group children included: they're drawn
+        // through their group's `childIds`, not `shapeOrder`, so copying only
+        // the order left a copied group pointing at nothing (DSK-260).
+        for (const [oldId, shape] of Object.entries(newPage.shapes)) {
+          const newId = nanoid();
+          oldToNewId[oldId] = newId;
+          newShapes[newId] = { ...shape, id: newId };
+        }
         for (const oldId of newPage.shapeOrder) {
-          const shape = newPage.shapes[oldId];
-          if (shape) {
-            const newId = nanoid();
-            oldToNewId[oldId] = newId;
-            newShapes[newId] = { ...shape, id: newId };
-            newShapeOrder.push(newId);
-          }
+          const newId = oldToNewId[oldId];
+          if (newId) newShapeOrder.push(newId);
         }
 
         // Update group childIds to use new IDs

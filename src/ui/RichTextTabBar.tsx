@@ -1,17 +1,18 @@
 /**
- * RichTextTabBar - Tab bar for multi-page rich text editor.
+ * RichTextTabBar — the writing pages' tabs, above the text.
  *
- * Features:
- * - Display page tabs with names and colors
- * - Click to switch pages
- * - Double-click to rename inline
- * - Right-click context menu for rename/delete/color
- * - Drag to reorder tabs
- * - Add new page button
+ * - A tab shows the page's chosen name, else its first heading, else "Page N"
+ *   (DSK-260); the hover card gives the full name, size and place in the PDF.
+ * - Click opens a page; double-click or F2 renames it inline.
+ * - Each page's menu opens from the ⋯ on its tab, a right-click, press and
+ *   hold on touch, or Shift+F10: rename, color, delete (with Undo), and a
+ *   mirrored page's source actions.
+ * - Drag to reorder; a family root drags its subpages with it (JP-475).
+ * - "+ Page" adds a page.
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from 'react';
-import { ChevronDown, FileText } from 'lucide-react';
+import { ChevronDown, FileText, MoreHorizontal } from 'lucide-react';
 import { Icon } from './icons';
 import { createPortal } from 'react-dom';
 import { PageTabStrip, type PageTabStripItem } from './components/PageTabStrip';
@@ -19,12 +20,9 @@ import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { sharedDocOffline } from '../collaboration/sharedDocOffline';
 import { usePendingSyncPages } from '../store/pendingSyncPages';
 import { usePersistenceStore } from '../store/persistenceStore';
+import { useActiveDocReadOnly } from '../store/documentRegistry';
+import { canDeletePage, requestPageDelete, usePendingDeleteIds } from '../store/pendingPageDeleteStore';
 import { useIntegrationHubStore, providerLabel } from '../store/integrationHubStore';
-import {
-  detachMirrorPageWithConfirm,
-  openMirrorSource,
-  refreshMirrorPageWithFeedback,
-} from '../services/mirrorPageActions';
 import { OPEN_MIRROR_PICKER, type OpenMirrorPickerDetail } from '../services/integrationActions';
 import { MirrorResourcePicker } from './integrations/MirrorResourcePicker';
 import { IngestSubpagesDialog } from './integrations/IngestSubpagesDialog';
@@ -37,6 +35,15 @@ import {
 } from '../services/mirrorFamily';
 import { clampToViewport } from './contextMenuUtils';
 import type { IntegrationProvider } from '../api/webClient';
+import { useBreakpoint } from './layout/useBreakpoint';
+import { useMobileAdaptation } from './layout/useMobileAdaptation';
+import { pageLabel } from './pages/pageLabel';
+import { factsLine, pageFacts } from './pages/pageFacts';
+import { mirrorPageMenuEntries, PageMenu, pageMenuEntries, type PageMenuAnchor } from './pages/PageMenu';
+import { usePageHoverCard } from './pages/PageHoverCard';
+import { useLongPress } from './pages/useLongPress';
+import { useProsePageHeadings } from './pages/useProsePageHeadings';
+import { menuAnchorFor } from './pages/menuAnchor';
 import './RichTextTabBar.css';
 
 interface RichTextTabBarProps {
@@ -47,37 +54,20 @@ interface RichTextTabBarProps {
 /** Kind glyph distinguishing a prose page from a canvas (diagram) page. */
 const proseKindIcon = <Icon icon={FileText} size={13} className="page-tab-kind-icon" />;
 
-/** Colors available for tab customization */
-const TAB_COLORS = [
-  '#ef4444', // red
-  '#f97316', // orange
-  '#eab308', // yellow
-  '#22c55e', // green
-  '#06b6d4', // cyan
-  '#3b82f6', // blue
-  '#8b5cf6', // violet
-  '#ec4899', // pink
-  '#6b7280', // gray
-];
-
-interface ContextMenuState {
-  isOpen: boolean;
-  x: number;
-  y: number;
-  pageId: string;
-}
-
 export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
-  const { pages, pageOrder, activePageId, setActivePage, createPage, deletePage, renamePage, setPageColor, movePages } = useRichTextPagesStore();
-  
+  const { pages, pageOrder, activePageId, setActivePage, createPage, renamePage, setPageColor, movePages } = useRichTextPagesStore();
+  const readOnly = useActiveDocReadOnly();
+  const hidden = usePendingDeleteIds();
+  const headings = useProsePageHeadings();
+  const { isTouch } = useBreakpoint();
+  const { mobileActive } = useMobileAdaptation();
+
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ isOpen: false, x: 0, y: 0, pageId: '' });
-  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [menu, setMenu] = useState<PageMenuAnchor | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  // JP-415 integration affordances: the "+" add-menu (only shown when the
-  // workspace has integration options) and the resource-browser modal.
+  // JP-415: the resource browser for "New page from …", opened by event.
   const [pickerProvider, setPickerProvider] = useState<IntegrationProvider | null>(null);
   // JP-475 mirror families: descendants collapse under their root's tab. The
   // flyout navigates a family; the ingest dialog mirrors new subpages.
@@ -85,19 +75,42 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
   const [ingestPageId, setIngestPageId] = useState<string | null>(null);
   const hub = useIntegrationHubStore((s) => s.hub);
 
-  const familyIndex = useMemo(() => buildMirrorFamilyIndex(pages, pageOrder), [pages, pageOrder]);
-  // Measured-then-clamped portal positions (the InlinePageTabs pattern) so
-  // neither menu can render out of the viewport.
-  const [adjustedCtxPos, setAdjustedCtxPos] = useState<{ x: number; y: number } | null>(null);
+  // The pages on show. One waiting out a delete's Undo is gone from here, and
+  // its subpages stand on their own, as they will once it's deleted.
+  const visibleOrder = useMemo(() => pageOrder.filter((id) => !hidden.has(id)), [pageOrder, hidden]);
+  const familyIndex = useMemo(() => buildMirrorFamilyIndex(pages, visibleOrder), [pages, visibleOrder]);
+  const labelOf = useCallback(
+    (pageId: string) => pageLabel('prose', pages[pageId]?.name ?? '', headings[pageId]),
+    [pages, headings],
+  );
 
   const editInputRef = useRef<HTMLInputElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
   const familyFlyoutRef = useRef<HTMLDivElement>(null);
   const [adjustedFlyoutPos, setAdjustedFlyoutPos] = useState<{ x: number; y: number } | null>(null);
-  const colorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Family flyout: same measured-then-clamped portal + outside-click pattern
-  // as the context menu and add-menu.
+  const card = usePageHoverCard((pageId) =>
+    pages[pageId] ? { title: labelOf(pageId), facts: pageFacts('prose', pageId) } : null,
+  );
+  const openMenu = useCallback(
+    (anchor: PageMenuAnchor) => {
+      if (readOnly) return;
+      card.hide();
+      setFamilyFlyout(null);
+      setMenu(anchor);
+    },
+    [readOnly, card],
+  );
+  const longPress = useLongPress((point, target) => {
+    const pageId = target.dataset['pageId'];
+    if (pageId) openMenu({ pageId, ...point });
+  });
+
+  // A page gone from under its open menu (deleted elsewhere) closes the menu.
+  useEffect(() => {
+    if (menu && !pages[menu.pageId]) setMenu(null);
+  }, [menu, pages]);
+
+  // Family flyout: measured-then-clamped portal + outside-click close.
   useEffect(() => {
     if (!familyFlyout || !familyFlyoutRef.current) {
       setAdjustedFlyoutPos(null);
@@ -116,32 +129,6 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [familyFlyout]);
 
-  // Clamp the tab context menu inside the viewport once it has real bounds.
-  useEffect(() => {
-    if (!contextMenu.isOpen || !contextMenuRef.current) {
-      setAdjustedCtxPos(null);
-      return;
-    }
-    const rect = contextMenuRef.current.getBoundingClientRect();
-    setAdjustedCtxPos(clampToViewport(contextMenu.x, contextMenu.y, rect.width, rect.height));
-  }, [contextMenu.isOpen, contextMenu.x, contextMenu.y]);
-
-  // Helpers for color picker submenu hover with timeout
-  const openColorPicker = useCallback(() => {
-    if (colorTimeoutRef.current) {
-      clearTimeout(colorTimeoutRef.current);
-      colorTimeoutRef.current = null;
-    }
-    setShowColorPicker(true);
-  }, []);
-
-  const closeColorPickerDelayed = useCallback(() => {
-    colorTimeoutRef.current = setTimeout(() => {
-      setShowColorPicker(false);
-      colorTimeoutRef.current = null;
-    }, 200);
-  }, []);
-
   // Focus input when editing starts
   useEffect(() => {
     if (editingPageId && editInputRef.current) {
@@ -150,70 +137,37 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     }
   }, [editingPageId]);
 
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu.isOpen) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
-        setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-        setShowColorPicker(false);
-        if (colorTimeoutRef.current) {
-          clearTimeout(colorTimeoutRef.current);
-          colorTimeoutRef.current = null;
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [contextMenu.isOpen]);
-
-  // Handle tab click
   const handleTabClick = useCallback((pageId: string) => {
     if (editingPageId) return; // Don't switch while editing
     setActivePage(pageId);
   }, [setActivePage, editingPageId]);
 
-  // Handle double-click to edit. Mirror pages don't rename locally — the name
-  // follows the source title on refresh (JP-415).
-  const handleDoubleClick = useCallback((pageId: string) => {
+  // Mirror pages don't rename locally: the name follows the source title on
+  // refresh (JP-415).
+  const startRename = useCallback((pageId: string) => {
     const page = pages[pageId];
-    if (page && !page.mirror) {
-      setEditingPageId(pageId);
-      setEditingName(page.name);
-    }
-  }, [pages]);
+    if (readOnly || !page || page.mirror) return;
+    setEditingPageId(pageId);
+    setEditingName(labelOf(pageId));
+  }, [pages, readOnly, labelOf]);
 
-  // Handle edit finish
-  const handleEditFinish = useCallback(() => {
-    if (editingPageId && editingName.trim()) {
-      renamePage(editingPageId, editingName.trim());
-    }
+  const commitRename = useCallback(() => {
+    const value = editingName.trim();
+    // Unchanged text leaves a default name as it is, so the page keeps
+    // following its heading.
+    if (editingPageId && value && value !== labelOf(editingPageId)) renamePage(editingPageId, value);
     setEditingPageId(null);
     setEditingName('');
-  }, [editingPageId, editingName, renamePage]);
+  }, [editingPageId, editingName, labelOf, renamePage]);
 
-  // Handle edit key down
   const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      handleEditFinish();
+      commitRename();
     } else if (e.key === 'Escape') {
       setEditingPageId(null);
       setEditingName('');
     }
-  }, [handleEditFinish]);
-
-  // Handle context menu
-  const handleContextMenu = useCallback((e: React.MouseEvent, pageId: string) => {
-    e.preventDefault();
-    setContextMenu({
-      isOpen: true,
-      x: e.clientX,
-      y: e.clientY,
-      pageId,
-    });
-  }, []);
+  }, [commitRename]);
 
   // Handle add new page. Allowed offline (JP-335): a page created while the
   // shared doc is offline is marked pending-sync — editable immediately (its
@@ -229,27 +183,13 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     setActivePage(newId);
   }, [createPage, setActivePage]);
 
-  // Warm the integration hub as soon as the tab bar exists, so the "+" menu is
-  // ready for the FIRST click.
-  //
-  // It used to be kicked off by the click itself, which read the hub state
-  // synchronously one line later — so the first click always missed and quietly
-  // created a plain page, and the "New page from Notion" entry only appeared on
-  // the second click. That reads as a broken button, and it hides the whole
-  // integration entry point from anyone who clicks once and moves on.
-  //
-  // Prefetching rather than awaiting the click is deliberate: awaiting would put
-  // a network round-trip in front of the core action. The store coalesces
-  // concurrent calls and caches with a TTL, so a re-mount costs nothing.
+  // Warm the integration hub as soon as the tab bar exists, so integration
+  // entry points are ready for the first click rather than the second
+  // (prefetch, not await: a network round-trip must never sit in front of
+  // adding a page; the store coalesces calls and caches with a TTL).
   useEffect(() => {
     void useIntegrationHubStore.getState().ensureLoaded();
   }, []);
-
-  // "+" creates a page. It used to open a menu offering the workspace's
-  // integration sources as well, which meant the core action — add a page —
-  // cost a menu, and the integration entries were duplicated by the Tools grid
-  // once that existed (JP-506). Tools owns the integration surface now, so this
-  // is one click again and there is one place offering "New page from …".
 
   // A command can be run from the palette, where this component is not in
   // scope, so integration actions ask for the picker by event rather than
@@ -264,65 +204,26 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     return () => window.removeEventListener(OPEN_MIRROR_PICKER, open);
   }, [hub]);
 
-  // Mirror page actions (context menu on a mirror tab).
-  const handleOpenSource = useCallback((url: string) => {
-    setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-    openMirrorSource(url);
-  }, []);
-
-  const handleRefreshMirror = useCallback((pageId: string) => {
-    setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-    void refreshMirrorPageWithFeedback(pageId);
-  }, []);
-
-  const handleDetachMirror = useCallback((pageId: string, label: string) => {
-    setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-    void detachMirrorPageWithConfirm(pageId, label);
-  }, []);
-
-  // Handle delete from context menu
-  const handleDeletePage = useCallback(() => {
-    if (contextMenu.pageId && pageOrder.length > 1) {
-      deletePage(contextMenu.pageId);
-    }
-    setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-  }, [contextMenu.pageId, pageOrder.length, deletePage]);
-
-  // Handle rename from context menu
-  const handleRenameFromMenu = useCallback(() => {
-    const page = pages[contextMenu.pageId];
-    if (page) {
-      setEditingPageId(contextMenu.pageId);
-      setEditingName(page.name);
-    }
-    setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-  }, [contextMenu.pageId, pages]);
-
-  // Handle color selection
-  const handleColorSelect = useCallback((color: string | undefined) => {
-    setPageColor(contextMenu.pageId, color);
-    setShowColorPicker(false);
-    setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-  }, [contextMenu.pageId, setPageColor]);
-
   // One strip item per family ROOT (or plain page); descendants collapse under
   // their root. Item index ≠ pageOrder index from here on — every reorder
   // translates through `itemBlocks` (a root drags its contiguous block).
   const rootIds = useMemo(
-    () => pageOrder.filter((id) => pages[id] !== undefined && isFamilyRoot(familyIndex, id)),
-    [pageOrder, pages, familyIndex],
+    () => visibleOrder.filter((id) => pages[id] !== undefined && isFamilyRoot(familyIndex, id)),
+    [visibleOrder, pages, familyIndex],
   );
   const itemBlocks = useMemo(
-    () => rootIds.map((id) => (familyIndex.childrenOf.has(id) ? familyBlock(familyIndex, pageOrder, id) : [id])),
-    [rootIds, familyIndex, pageOrder],
+    () => rootIds.map((id) => (familyIndex.childrenOf.has(id) ? familyBlock(familyIndex, visibleOrder, id) : [id])),
+    [rootIds, familyIndex, visibleOrder],
   );
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    setMenu(null);
+    card.hide();
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(index));
-  }, []);
+  }, [card]);
 
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     e.preventDefault();
@@ -339,18 +240,21 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     if (draggedIndex !== null && draggedIndex !== toIndex) {
       const moved = itemBlocks[draggedIndex];
       if (moved && moved.length > 0) {
-        // Translate the ITEM-level drop into page coordinates: the insertion
-        // point is the page count of the item blocks that precede the target
-        // position once the dragged block is removed (movePages convention).
+        // Translate the ITEM-level drop into a page index: the block lands
+        // before the first page of the item now at the target position, counted
+        // in the whole order with the moved pages taken out (movePages'
+        // convention). The whole order, because pages waiting out a delete's
+        // Undo are hidden here but still in it.
         const rest = itemBlocks.filter((_, i) => i !== draggedIndex);
         const itemTo = Math.max(0, Math.min(toIndex, rest.length));
-        const pagesBefore = rest.slice(0, itemTo).reduce((n, b) => n + b.length, 0);
-        movePages(moved, pagesBefore);
+        const remaining = pageOrder.filter((id) => !moved.includes(id));
+        const before = rest[itemTo]?.[0];
+        movePages(moved, before === undefined ? remaining.length : remaining.indexOf(before));
       }
     }
     setDraggedIndex(null);
     setDragOverIndex(null);
-  }, [draggedIndex, itemBlocks, movePages]);
+  }, [draggedIndex, itemBlocks, pageOrder, movePages]);
 
   const handleDragEnd = useCallback(() => {
     setDraggedIndex(null);
@@ -370,7 +274,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     if (!page) return null;
     const item: PageTabStripItem = {
       id: pageId,
-      label: page.name,
+      label: labelOf(pageId),
       icon: page.mirror ? mirrorGlyph(page.mirror.provider) : proseKindIcon,
     };
     if (page.color) item.color = page.color;
@@ -384,27 +288,43 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
     .map(toStripItem)
     .filter((c): c is PageTabStripItem => c !== null);
 
+  const menuPage = menu ? pages[menu.pageId] : undefined;
+  const menuPageId = menuPage && menu ? menu.pageId : null;
+  const menuFacts = menuPageId ? factsLine(pageFacts('prose', menuPageId)) : undefined;
+  const menuEntries =
+    menuPage && menuPageId
+      ? pageMenuEntries({
+          heading: isTouch && !mobileActive ? menuFacts : undefined,
+          onRename: menuPage.mirror ? undefined : () => startRename(menuPageId),
+          color: menuPage.mirror ? undefined : { current: menuPage.color, onPick: (color) => setPageColor(menuPageId, color) },
+          mirror: menuPage.mirror
+            ? mirrorPageMenuEntries(menuPageId, menuPage.mirror, () => setIngestPageId(menuPageId))
+            : undefined,
+          onDelete: () => requestPageDelete('prose', menuPageId, labelOf(menuPageId)),
+          canDelete: canDeletePage('prose', menuPageId),
+        })
+      : [];
+
   return (
     <>
       <PageTabStrip
         className="rich-text-tab-bar"
-        ariaLabel="Prose pages"
+        ariaLabel="Writing pages"
         items={items}
         activeId={activePageId}
         onSelect={handleTabClick}
         trailing={trailing}
-        renderTab={(item, index) => {
+        renderTab={(item, index, tab) => {
           const page = pages[item.id];
           if (!page) return null;
           const descendants = item.children ? descendantEntries(familyIndex, item.id) : [];
           const activeChild =
-            activePageId !== null && descendants.some((d) => d.pageId === activePageId)
-              ? pages[activePageId]
-              : undefined;
-          const isActive = item.id === activePageId || activeChild !== undefined;
+            activePageId !== null && descendants.some((d) => d.pageId === activePageId) ? activePageId : null;
+          const isActive = item.id === activePageId || activeChild !== null;
           const isEditing = item.id === editingPageId;
           const isDragging = index === draggedIndex;
           const isDragOver = index === dragOverIndex;
+          const hover = card.bind(item.id);
 
           return (
             <div
@@ -415,12 +335,34 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
               // subpages is the page shown.
               role="tab"
               aria-selected={isActive}
+              aria-haspopup="menu"
+              tabIndex={tab.tabIndex}
               className={`rich-text-tab ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}`}
               style={{ '--tab-color': page.color || 'transparent' } as React.CSSProperties}
               onClick={() => handleTabClick(item.id)}
-              onDoubleClick={() => handleDoubleClick(item.id)}
-              onContextMenu={(e) => handleContextMenu(e, item.id)}
-              draggable={!isEditing}
+              onDoubleClick={() => startRename(item.id)}
+              onContextMenu={(e) => {
+                if (readOnly) return;
+                e.preventDefault();
+                openMenu(menuAnchorFor(e, item.id));
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'F2' && e.target === e.currentTarget) {
+                  e.preventDefault();
+                  startRename(item.id);
+                }
+              }}
+              onPointerEnter={hover.onPointerEnter}
+              onPointerLeave={hover.onPointerLeave}
+              onPointerDown={(e) => {
+                hover.onPointerDown();
+                longPress.onPointerDown(e);
+              }}
+              onPointerMove={longPress.onPointerMove}
+              onPointerUp={longPress.onPointerUp}
+              onPointerCancel={longPress.onPointerCancel}
+              onClickCapture={longPress.onClickCapture}
+              draggable={!isEditing && !readOnly}
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={(e) => handleDragOver(e, index)}
               onDragLeave={handleDragLeave}
@@ -445,8 +387,9 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                   type="text"
                   className="rich-text-tab-edit-input"
                   value={editingName}
+                  aria-label="Page name"
                   onChange={(e) => setEditingName(e.target.value)}
-                  onBlur={handleEditFinish}
+                  onBlur={commitRename}
                   onKeyDown={handleEditKeyDown}
                   onClick={(e) => e.stopPropagation()}
                 />
@@ -454,11 +397,11 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                 // Two spans so the ROOT truncates first — the child name is the
                 // informative half of the breadcrumb and must stay visible.
                 <span className="rich-text-tab-name rich-text-tab-breadcrumb">
-                  <span className="rich-text-tab-breadcrumb-root">{page.name}</span>
-                  <span className="rich-text-tab-breadcrumb-child">› {activeChild.name}</span>
+                  <span className="rich-text-tab-breadcrumb-root">{item.label}</span>
+                  <span className="rich-text-tab-breadcrumb-child">› {labelOf(activeChild)}</span>
                 </span>
               ) : (
-                <span className="rich-text-tab-name">{page.name}</span>
+                <span className="rich-text-tab-name">{item.label}</span>
               )}
               {item.children && (
                 <button
@@ -467,6 +410,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                   title={`${descendants.length} subpage${descendants.length === 1 ? '' : 's'}`}
                   aria-haspopup="menu"
                   aria-expanded={familyFlyout?.rootId === item.id}
+                  tabIndex={-1}
                   onClick={(e) => {
                     e.stopPropagation();
                     const r = e.currentTarget.getBoundingClientRect();
@@ -479,105 +423,39 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                   <Icon icon={ChevronDown} size={11} />
                 </button>
               )}
+              {!isEditing && !readOnly && (
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  className="page-tab-menu-btn"
+                  aria-label={`${item.label}: page menu`}
+                  aria-expanded={menu?.pageId === item.id}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openMenu({ pageId: item.id, x: r.left, y: r.bottom + 4 });
+                  }}
+                >
+                  <Icon icon={MoreHorizontal} size={14} />
+                </span>
+              )}
             </div>
           );
         }}
         onAdd={handleAddPage}
+        addLabel="Page"
+        addTitle="Add a writing page"
       />
 
-      {/* Context menu — mirror pages swap Rename/Color for source actions
-          (the name follows the source; color is reserved for normal pages). */}
-      {contextMenu.isOpen && createPortal(
-        (() => {
-          const ctxPage = pages[contextMenu.pageId];
-          const ctxMirror = ctxPage?.mirror;
-          const ctxLabel = ctxMirror ? providerLabel(hub, ctxMirror.provider) : '';
-          const ctxPos = adjustedCtxPos ?? { x: contextMenu.x, y: contextMenu.y };
-          return (
-            <div
-              ref={contextMenuRef}
-              className="rich-text-tab-context-menu"
-              style={{ left: ctxPos.x, top: ctxPos.y }}
-            >
-              {ctxMirror ? (
-                <>
-                  {ctxMirror.url && (
-                    <div className="rich-text-tab-context-item" onClick={() => handleOpenSource(ctxMirror.url!)}>
-                      Open in {ctxLabel}
-                    </div>
-                  )}
-                  <div className="rich-text-tab-context-item" onClick={() => handleRefreshMirror(contextMenu.pageId)}>
-                    Refresh from source
-                  </div>
-                  <div
-                    className="rich-text-tab-context-item"
-                    onClick={() => {
-                      const pid = contextMenu.pageId;
-                      setContextMenu({ isOpen: false, x: 0, y: 0, pageId: '' });
-                      setIngestPageId(pid);
-                    }}
-                  >
-                    Add subpages…
-                  </div>
-                  <div
-                    className="rich-text-tab-context-item"
-                    onClick={() => handleDetachMirror(contextMenu.pageId, ctxLabel)}
-                  >
-                    Detach from {ctxLabel}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="rich-text-tab-context-item" onClick={handleRenameFromMenu}>
-                    Rename
-                  </div>
-                  <div
-                    className="rich-text-tab-context-item has-submenu"
-                    onMouseEnter={openColorPicker}
-                    onMouseLeave={closeColorPickerDelayed}
-                  >
-                    Color
-                    <span className="rich-text-tab-context-arrow">›</span>
-
-                    {showColorPicker && (
-                      <div
-                        className="rich-text-tab-color-picker"
-                        onMouseEnter={openColorPicker}
-                        onMouseLeave={closeColorPickerDelayed}
-                      >
-                        <div className="rich-text-tab-color-grid">
-                          {TAB_COLORS.map((color) => (
-                            <button
-                              key={color}
-                              className="rich-text-tab-color-swatch"
-                              style={{ backgroundColor: color }}
-                              onClick={(e) => { e.stopPropagation(); handleColorSelect(color); }}
-                            />
-                          ))}
-                        </div>
-                        <button
-                          className="rich-text-tab-color-clear"
-                          onClick={(e) => { e.stopPropagation(); handleColorSelect(undefined); }}
-                        >
-                          Remove color
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-              <div className="rich-text-tab-context-divider" />
-              <div
-                className={`rich-text-tab-context-item danger ${pageOrder.length <= 1 ? 'disabled' : ''}`}
-                onClick={pageOrder.length > 1 ? handleDeletePage : undefined}
-              >
-                Delete
-              </div>
-            </div>
-          );
-        })(),
-        document.body
-      )}
+      <PageMenu
+        anchor={menuPageId ? menu : null}
+        entries={menuEntries}
+        title={menuPageId ? labelOf(menuPageId) : ''}
+        subtitle={menuFacts}
+        onClose={() => setMenu(null)}
+      />
+      {card.element}
 
       {/* Family flyout (JP-475): the logical descendants of one root, indented;
           complete regardless of physical scatter in pageOrder. */}
@@ -604,7 +482,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                 onClick={() => pick(familyFlyout.rootId)}
               >
                 {root.mirror ? mirrorGlyph(root.mirror.provider) : proseKindIcon}
-                <span className="rich-text-tab-family-row-name">{root.name}</span>
+                <span className="rich-text-tab-family-row-name">{labelOf(familyFlyout.rootId)}</span>
               </div>
               {descendantEntries(familyIndex, familyFlyout.rootId).map(({ pageId, depth }) => {
                 const p = pages[pageId];
@@ -619,7 +497,7 @@ export function RichTextTabBar({ trailing }: RichTextTabBarProps = {}) {
                     onClick={() => pick(pageId)}
                   >
                     {p.mirror ? mirrorGlyph(p.mirror.provider) : proseKindIcon}
-                    <span className="rich-text-tab-family-row-name">{p.name}</span>
+                    <span className="rich-text-tab-family-row-name">{labelOf(pageId)}</span>
                   </div>
                 );
               })}

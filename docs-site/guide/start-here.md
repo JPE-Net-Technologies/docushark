@@ -49,7 +49,7 @@ Three panels open from the layout button: **Properties** shows everything about 
 
 ## How it fits together {#how-it-fits-together}
 
-**Documents and pages.** A document is what you open, name and share. It's made of pages of two kinds: **prose pages** for writing and **canvas pages** for diagrams, and each kind has its own tabs. A new document starts with one of each. Treat pages as the sections of one piece of work, such as "Overview", "Data model" and "API flow", so one document holds the whole thing. See [Organize](./organize#pages).
+**Documents and pages.** A document is what you open, name and share. It's made of pages of two kinds, **writing pages** and **diagrams**, and each kind has its own tabs. A new document starts with one of each. Treat pages as the sections of one piece of work, such as "Overview", "Data model" and "API flow", so one document holds the whole thing. See [Organize](./organize#pages).
 
 **Writing and drawing side by side.** Write, Split and Canvas change what you see, never the document. The **layout** decides how much tooling surrounds it:
 

@@ -16,6 +16,7 @@ import { relaySessionUsable } from '../store/connectionStore';
 import { getActiveDocumentRecord, isActiveDocReadOnly } from '../store/documentRegistry';
 import { useNotificationStore } from '../store/notificationStore';
 import { usePersistenceStore } from '../store/persistenceStore';
+import { flushPendingPageDeletes } from '../store/pendingPageDeleteStore';
 import { useUserStore } from '../store/userStore';
 import { exportAndDownloadDocumentArchive } from '../storage/DocumentArchiveService';
 import { openAccessPanel } from '../ui/access/accessPanelStore';
@@ -74,6 +75,9 @@ export async function downloadCopy(): Promise<void> {
   if (!id || !canDownloadCopy()) return;
   // The copy is built from the saved document, so the latest edits go in
   // first. A view-only document has none of its own to save.
+  // A page deleted moments ago is still waiting out its Undo: delete it first,
+  // so the copy doesn't carry it (DSK-260).
+  flushPendingPageDeletes();
   if (!isActiveDocReadOnly()) usePersistenceStore.getState().saveDocument();
   try {
     await exportAndDownloadDocumentArchive(id);

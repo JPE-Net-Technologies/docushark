@@ -26,11 +26,15 @@
 
 import type { YjsDocument, ProsePageMeta } from './YjsDocument';
 import { useRichTextPagesStore, type RichTextPage } from '../store/richTextPagesStore';
+import { pageMirrorEquals } from '../types/PageMirror';
 
 /**
  * The single construction point for a ProsePageMeta synthesized from local
- * page state (the reconnect handoff and the orphan repair both build through
- * here) — a future meta field lands in one place, not N call sites.
+ * page state (the reconnect handoff, the orphan repair and every local change
+ * build through here). A new meta field lands here, in
+ * {@link prosePageMetaChanged} beside it, and in the store's
+ * `applyRemoteProsePageList`; a field missing from any of them is dropped the
+ * next time this build rewrites the page (DSK-235).
  */
 export function synthesizeProsePageMeta(page: RichTextPage, order: number): ProsePageMeta {
   const meta: ProsePageMeta = {
@@ -42,7 +46,20 @@ export function synthesizeProsePageMeta(page: RichTextPage, order: number): Pros
   };
   if (page.color !== undefined) meta.color = page.color;
   if (page.mirror !== undefined) meta.mirror = page.mirror;
+  if (page.parentId !== undefined) meta.parentId = page.parentId;
   return meta;
+}
+
+/** Whether a page's synced metadata changed (content syncs on its own). */
+export function prosePageMetaChanged(prev: RichTextPage | undefined, cur: RichTextPage): boolean {
+  return (
+    !prev ||
+    prev.name !== cur.name ||
+    prev.color !== cur.color ||
+    prev.order !== cur.order ||
+    prev.parentId !== cur.parentId ||
+    !pageMirrorEquals(prev.mirror, cur.mirror)
+  );
 }
 
 export interface OrphanHealResult {

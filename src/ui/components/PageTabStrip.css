@@ -195,3 +195,35 @@
 [data-theme='dark'] .page-tab-strip-menu {
   background: var(--bg-secondary);
 }
+
+/* "+ Page" / "+ Diagram": the add button says what it adds (DSK-260). */
+.page-tab-strip-add--labelled {
+  width: auto;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-1-5);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.page-tab-strip-add--labelled:hover {
+  transform: none;
+}
+
+/* On touch, tabs and the add button are Apple's minimum target, 44 px, and a
+ * tab's ⋯ is always shown on the open one (DSK-260). The tabs' own classes
+ * (.rich-text-tab, .inline-tab) keep their padding. */
+.page-tab-strip--touch [data-page-id],
+.page-tab-strip--touch .page-tab-strip-add,
+.page-tab-strip--touch .page-tab-strip-overflow-btn {
+  min-height: 44px;
+}
+
+.page-tab-strip--touch .page-tab-strip-add {
+  min-width: 44px;
+}
+
+.page-tab-strip--touch [data-page-id] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}

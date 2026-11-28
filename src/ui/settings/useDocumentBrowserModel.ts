@@ -44,6 +44,7 @@ import {
 import { useCollectionStore, type Collection, type CollectionScope } from '../../store/collectionStore';
 import { syncedActions, assignDocumentsScoped, docScopeOf } from '../../store/collectionSync';
 import { exportAndDownloadDocumentArchive, importDocumentArchive } from '../../storage/DocumentArchiveService';
+import { flushPendingPageDeletes } from '../../store/pendingPageDeleteStore';
 import { getTransferService, type TransferState } from '../../services/DocumentTransferService';
 import { useTransferStore, isTransferRunning } from '../../store/transferStore';
 import { purgeLocalDocRoom } from '../../collaboration';
@@ -971,6 +972,8 @@ export function useDocumentBrowserModel(): DocumentBrowserModel {
 
   const handleExport = useCallback(() => {
     if (!currentDocumentId) return;
+    // A page deleted moments ago waits out its Undo; delete it before the copy (DSK-260).
+    flushPendingPageDeletes();
     saveDocument();
     exportAndDownloadDocumentArchive(currentDocumentId).catch((err) => {
       console.error('Failed to export document archive:', err);
