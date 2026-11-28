@@ -2,7 +2,7 @@
  * Page labels (DSK-260): a chosen name, else the first heading, else
  * "Page N" / "Diagram N". Display only.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defaultPageNumber, firstHeadingInHtml, hasDefaultName, pageLabel } from './pageLabel';
 
 describe('defaultPageNumber', () => {
@@ -66,6 +66,21 @@ describe('pageLabel', () => {
 describe('firstHeadingInHtml', () => {
   it('finds the first heading, at any level', () => {
     expect(firstHeadingInHtml('<p>intro</p><h2>Data <em>model</em></h2><h1>Later</h1>')).toBe('Data model');
+  });
+
+  it('parses only the heading, however long the page (DSK-260)', () => {
+    const parse = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    const body = '<p>' + 'word '.repeat(20_000) + '</p>';
+    expect(firstHeadingInHtml(`<p>intro</p><H2 id="a">Sync &amp; <em>merge</em></H2>${body}<h1>Later</h1>`)).toBe(
+      'Sync & merge',
+    );
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect((parse.mock.calls[0]?.[0] ?? '').length).toBeLessThan(100);
+    parse.mockRestore();
+  });
+
+  it('reads a heading that never closes', () => {
+    expect(firstHeadingInHtml('<p>x</p><h3>Open ended')).toBe('Open ended');
   });
 
   it('is null without a heading, or with an empty one', () => {

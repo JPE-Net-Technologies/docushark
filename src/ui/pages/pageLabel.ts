@@ -65,18 +65,33 @@ export function pageLabel(kind: PageKind, name: string, heading?: string | null)
 
 const headingCache = new Map<string, string | null>();
 const HEADING_CACHE_MAX = 256;
+const OPENING_HEADING = /<h([1-6])[\s>]/i;
+/** How much markup to read when a heading never closes. */
+const UNCLOSED_HEADING_CHARS = 2_000;
 
-/** The text of the first heading in a page's HTML, or null. Cached by content. */
+/**
+ * The text of the first heading in a page's HTML, or null.
+ *
+ * Only that heading's markup is parsed and cached, never the whole page: the
+ * page's HTML changes with every save, and a long page runs to hundreds of
+ * kilobytes. Markup in the page's text is escaped, so the first `<h1>`…`<h6>`
+ * in the HTML is the first heading in the page.
+ */
 export function firstHeadingInHtml(html: string): string | null {
-  if (!html || !/<h[1-6][\s>]/i.test(html)) return null;
-  const cached = headingCache.get(html);
+  const opening = OPENING_HEADING.exec(html);
+  if (!opening) return null;
+  const closing = new RegExp(`</h${opening[1]}\\s*>`, 'ig');
+  closing.lastIndex = opening.index;
+  const end = closing.exec(html);
+  const markup = html.slice(opening.index, end ? end.index + end[0].length : opening.index + UNCLOSED_HEADING_CHARS);
+  const cached = headingCache.get(markup);
   if (cached !== undefined) return cached;
   let text: string | null = null;
   if (typeof DOMParser !== 'undefined') {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const doc = new DOMParser().parseFromString(markup, 'text/html');
     text = doc.querySelector('h1, h2, h3, h4, h5, h6')?.textContent?.trim() || null;
   }
   if (headingCache.size >= HEADING_CACHE_MAX) headingCache.clear();
-  headingCache.set(html, text);
+  headingCache.set(markup, text);
   return text;
 }
