@@ -8,7 +8,7 @@
  * - Tiptap editor
  */
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useState, type CSSProperties } from 'react';
 import { EllipsisVertical, Maximize2, Minimize2 } from 'lucide-react';
 import { Icon } from './icons';
 import type { Editor } from '@tiptap/core';
@@ -40,7 +40,13 @@ import { CollaborativeProseEditor } from './CollaborativeProseEditor';
 import { ProseErrorBoundary } from './ProseErrorBoundary';
 import { ProsePreview } from './ProsePreview';
 import { RICH_TEXT_VERSION } from '../types/RichText';
+import { usePaperModeActive } from '../paper/usePaperMode';
+import { usePaperLayout, usePaperOptions } from '../paper/usePaperLayout';
+import { paperCssVariables } from '../paper/paperLayout';
+import { CODE_FONT } from '../fonts/catalogue';
+import { pdfFontFor } from '../utils/pdfExport/fonts';
 import './DocumentEditorPanel.css';
+import '../paper/paper-mode.css';
 
 /**
  * Restore a scroll container to `target`, retrying across frames.
@@ -208,6 +214,23 @@ export function DocumentEditorPanel({
   const restoreInProgressRef = useRef(false);
   const pendingLoadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
+
+  // Paper Mode (DSK-48): the prose as the PDF's pages, in the reading column.
+  const paperMode = usePaperModeActive() && presentation === 'reading';
+  const paperOptions = usePaperOptions();
+  usePaperLayout(editor, paperMode, paperOptions);
+  const paperStyle = useMemo<Record<string, string> | undefined>(
+    () =>
+      paperMode
+        ? {
+            ...paperCssVariables(paperOptions),
+            // The fonts the PDF embeds, so lines wrap where the PDF's do.
+            '--paper-font': pdfFontFor(paperOptions.fontFamily).css,
+            '--paper-mono': CODE_FONT.css,
+          }
+        : undefined,
+    [paperMode, paperOptions],
+  );
   // Name a new document from its first heading, or prompt once (DSK-209).
   useDocumentNaming(editor);
   useProseStats(editor);
@@ -583,14 +606,18 @@ export function DocumentEditorPanel({
       <div
         className={`document-editor-panel ${isFullscreen ? 'fullscreen' : ''} ${
           presentation === 'reading' ? 'reading' : ''
-        }`}
+        }${paperMode ? ' paper-mode' : ''}`}
         // Scoped to this subtree rather than stamped on <html>: the measure only
         // affects the reading column, so it needs no global side effect and stays
         // trivially testable.
         data-reading-width={readingWidth}
         // F6 moves focus between the top bar, the text and the canvas (DSK-214).
         data-focus-region="prose"
-        style={mobileActive && keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
+        style={
+          mobileActive && keyboardInset > 0
+            ? { paddingBottom: keyboardInset }
+            : (paperStyle as CSSProperties | undefined)
+        }
       >
         <RichTextTabBar trailing={trailing} />
         {/* Desktop ribbon sits at the top; on mobile it's replaced by the

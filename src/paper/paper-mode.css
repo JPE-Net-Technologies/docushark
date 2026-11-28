@@ -1,0 +1,298 @@
+/*
+ * Paper Mode (DSK-48): the prose as the PDF's pages.
+ *
+ * The sheet column (`.tiptap-editor-content`) is one page wide, in true mm. The
+ * page variables (`--paper-*`) come from the document's page setup
+ * (`paperCssVariables`, set on the panel). Where a page ends, a widget (or the
+ * cells of the table row that opens the next page) makes room for the rest of
+ * the page, its bottom margin, the gap and the next page's top margin.
+ * `fitPages` sizes that room and draws the gaps and footers over the text
+ * (`.paper-overlay`).
+ *
+ * The text uses the PDF's fonts and metrics (`PDF_STYLE`,
+ * src/utils/pdfExport/style.ts), with kerning and ligatures off as jsPDF draws
+ * it, so lines wrap where the PDF's do. The vertical spacing only has to stay
+ * within the PDF's: the room at each page's end makes up the difference.
+ */
+
+.document-editor-panel.paper-mode {
+  /* Resolved here, before the sheet redefines the theme tokens for paper. */
+  --paper-desk: var(--bg-tertiary);
+  /* The light theme's dull white, in either theme: not the PDF's pure white,
+     which glares on screen (DSK-204). */
+  --paper-sheet: #f9f6ee;
+  --paper-foot: calc(var(--paper-margin-bottom) + var(--paper-footer-space));
+  --paper-gap: calc(var(--paper-foot) + var(--paper-band) + var(--paper-margin-top));
+}
+
+.document-editor-panel.paper-mode .document-editor-panel-content {
+  max-width: none;
+  padding: 0;
+}
+
+.paper-mode .tiptap-editor {
+  background: var(--paper-desk);
+  overflow-x: auto;
+  padding: var(--paper-band);
+  /* No column floor: the PDF fits a table to the page. */
+  --table-min-col: 0px;
+}
+
+/* The sheets: one column, cut into pages by the overlay's gaps. Paper is
+   paper in either theme, so the tokens the prose draws with are the PDF's. */
+.paper-mode .tiptap-editor-content {
+  position: relative;
+  flex: none;
+  width: var(--paper-width);
+  min-height: 0;
+  margin: 0 auto;
+  background: var(--paper-sheet);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  color: #000;
+  --text-primary: #000;
+  --text-secondary: #333;
+  --text-muted: #6b6b6b;
+  --bg-primary: var(--paper-sheet);
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #f5f5f5;
+  --border-color: #c8c8c8;
+  --table-border: #ccc;
+}
+
+.paper-mode .tiptap-editor .ProseMirror {
+  position: relative;
+  flex: none;
+  min-height: var(--paper-height);
+  padding: var(--paper-margin-top) var(--paper-margin-right) 0 var(--paper-margin-left);
+  font-family: var(--paper-font);
+  font-size: 12pt;
+  line-height: 1.4;
+  color: #000;
+  /* jsPDF draws each glyph at its own advance: no kerning, no ligatures. */
+  font-kerning: none;
+  font-variant-ligatures: none;
+  font-feature-settings: 'kern' 0, 'liga' 0, 'clig' 0, 'calt' 0;
+  /* ProseMirror's `break-spaces` makes a space at a line's end take room, so a
+     word the PDF fits before it would wrap. The PDF lets it hang. */
+  white-space: pre-wrap;
+}
+
+/* Where a page ends (`PaperModeExtension`): room only, sized inline. */
+.paper-mode .tiptap-editor .ProseMirror .paper-gap {
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Paragraphs: 2 mm after, none before. */
+.paper-mode .tiptap-editor .ProseMirror p {
+  margin: 0 0 2mm;
+  line-height: 1.4;
+}
+
+/* Headings: the PDF's sizes, bold, with their space above as padding so it
+   adds to the paragraph spacing before it as the PDF's does. */
+.paper-mode .tiptap-editor .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 1.5mm;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #000;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.paper-mode .tiptap-editor .ProseMirror h1 { font-size: 24pt; padding-top: 8mm; }
+.paper-mode .tiptap-editor .ProseMirror h2 { font-size: 20pt; padding-top: 6mm; }
+.paper-mode .tiptap-editor .ProseMirror h3 { font-size: 18pt; padding-top: 5mm; }
+.paper-mode .tiptap-editor .ProseMirror h4 { font-size: 16pt; padding-top: 4mm; }
+.paper-mode .tiptap-editor .ProseMirror h5 { font-size: 14pt; padding-top: 3mm; }
+.paper-mode .tiptap-editor .ProseMirror h6 { font-size: 12pt; padding-top: 2.5mm; }
+
+/* A heading that starts a page has no space above it in the PDF. */
+.paper-mode .tiptap-editor .ProseMirror > :is(h1, h2, h3, h4, h5, h6):first-child,
+.paper-mode .tiptap-editor .ProseMirror .paper-gap + :is(h1, h2, h3, h4, h5, h6) {
+  padding-top: 0;
+}
+
+/* Lists: 8 mm a level; each item's paragraphs as paragraphs. */
+.paper-mode .tiptap-editor .ProseMirror :is(ul, ol) {
+  margin: 0 0 2mm;
+  padding-left: 8mm;
+}
+
+.paper-mode .tiptap-editor .ProseMirror li {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.paper-mode .tiptap-editor .ProseMirror li p {
+  margin: 0 0 2mm;
+}
+
+/* Quotes: 3 mm in, a 1 mm bar 2 mm from the edge, the text 8 mm in. */
+.paper-mode .tiptap-editor .ProseMirror blockquote {
+  margin: 0 0 2mm;
+  padding: 3mm 0 1mm 8mm;
+  border: none;
+  border-radius: 0;
+  background: linear-gradient(to right, transparent 1.5mm, #969696 1.5mm, #969696 2.5mm, transparent 2.5mm) no-repeat;
+  color: #000;
+}
+
+.paper-mode .tiptap-editor .ProseMirror blockquote p {
+  margin: 0 0 2mm;
+}
+
+.paper-mode .tiptap-editor .ProseMirror hr {
+  margin: 4mm 0 5.5mm;
+  border: none;
+  border-top: 0.5mm solid #c8c8c8;
+}
+
+/* Inline code: the code font at the text's size, no padding (the PDF measures none). */
+.paper-mode .tiptap-editor .ProseMirror code {
+  padding: 0;
+  border-radius: 0;
+  background: #f5f5f5;
+  font-family: var(--paper-mono);
+  font-size: 1em;
+}
+
+.paper-mode .tiptap-editor .ProseMirror :is(sub, sup) {
+  position: relative;
+  font-size: 0.7em;
+  line-height: 0;
+  vertical-align: baseline;
+}
+
+.paper-mode .tiptap-editor .ProseMirror sup { top: -1.5mm; }
+.paper-mode .tiptap-editor .ProseMirror sub { top: 1.5mm; }
+
+/* Code blocks: 10 pt, 3 mm padding, 4 mm after, wrapped as the PDF wraps. */
+.paper-mode .tiptap-editor .ProseMirror .code-block {
+  margin: 0 0 4mm;
+}
+
+.paper-mode .tiptap-editor .ProseMirror pre,
+.paper-mode .tiptap-editor .ProseMirror pre.tiptap-code-block {
+  margin: 0 0 4mm;
+  padding: 3mm;
+  border: none;
+  border-radius: 0;
+  background: #f5f5f5;
+  font-family: var(--paper-mono);
+  font-size: 10pt;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.paper-mode .tiptap-editor .ProseMirror .code-block pre.tiptap-code-block {
+  margin: 0;
+}
+
+.paper-mode .tiptap-editor .ProseMirror pre code {
+  background: transparent;
+  font-size: inherit;
+}
+
+/* The language and copy controls float over the code: the PDF has no header. */
+.paper-mode .tiptap-editor .ProseMirror .code-block-header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.paper-mode .tiptap-editor .ProseMirror .code-block:hover .code-block-header,
+.paper-mode .tiptap-editor .ProseMirror .code-block:focus-within .code-block-header {
+  opacity: 1;
+}
+
+/* Tables: 11 pt, 2 mm cell padding, square, the page's width, 4 mm after. */
+.paper-mode .tiptap-editor .ProseMirror .tableWrapper {
+  margin: 0 0 4mm;
+}
+
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  font-size: 11pt;
+  line-height: 1.4;
+}
+
+/* The cell lines are inset shadows, drawn inside each cell's padding box, so
+   none crosses the room a row break makes (below). A cell draws its right and
+   bottom lines; the first column and the first row add the outer ones. */
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror :is(td, th) {
+  padding: 2mm;
+  border: none;
+  background: transparent;
+  box-shadow: inset -1px -1px 0 #ccc;
+}
+
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror tr > :is(td, th):first-child {
+  box-shadow: inset -1px -1px 0 #ccc, inset 1px 0 0 #ccc;
+}
+
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror tr:first-child > :is(td, th),
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror tr.paper-row-break > :is(td, th) {
+  box-shadow: inset -1px -1px 0 #ccc, inset 0 1px 0 #ccc;
+}
+
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror tr:first-child > :is(td, th):first-child,
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror tr.paper-row-break > :is(td, th):first-child {
+  box-shadow: inset -1px -1px 0 #ccc, inset 1px 1px 0 #ccc;
+}
+
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror th {
+  background: #f0f0f0;
+}
+
+.paper-mode .tiptap-editor .ProseMirror :is(td, th) p {
+  margin: 0;
+}
+
+/* A row that opens a page: its cells' clear top border is the room for the
+   page's end, and their top line draws the table's top on the new page. */
+:root .document-editor-panel.paper-mode .tiptap-editor .ProseMirror tr.paper-row-break > :is(td, th) {
+  border-top: calc(var(--paper-row-space, 0px) + var(--paper-gap)) solid transparent;
+  background-clip: padding-box;
+}
+
+/* The gaps between the sheets and the footers, drawn by `fitPages`. */
+.paper-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.paper-band {
+  position: absolute;
+  /* Past the column's edges, over its shadow. */
+  left: -6px;
+  right: -6px;
+  height: var(--paper-band);
+  background: var(--paper-desk);
+}
+
+/* As the PDF prints it: 10 pt grey, right-aligned, its baseline half way down
+   the bottom margin. */
+.paper-footer {
+  position: absolute;
+  right: var(--paper-margin-right);
+  transform: translateY(-80%);
+  font-family: var(--paper-font);
+  font-size: 10pt;
+  line-height: 1;
+  color: #808080;
+  white-space: nowrap;
+}

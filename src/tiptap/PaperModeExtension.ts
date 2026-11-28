@@ -1,12 +1,15 @@
 /**
  * Paper Mode's page breaks in the editor (DSK-48).
  *
- * The breaks are decorations, never changes to the document: a widget where
- * each page ends (its footer, the gap between pages and the next page's top
- * margin), a class on a table row that opens a page, and a footer after the
- * last page. They're set from the paginator's layout (`usePaperLayout`) and
- * mapped through edits until the next layout replaces them, a moment after
- * typing pauses.
+ * The breaks are decorations, never changes to the document: an empty widget
+ * where each page ends, holding the room for the rest of the page, its bottom
+ * margin, the gap between the sheets and the next page's top margin; a mark on
+ * a table row that opens a page, whose cells make the same room; and a widget
+ * after the last page for its bottom margin. Each says which page it ends and
+ * that page's footer. `fitPages` (`src/paper/paperLayout.ts`) sizes the room
+ * and draws the gaps and footers over it. The breaks are set from the
+ * paginator's layout (`usePaperLayout`) and mapped through edits until the
+ * next layout replaces them, a moment after typing pauses.
  */
 
 import { Extension } from '@tiptap/core';
@@ -24,27 +27,24 @@ export interface PageEnd {
   footer: string;
 }
 
-function part(className: string): HTMLSpanElement {
-  const element = document.createElement('span');
-  element.className = className;
-  return element;
+/** The CSS variable holding the room left at the end of page end `index` (`fitPages` sets it). */
+export function paperSpaceVariable(index: number | 'last'): string {
+  return `--paper-space-${index}`;
 }
 
 /**
- * The gap where a page ends: a spacer that tops the page up to its height,
- * the bottom margin with the footer, then (between pages) the band between
- * the sheets and the next page's top margin.
+ * The room where a page ends: what's left of the page, then (`--paper-gap`) its
+ * bottom margin, the gap between the sheets and the next page's top margin. The
+ * last page's has only its bottom margin (`--paper-foot`).
  */
-function gapElement(footer: string, last: boolean): HTMLElement {
-  const gap = part(last ? 'paper-gap paper-gap-last' : 'paper-gap');
+function gapElement(index: number | 'last', footer: string): HTMLElement {
+  const gap = document.createElement('span');
+  gap.className = index === 'last' ? 'paper-gap paper-gap-last' : 'paper-gap';
   gap.setAttribute('contenteditable', 'false');
   gap.setAttribute('aria-hidden', 'true');
-  const foot = part('paper-gap-foot');
-  const number = part('paper-gap-number');
-  number.textContent = footer;
-  foot.append(number);
-  gap.append(part('paper-gap-spacer'), foot);
-  if (!last) gap.append(part('paper-gap-band'), part('paper-gap-head'));
+  gap.dataset['paperIndex'] = String(index);
+  gap.dataset['paperFoot'] = footer;
+  gap.style.height = `calc(var(${paperSpaceVariable(index)}, 0px) + var(${index === 'last' ? '--paper-foot' : '--paper-gap'}))`;
   return gap;
 }
 
@@ -61,9 +61,14 @@ export function paperDecorations(doc: PMNode, ends: PageEnd[], lastFooter: strin
   const decorations: Decoration[] = [];
   ends.forEach((end, index) => {
     if (end.at.kind === 'row') {
-      decorations.push(Decoration.node(end.at.pos, end.at.end, { class: 'paper-row-break', 'data-paper-foot': end.footer }));
+      decorations.push(Decoration.node(end.at.pos, end.at.end, {
+        class: 'paper-row-break',
+        'data-paper-index': String(index),
+        'data-paper-foot': end.footer,
+        style: `--paper-row-space: var(${paperSpaceVariable(index)}, 0px)`,
+      }));
     } else {
-      decorations.push(Decoration.widget(end.at.pos, () => gapElement(end.footer, false), {
+      decorations.push(Decoration.widget(end.at.pos, () => gapElement(index, end.footer), {
         side: -1,
         key: `paper-gap-${index}-${end.footer}`,
         ignoreSelection: true,
@@ -71,7 +76,7 @@ export function paperDecorations(doc: PMNode, ends: PageEnd[], lastFooter: strin
     }
   });
   if (lastFooter !== null) {
-    decorations.push(Decoration.widget(doc.content.size, () => gapElement(lastFooter, true), {
+    decorations.push(Decoration.widget(doc.content.size, () => gapElement('last', lastFooter), {
       side: 1,
       key: `paper-last-${lastFooter}`,
       ignoreSelection: true,

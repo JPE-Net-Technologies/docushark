@@ -24,13 +24,18 @@ const make = (html: string): Editor => {
 const gaps = (e: Editor) => [...e.view.dom.querySelectorAll<HTMLElement>('.paper-gap')];
 
 describe('PaperModeExtension', () => {
-  it('draws a gap where a page ends and a footer after the last, without changing the document', () => {
+  it('makes room where a page ends and after the last, without changing the document', () => {
     const e = make('<p>First page.</p><p>Second page.</p>');
     const before = JSON.stringify(e.getJSON());
     const second = e.state.doc.child(0).nodeSize;
     setPaperPages(e.view, { ends: [{ at: { kind: 'block', pos: second }, footer: 'Page 1 of 2' }] as PageEnd[], lastFooter: 'Page 2 of 2' });
-    expect(gaps(e).map((g) => g.textContent)).toEqual(['Page 1 of 2', 'Page 2 of 2']);
+    expect(gaps(e).map((g) => [g.dataset['paperIndex'], g.dataset['paperFoot']])).toEqual([
+      ['0', 'Page 1 of 2'],
+      ['last', 'Page 2 of 2'],
+    ]);
     expect(gaps(e)[0]!.getAttribute('contenteditable')).toBe('false');
+    expect(gaps(e)[0]!.textContent).toBe('');
+    expect(gaps(e)[0]!.style.height).toContain('--paper-space-0');
     expect(gaps(e)[0]!.nextElementSibling?.textContent).toBe('Second page.');
     expect(JSON.stringify(e.getJSON())).toBe(before);
   });
@@ -48,9 +53,9 @@ describe('PaperModeExtension', () => {
     const e = make('<p>Alpha beta gamma delta.</p>');
     const gammaPos = 1 + 'Alpha beta '.length;
     setPaperPages(e.view, { ends: [{ at: { kind: 'inline', pos: gammaPos }, footer: 'Page 1 of 2' }] as PageEnd[], lastFooter: null });
-    const paragraph = e.view.dom.querySelector('p')!;
-    expect(paragraph.querySelector('.paper-gap')).not.toBeNull();
-    expect(paragraph.textContent).toBe('Alpha beta Page 1 of 2gamma delta.');
+    const gap = e.view.dom.querySelector('p')!.querySelector('.paper-gap');
+    expect(gap?.previousSibling?.textContent).toBe('Alpha beta ');
+    expect(gap?.nextSibling?.textContent).toBe('gamma delta.');
   });
 
   it('replaces the gaps with the next layout, and clears them', () => {
@@ -78,5 +83,7 @@ describe('PaperModeExtension', () => {
     const marked = e.view.dom.querySelector<HTMLElement>('tr.paper-row-break');
     expect(marked?.textContent).toBe('Row two');
     expect(marked?.getAttribute('data-paper-foot')).toBe('Page 1 of 2');
+    expect(marked?.getAttribute('data-paper-index')).toBe('0');
+    expect(marked?.style.getPropertyValue('--paper-row-space')).toBe('var(--paper-space-0, 0px)');
   });
 });
