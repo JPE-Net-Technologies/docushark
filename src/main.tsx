@@ -13,6 +13,12 @@ import './shapes/import/registerImportAdapters';
 import { registerIntegrationActions } from './services/integrationActions';
 import { refreshHubOnFocus } from './store/integrationHubStore';
 
+// The app has started: every static import above loaded. The boot watchdog in
+// index.html (DSK-78) stands down from here, so a running tab is never reloaded
+// under the user; a failed lazy chunk is the stale-chunk reload's job
+// (registerPwa.ts).
+(window as Window & { __dsBooted?: boolean }).__dsBooted = true;
+
 registerIntegrationActions();
 // Reload the integration hub when the editor regains focus, once it has loaded
 // (DSK-194): connections are made on the account site, in another tab.

@@ -35,6 +35,69 @@
         if (meta) meta.setAttribute('content', dark ? '#0e1c30' : '#f9f6ee');
       })();
     </script>
+    <!-- Boot watchdog (DSK-78). After a deploy, an old service worker can still
+         serve the old index.html, whose hashed entry files the host no longer
+         has. Their requests come back as the SPA's HTML, the module is refused,
+         and the app never starts, so neither the in-app "Reload" prompt nor the
+         lazy-chunk recovery (registerPwa.ts) can run. If one of the app's own
+         scripts or stylesheets fails before the app starts, this drops the
+         service workers and caches and reloads once, to the current build.
+         It stands down once the entry module runs (main.tsx sets __dsBooted),
+         so a running tab, and a live collaboration session, is never reloaded.
+         Offline it does nothing: dropping the cache then would only make it
+         worse. src/bootWatchdog.test.ts runs this script. -->
+    <script id="boot-watchdog">
+      (function () {
+        var KEY = 'ds:boot-recovery';
+        var recovering = false;
+        function isAppFile(el) {
+          if (!el || !el.tagName) return false;
+          var url = '';
+          if (el.tagName === 'SCRIPT') url = el.src || '';
+          else if (el.tagName === 'LINK' && /(^|\s)(stylesheet|modulepreload)(\s|$)/.test(el.rel || '')) url = el.href || '';
+          return url.indexOf('/assets/') !== -1;
+        }
+        function recover() {
+          if (window.__dsBooted || recovering || navigator.onLine === false) return;
+          var last = 0;
+          try {
+            last = Number(sessionStorage.getItem(KEY) || '0');
+          } catch (e) {}
+          if (Date.now() - last < 30000) return; // one recovery per 30 s: never a loop
+          recovering = true;
+          try {
+            sessionStorage.setItem(KEY, String(Date.now()));
+          } catch (e) {}
+          var tasks = [];
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            tasks.push(
+              navigator.serviceWorker.getRegistrations().then(function (registrations) {
+                return Promise.all(registrations.map(function (r) { return r.unregister(); }));
+              }),
+            );
+          }
+          if (typeof caches !== 'undefined' && caches.keys) {
+            tasks.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }),
+            );
+          }
+          Promise.all(tasks)
+            .catch(function () {})
+            .then(function () {
+              location.reload();
+            });
+        }
+        window.addEventListener(
+          'error',
+          function (event) {
+            if (isAppFile(event.target)) recover();
+          },
+          true,
+        );
+      })();
+    </script>
     <!-- The boot splash's own styles: the app's CSS arrives with the bundle.
          The colours copy src/index.css (the body background, --text-primary and
          the brand golds); src/bootSplash.test.ts keeps them in step. -->
