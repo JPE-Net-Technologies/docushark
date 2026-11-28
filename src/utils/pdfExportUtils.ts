@@ -6,8 +6,13 @@
  * Renders inline formatting (bold, italic, underline, strikethrough, color,
  * highlight, inline code), text alignment, tables, task lists, and LaTeX math.
  *
- * This file is the entry point: `exportToPdf` puts the document together, and
- * the pieces live in `./pdfExport/` (DSK-242):
+ * This file is the entry point: `exportToPdf` lays the document out and adds
+ * the furniture, and the pieces live in `./pdfExport/` (DSK-242, DSK-252):
+ * - `layout.ts`: the layout itself, shared with `paginate.ts`, which runs it on
+ *   a `MeasureDoc` (`doc.ts`) to find where the pages break without writing a
+ *   PDF, and lays out again from an edited block (Paper Mode).
+ * - `pager.ts`: every page break and what opens the new page; `keep.ts`: keeping
+ *   a heading with the start of what follows.
  * - `context.ts`: the render context, the page types and the page-break check;
  *   `style.ts`: sizes, spacing and colours.
  * - `text.ts` and `tables.ts`: layout of styled text and of tables.

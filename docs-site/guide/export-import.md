@@ -17,6 +17,12 @@ description: Export a document as a PDF, a picture or a .docushark file, back up
 
 **Tools → Export to PDF…** prints the whole document: every prose and canvas page in order, with the formatting, tables, equations, images, embedded diagrams, code and task lists. Fields show their values, and the [document font](./write#document-font) is embedded, so the PDF looks the same wherever it's opened.
 
+Pages break where they would in a printed book:
+
+- A heading moves to the next page rather than sit alone at the foot of one, unless what follows it is a page tall on its own (a full-page image, say).
+- A table that runs onto another page repeats its header row at the top.
+- Long code blocks and tall table rows continue on the next page.
+
 The dialog sets:
 
 - **Page size** (A4, Letter, A3 or Tabloid) and **orientation**.
