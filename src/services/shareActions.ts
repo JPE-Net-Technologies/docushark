@@ -59,10 +59,19 @@ function openDocumentId(): string | null {
   return usePersistenceStore.getState().currentDocumentId;
 }
 
+/**
+ * Whether the open document can be downloaded as a `.docushark` file. Not a
+ * published document a guest is reading: that snapshot is never stored on the
+ * device, and its owner published a view of it, not its source.
+ */
+export function canDownloadCopy(): boolean {
+  return openDocumentId() !== null && getActiveDocumentRecord()?.type !== 'external';
+}
+
 /** Save the open document, then download it as a `.docushark` file with its images and files. */
 export async function downloadCopy(): Promise<void> {
   const id = openDocumentId();
-  if (!id) return;
+  if (!id || !canDownloadCopy()) return;
   // The copy is built from the saved document, so the latest edits go in
   // first. A view-only document has none of its own to save.
   if (!isActiveDocReadOnly()) usePersistenceStore.getState().saveDocument();
@@ -103,7 +112,7 @@ export function currentShareActions(): Command[] {
       category: 'Share',
       icon: Download,
       surfaces: SHARE_SURFACES,
-      canExecute: () => openDocumentId() !== null,
+      canExecute: canDownloadCopy,
       execute: () => void downloadCopy(),
     },
   ];

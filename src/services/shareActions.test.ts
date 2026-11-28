@@ -100,6 +100,15 @@ describe('the Share commands', () => {
     expect(command('share.downloadCopy').canExecute!()).toBe(true);
   });
 
+  it('don’t offer a copy of a published document to a guest reading it', async () => {
+    // A guest's snapshot is never stored on the device, and its owner
+    // published a view of it, not its source.
+    open({ type: 'external', source: 'share-link' });
+    expect(command('share.downloadCopy').canExecute!()).toBe(false);
+    await downloadCopy();
+    expect(download).not.toHaveBeenCalled();
+  });
+
   it('saves the document before downloading a copy', async () => {
     open({ type: 'local' });
     const save = vi.fn();
