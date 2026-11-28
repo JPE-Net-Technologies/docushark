@@ -17,12 +17,11 @@ import { useRichTextStore } from '../store/richTextStore';
 import { useRichTextPagesStore } from '../store/richTextPagesStore';
 import { usePageStore } from '../store/pageStore';
 import { createInitialPDFOptions } from '../store/pdfExportStore';
-import { isRichTextEmpty, RICH_TEXT_VERSION } from '../types/RichText';
+import { isRichTextEmpty } from '../types/RichText';
 import { LogoPicker } from './LogoPicker';
 import { BlobStorage } from '../storage/BlobStorage';
 import type { BlobMetadata } from '../storage/BlobTypes';
 import { formatFileSize } from '../utils/byteSize';
-import { generateJSON } from '@tiptap/core';
 import { extensions as tiptapExtensions } from './TiptapEditor';
 import { getTiptapEditor } from './TiptapEditor';
 import type {
@@ -38,6 +37,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useNotificationStore } from '../store/notificationStore';
 import './PDFExportDialog.css';
 import { documentFont } from '../fonts/documentFont';
+import { collectPdfPages } from '../paper/collectPdfPages';
 import { PAGE_SETTING, resolvePageSetup, setPageSetup } from '../paper/pageSetup';
 import { useDocumentSettingsStore } from '../store/documentSettingsStore';
 
@@ -211,38 +211,7 @@ export function PDFExportDialog({ isOpen, onClose }: PDFExportDialogProps) {
         rtPagesState.updatePageContent(rtPagesState.activePageId, editor.getHTML());
       }
 
-      // Re-read after save
-      const rtPages = useRichTextPagesStore.getState();
-      const richTextPages: PDFRichTextPage[] = [];
-
-      for (const pageId of rtPages.pageOrder) {
-        const page = rtPages.pages[pageId];
-        if (!page) continue;
-
-        if (pageId === rtPages.activePageId && editor) {
-          // Active page: use Tiptap JSON directly from editor (most accurate)
-          richTextPages.push({
-            id: page.id,
-            name: page.name,
-            content: {
-              content: editor.getJSON(),
-              version: RICH_TEXT_VERSION,
-            },
-          });
-        } else {
-          // Non-active pages: convert HTML to Tiptap JSON via generateJSON
-          const htmlContent = page.content || '<p></p>';
-          const json = generateJSON(htmlContent, tiptapExtensions);
-          richTextPages.push({
-            id: page.id,
-            name: page.name,
-            content: {
-              content: json,
-              version: RICH_TEXT_VERSION,
-            },
-          });
-        }
-      }
+      const richTextPages: PDFRichTextPage[] = collectPdfPages(editor ?? null);
 
       // Check if all pages are empty
       const hasContent = richTextPages.some((p) => !isRichTextEmpty(p.content));
